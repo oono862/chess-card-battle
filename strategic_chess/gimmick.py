@@ -59,7 +59,7 @@ class DoubleGimmick(Gimmick):
     def __init__(self):
         super().__init__(
             "2",
-            "山札からカードを2枚引くことができるようになる"
+            "山札からカードを2枚引く"
         )
 
     def apply_to_piece(self, piece):
@@ -80,7 +80,7 @@ class ExplosionGimmick(Gimmick):
 class CollectGimmick(Gimmick):
     def __init__(self):
         super().__init__(
-            "収",
+            "ボ収",
             "ランダムに墓地のカードを回収"
         )
 
@@ -91,7 +91,7 @@ class CollectGimmick(Gimmick):
 class RecoveryGimmick(Gimmick):
     def __init__(self):
         super().__init__(
-            "回",
+            "２回復",
             "2コスト回復"
         )
 

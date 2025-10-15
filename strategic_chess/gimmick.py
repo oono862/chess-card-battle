@@ -74,7 +74,7 @@ class ExplosionGimmick(Gimmick):
         )
 
     def apply_to_piece(self, piece):
-        # 例: pieceにexplosion属性を付与
+        # 例: pi復
         piece.explosive = True
 
 class CollectGimmick(Gimmick):
@@ -91,7 +91,7 @@ class CollectGimmick(Gimmick):
 class RecoveryGimmick(Gimmick):
     def __init__(self):
         super().__init__(
-            "回",
+            "２回復",
             "2コスト回復"
         )
 

@@ -80,7 +80,7 @@ class ExplosionGimmick(Gimmick):
 class CollectGimmick(Gimmick):
     def __init__(self):
         super().__init__(
-            "収",
+            "ボ収",
             "ランダムに墓地のカードを回収"
         )
 

@@ -74,7 +74,7 @@ class ExplosionGimmick(Gimmick):
         )
 
     def apply_to_piece(self, piece):
-        # 例: pi復
+        # 例: pieceにexplosion属性を付与
         piece.explosive = True
 
 class CollectGimmick(Gimmick):

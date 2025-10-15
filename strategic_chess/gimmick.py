@@ -59,7 +59,7 @@ class DoubleGimmick(Gimmick):
     def __init__(self):
         super().__init__(
             "2",
-            "山札からカードを2枚引くことができるようになる"
+            "山札からカードを2枚引く"
         )
 
     def apply_to_piece(self, piece):

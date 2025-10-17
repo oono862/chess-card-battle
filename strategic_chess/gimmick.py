@@ -2,6 +2,8 @@ class Gimmick:
     def __init__(self, name, description):
         self.name = name
         self.description = description
+        # icon can be a path to an image file or None. GUI code may use this to render an icon.
+        self.icon = None
 
     def get_description(self):
         return self.description
@@ -72,6 +74,9 @@ class ExplosionGimmick(Gimmick):
             "e",
             "カードを山札から1枚引き、手札からカードを1枚選び捨てる"
         )
+        # set an icon path for the explosion gimmick; GUI can load this image if available
+        # You can adjust the path to match your images folder and filename.
+        self.icon = "strategic_chess/images/m9(^Д^)/card_test_r.png"
 
     def apply_to_piece(self, piece):
         # 例: pieceにexplosion属性を付与

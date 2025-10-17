@@ -33,6 +33,8 @@ SCREEN_HEIGHT = info.current_h
 
 # フルスクリーンフラグ（起動時はウィンドウモードにする）
 is_fullscreen = False
+# CPU(黒)の難易度: 1=Easy, 2=Medium, 3=Hard, 4=Expert
+CPU_DIFFICULTY = 3
 
 # 画面サイズとレイアウトを計算する関数
 def calculate_layout(is_fullscreen_mode, window_width=None, window_height=None):
@@ -68,6 +70,111 @@ pygame.display.set_caption("チェスエレメント")
 # フォントサイズを画面サイズに応じて調整
 base_font_size = int(SCREEN_HEIGHT * 0.04)  # 画面高さの4%
 font = pygame.font.SysFont("Noto_SansJP", base_font_size)
+
+
+
+def render_text_with_outline(font, text, fg_color, outline_color=(255,255,255)):
+    """テキストにアウトラインを付けたサーフェスを返す。
+    周囲8方向に1pxのアウトラインを描画して視認性を高める。
+    アンチエイリアスは False にして輪郭をシャープにする。
+    """
+    aa = False
+    txt = font.render(text, aa, fg_color)
+    outline = font.render(text, aa, outline_color)
+    w = txt.get_width() + 2
+    h = txt.get_height() + 2
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    offsets = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,1),(-1,1),(1,-1)]
+    for ox, oy in offsets:
+        surf.blit(outline, (ox+1, oy+1))
+    surf.blit(txt, (1,1))
+    return surf
+
+
+def wrap_text_for_width(text, font, max_width):
+    """フォントで測りながら幅に合わせて改行したリストを返す（日本語は文字単位で切る）。"""
+    lines = []
+    if text == "":
+        return [""]
+    cur = ""
+    for ch in text:
+        test = cur + ch
+        w, _ = font.size(test)
+        if w <= max_width:
+            cur = test
+        else:
+            if cur == "":
+                # 1文字も入らない場合はその文字を強制的に行に入れる
+                lines.append(test)
+                cur = ""
+            else:
+                lines.append(cur)
+                cur = ch
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def show_start_screen(screen):
+    """起動時に難易度を選択する簡易メニューを表示する。
+    1-4 のキーか、画面上のボタンで選択可能。
+    選択した難易度はグローバル `CPU_DIFFICULTY` に設定される。
+    """
+    global CPU_DIFFICULTY
+    clock = pygame.time.Clock()
+    title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)))
+    btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)))
+    options = [("1 - Easy", 1), ("2 - Medium", 2), ("3 - Hard", 3), ("4 - Expert", 4)]
+
+    while True:
+        screen.fill((200, 200, 200))
+        title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
+        screen.blit(title_surf, (WINDOW_WIDTH // 2 - title_surf.get_width() // 2, 80))
+
+        btn_w = 300
+        btn_h = 80
+        spacing = 30
+        total_w = len(options) * btn_w + (len(options) - 1) * spacing
+        start_x = WINDOW_WIDTH // 2 - total_w // 2
+        y = WINDOW_HEIGHT // 2 - btn_h // 2
+
+        mx, my = pygame.mouse.get_pos()
+        clicked = False
+        for i, (label, val) in enumerate(options):
+            x = start_x + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            color = (180, 180, 180)
+            if rect.collidepoint((mx, my)):
+                color = (150, 150, 150)
+            pygame.draw.rect(screen, color, rect)
+            pygame.draw.rect(screen, BLACK, rect, 2)
+            lab = btn_font.render(label, True, BLACK)
+            screen.blit(lab, (x + btn_w//2 - lab.get_width()//2, y + btn_h//2 - lab.get_height()//2))
+
+        instruct = btn_font.render("キー1-4でも選択できます。Escで終了", True, BLACK)
+        screen.blit(instruct, (WINDOW_WIDTH//2 - instruct.get_width()//2, y + btn_h + 40))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                for i, (label, val) in enumerate(options):
+                    x = start_x + i * (btn_w + spacing)
+                    rect = pygame.Rect(x, y, btn_w, btn_h)
+                    if rect.collidepoint(event.pos):
+                        CPU_DIFFICULTY = val
+                        return
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    sys.exit()
+                if event.unicode in ("1", "2", "3", "4"):
+                    CPU_DIFFICULTY = int(event.unicode)
+                    return
+        clock.tick(30)
 
 
 piece_images = {
@@ -141,6 +248,9 @@ def show_promotion_menu_with_images(screen, piece_color):
                         selected = opt
                         break
     return selected
+
+# 起動時に難易度選択画面を表示（関数定義の後で呼び出す）
+show_start_screen(screen)
 
 class Piece:
     def __init__(self, row, col, name, color):
@@ -319,6 +429,9 @@ def draw_board():
     # 全体背景を白色で塗りつぶし（両端の余白部分も真っ白）
     screen.fill(WHITE)
 
+    # フレームごとにクリック領域リストを初期化（必ず存在させる）
+    draw_board.player_gimmick_click_areas = []
+
     # 盤面をオフセット位置から描画
     for row in range(8):
         for col in range(8):
@@ -337,68 +450,154 @@ def draw_board():
     pygame.draw.rect(screen, GOLD, (0, WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT, WINDOW_WIDTH, GIMMICK_ROW_HEIGHT))
     
     # --- 右上余白にギミックカード画像を表示 ---
-    # カード画像をキャッシュして毎フレーム読み込みを避ける
-    if not hasattr(draw_board, "card_img_cache"):
-        try:
-            draw_board.card_img_cache = pygame.image.load("images/m9(^Д^)/card_test_r.png")
-            draw_board.card_aspect_ratio = draw_board.card_img_cache.get_width() / draw_board.card_img_cache.get_height()
-        except Exception:
-            draw_board.card_img_cache = None
-            draw_board.card_aspect_ratio = 63 / 88  # デフォルトのカード比率
-    
+    # カード画像は一度オリジナルを読み込み、必要時だけ高品質に縮小/拡大してキャッシュする
+    # カード描画に使うパス（外部から更新可能）。初期状態では表示しない（None）
+    if not hasattr(draw_board, 'current_card_path'):
+        draw_board.current_card_path = None
+
+    # current_card_path が None の場合はカード描画をスキップ
+    if draw_board.current_card_path is None:
+        draw_board.card_img_orig = None
+        draw_board.card_aspect_ratio = 63 / 88
+        draw_board.card_img_scaled = None
+        draw_board.card_scaled_size = (0, 0)
+    else:
+        if not hasattr(draw_board, "card_img_orig") or getattr(draw_board, 'card_img_path_loaded', None) != draw_board.current_card_path:
+            try:
+                img = pygame.image.load(draw_board.current_card_path)
+                draw_board.card_img_orig = img.convert_alpha()
+                draw_board.card_aspect_ratio = draw_board.card_img_orig.get_width() / draw_board.card_img_orig.get_height()
+                draw_board.card_img_scaled = None
+                draw_board.card_scaled_size = (0, 0)
+                draw_board.card_img_path_loaded = draw_board.current_card_path
+            except Exception:
+                draw_board.card_img_orig = None
+                draw_board.card_aspect_ratio = 63 / 88  # デフォルトのカード比率
+                draw_board.card_img_scaled = None
+                draw_board.card_scaled_size = (0, 0)
+
     try:
-        if draw_board.card_img_cache is not None:
-            card_img = draw_board.card_img_cache
+        if draw_board.card_img_orig is not None:
             aspect_ratio = draw_board.card_aspect_ratio
-        
-        # 利用可能な余白スペースを計算
-        available_width = WINDOW_WIDTH - (BOARD_OFFSET_X + WIDTH) - 40
-        available_height = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT * 2 - 40
-        
-        # アスペクト比を保持しながら、余白に収まる最大サイズを計算
-        if available_width / aspect_ratio <= available_height:
-            # 幅に合わせる
-            card_width = int(available_width * 0.8)  # 余白の80%を使用
-            card_height = int(card_width / aspect_ratio)
+
+            # 利用可能な余白スペースを計算
+            available_width = WINDOW_WIDTH - (BOARD_OFFSET_X + WIDTH) - 40
+            available_height = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT * 2 - 40
+
+            # アスペクト比を保持しながら、余白に収まる最大サイズを計算
+            if available_width / aspect_ratio <= available_height:
+                card_width = int(available_width * 0.8)
+                card_height = int(card_width / aspect_ratio)
+            else:
+                card_height = int(available_height * 0.8)
+                card_width = int(card_height * aspect_ratio)
+
+            # 高品質縮小（必要なときだけ行う）
+            if not hasattr(draw_board, 'card_img_cache'):
+                draw_board.card_img_cache = {}
+
+            cache_key = (id(draw_board.card_img_orig), card_width, card_height)
+            if cache_key in draw_board.card_img_cache:
+                draw_board.card_img_scaled = draw_board.card_img_cache[cache_key]
+                draw_board.card_scaled_size = (card_width, card_height)
+            else:
+                try:
+                    # iterative downscale: 大きく縮小する場合は段階的に半分ずつ縮小してから最終サイズにする
+                    def high_quality_scale(src_surf, target_w, target_h):
+                        src_w, src_h = src_surf.get_size()
+                        cur = src_surf
+                        # while we can comfortably halve both dimensions and still be >= target, do half-step smoothscale
+                        while src_w // 2 >= target_w and src_h // 2 >= target_h:
+                            next_w, next_h = max(target_w, src_w // 2), max(target_h, src_h // 2)
+                            cur = pygame.transform.smoothscale(cur, (next_w, next_h)).convert_alpha()
+                            src_w, src_h = cur.get_size()
+                        # final smoothscale to exact target if needed
+                        if (src_w, src_h) != (target_w, target_h):
+                            cur = pygame.transform.smoothscale(cur, (target_w, target_h)).convert_alpha()
+                        return cur
+
+                    draw_board.card_img_scaled = high_quality_scale(draw_board.card_img_orig, card_width, card_height)
+                except Exception:
+                    # フォールバック
+                    try:
+                        draw_board.card_img_scaled = pygame.transform.smoothscale(draw_board.card_img_orig, (card_width, card_height)).convert_alpha()
+                    except Exception:
+                        draw_board.card_img_scaled = pygame.transform.scale(draw_board.card_img_orig, (card_width, card_height)).convert_alpha()
+                draw_board.card_scaled_size = (card_width, card_height)
+                draw_board.card_img_cache[cache_key] = draw_board.card_img_scaled
+
+            card_img = draw_board.card_img_scaled
         else:
-            # 高さに合わせる
-            card_height = int(available_height * 0.8)  # 余白の80%を使用
-            card_width = int(card_height * aspect_ratio)
-        
-        card_img = pygame.transform.scale(card_img, (card_width, card_height))
+            card_img = None
+
         # 右上余白の座標（ギミック枠の下、盤面の右端よりさらに右）
-        card_x = BOARD_OFFSET_X + WIDTH + 20  # 盤面右端から20px右
-        card_y = GIMMICK_ROW_HEIGHT + 20  # ギミック枠の下20px
-        # 盤面やギミック部分に重ならないことを確認
-        if card_x + card_width <= WINDOW_WIDTH - 10:  # 右端から10px余裕を持つ
-            screen.blit(card_img, (card_x, card_y))
-        else:
-            # カード画像がない場合は何もしない
-            pass
-    except Exception as e:
-        # 画像表示エラー時は代替表示（デバッグ用の四角形）
-        # カード形状のアスペクト比（一般的なトレーディングカードの比率 63:88）を使用
-        aspect_ratio = draw_board.card_aspect_ratio
-        available_width = WINDOW_WIDTH - (BOARD_OFFSET_X + WIDTH) - 40
-        available_height = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT * 2 - 40
-        
-        if available_width / aspect_ratio <= available_height:
-            card_width = int(available_width * 0.8)
-            card_height = int(card_width / aspect_ratio)
-        else:
-            card_height = int(available_height * 0.8)
-            card_width = int(card_height * aspect_ratio)
-            
         card_x = BOARD_OFFSET_X + WIDTH + 20
         card_y = GIMMICK_ROW_HEIGHT + 20
-        if card_x + card_width <= WINDOW_WIDTH - 10:
+
+        if card_img is not None and card_x + card_img.get_width() <= WINDOW_WIDTH - 10:
+            screen.blit(card_img, (card_x, card_y))
+        elif draw_board.current_card_path is not None and card_img is None and card_x + card_width <= WINDOW_WIDTH - 10:
+            # 画像が無い場合は代替表示（四角形）
             pygame.draw.rect(screen, (200, 200, 200), (card_x, card_y, card_width, card_height))
             pygame.draw.rect(screen, BLACK, (card_x, card_y, card_width, card_height), 2)
-            # "カード画像" テキストを表示
             card_font = get_font(max(16, int(SCREEN_HEIGHT * 0.02)))
             card_text = card_font.render("カード画像", True, BLACK)
             text_rect = card_text.get_rect(center=(card_x + card_width//2, card_y + card_height//2))
             screen.blit(card_text, text_rect)
+        else:
+            # 非表示または収まらない場合は何もしない
+            pass
+    except Exception as e:
+        # 何らかの理由で失敗した場合の代替表示（ただし current_card_path が設定されていない場合は何もしない）
+        if draw_board.current_card_path is not None:
+            try:
+                pygame.draw.rect(screen, (200, 200, 200), (card_x, card_y, 120, 160))
+                pygame.draw.rect(screen, BLACK, (card_x, card_y, 120, 160), 2)
+            except Exception:
+                pass
+            aspect_ratio = draw_board.card_aspect_ratio
+            available_width = WINDOW_WIDTH - (BOARD_OFFSET_X + WIDTH) - 40
+            available_height = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT * 2 - 40
+            
+            if available_width / aspect_ratio <= available_height:
+                card_width = int(available_width * 0.8)
+                card_height = int(card_width / aspect_ratio)
+            else:
+                card_height = int(available_height * 0.8)
+                card_width = int(card_height * aspect_ratio)
+                
+            card_x = BOARD_OFFSET_X + WIDTH + 20
+            card_y = GIMMICK_ROW_HEIGHT + 20
+            if card_x + card_width <= WINDOW_WIDTH - 10:
+                pygame.draw.rect(screen, (200, 200, 200), (card_x, card_y, card_width, card_height))
+                pygame.draw.rect(screen, BLACK, (card_x, card_y, card_width, card_height), 2)
+                # "カード画像" テキストを表示
+                card_font = get_font(max(16, int(SCREEN_HEIGHT * 0.02)))
+                card_text = card_font.render("カード画像", True, BLACK)
+                text_rect = card_text.get_rect(center=(card_x + card_width//2, card_y + card_height//2))
+                screen.blit(card_text, text_rect)
+
+                # --- カード下にギミック説明を描画 ---
+                # ここでは最初のギミックの説明を例として表示（必要なら選択中のカード説明に差し替え）
+                try:
+                    desc_font = get_font(max(14, int(SCREEN_HEIGHT * 0.018)))
+                    desc_max_w = card_width - 20
+                    # 例: 表示する説明テキスト（ここは選択中のカードに応じて変更可）
+                    desc_text = gimmicks[0].get_description() if gimmicks else ""
+                    wrapped = wrap_text_for_width(desc_text, desc_font, desc_max_w)
+                    # 背景ボックス
+                    desc_h = len(wrapped) * (desc_font.get_height() + 2) + 8
+                    desc_x = card_x
+                    desc_y = card_y + card_height + 8
+                    overlay = pygame.Surface((card_width, desc_h), pygame.SRCALPHA)
+                    overlay.fill((255, 255, 255, 220))  # 白背景（少しだけ透過）
+                    screen.blit(overlay, (desc_x, desc_y))
+                    # テキスト描画（アウトライン付きで見やすく）
+                    for i, line in enumerate(wrapped):
+                        ln_surf = render_text_with_outline(desc_font, line, BLACK, outline_color=(255,255,255))
+                        screen.blit(ln_surf, (desc_x + 10, desc_y + 6 + i * (desc_font.get_height() + 2)))
+                except Exception:
+                    pass
 
     # ギミックアイコンを2段構成で描画（画面サイズに応じて調整）
     circle_radius = max(20, int(SCREEN_HEIGHT * 0.025))  # 画面高さの2.5%
@@ -481,6 +680,12 @@ def draw_board():
             count_rect.topleft = (x_rect.right + 1, below_circle)
             screen.blit(x_surface, x_rect)
             screen.blit(count_surface, count_rect)
+            # プレイヤーのギミックサークルをクリック可能にするため、
+            # クリック領域と名前を draw_board に保存しておく（イベント処理で参照）
+            if not hasattr(draw_board, 'player_gimmick_click_areas'):
+                draw_board.player_gimmick_click_areas = []
+            # 各フレームで上書きするので一旦リストをクリアするのは呼び出し元で行う
+            draw_board.player_gimmick_click_areas.append((player_gimmick_name, pygame.Rect(circle_center_bottom[0]-circle_radius, circle_center_bottom[1]-circle_radius, circle_radius*2, circle_radius*2)))
     # game_over の表示はメインループ側で再戦画面を表示するため、ここでは描画しない
 
 def get_clicked_pos(pos):
@@ -570,6 +775,12 @@ def ai_move(pieces):
         "pieces": pieces_dict,
         "black_in_check": black_in_check
     }
+    # include difficulty so AI can adjust strength
+    try:
+        ai_input["difficulty"] = CPU_DIFFICULTY
+    except NameError:
+        # fallback default
+        ai_input["difficulty"] = 3
     proc = subprocess.Popen(
         [sys.executable, ai_path],
         stdin=subprocess.PIPE,
@@ -877,6 +1088,32 @@ while running:
                 continue
             row, col = get_clicked_pos(pygame.mouse.get_pos())
             clicked = get_piece_at(row, col, pieces)
+            # ギミックのアイコンをクリックしたかチェック
+            try:
+                if hasattr(draw_board, 'player_gimmick_click_areas'):
+                    mx, my = pygame.mouse.get_pos()
+                    for name, rect in draw_board.player_gimmick_click_areas:
+                        if rect.collidepoint((mx, my)):
+                            # '2' のギミックがクリックされたら右上カードを差し替える
+                            # map gimmick names to image paths
+                            if name == '2':
+                                draw_board.current_card_path = 'images/m9(^Д^)/card_TEST_D2_2.png'
+                            elif name == 'e':
+                                draw_board.current_card_path = 'images/m9(^Д^)/card_test_r.png'
+                            elif name == 'ボ収':
+                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_a.png'
+                            elif name == '２回復':
+                                draw_board.current_card_path = 'images/m9(^Д^)/card_TEST_S.png'
+                            else:
+                                # 他のギミックは未対応（何もせず継続）
+                                continue
+                            # キャッシュをクリアして即時反映
+                            if hasattr(draw_board, 'card_img_cache'):
+                                draw_board.card_img_cache.clear()
+                            print('DEBUG: Gimmick clicked, set current_card_path ->', draw_board.current_card_path)
+                            break
+            except Exception:
+                pass
 
             if selected_piece:
                 valid_moves = selected_piece.get_valid_moves(pieces)

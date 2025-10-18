@@ -126,6 +126,45 @@ def show_start_screen(screen):
     btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)))
     options = [("1 - Easy", 1), ("2 - Medium", 2), ("3 - Hard", 3), ("4 - Expert", 4)]
 
+    def show_deck_editor():
+        """簡易デッキ作成画面のプレースホルダ。閉じるボタンで戻る。"""
+        editor_clock = pygame.time.Clock()
+        title_font = pygame.font.SysFont("Noto_SansJP", max(32, int(SCREEN_HEIGHT * 0.05)))
+        info_font = pygame.font.SysFont("Noto_SansJP", max(18, int(SCREEN_HEIGHT * 0.03)))
+        btn_font_local = pygame.font.SysFont("Noto_SansJP", max(20, int(SCREEN_HEIGHT * 0.03)))
+        while True:
+            screen.fill((240, 240, 240))
+            title = title_font.render("デッキ作成", True, BLACK)
+            screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 60))
+
+            # プレースホルダ説明
+            info = info_font.render("ここにデッキ編集UIを実装します。戻るには下のボタンを押してください。", True, BLACK)
+            screen.blit(info, (WINDOW_WIDTH//2 - info.get_width()//2, 150))
+
+            # 閉じるボタン
+            bw, bh = 220, 64
+            bx = WINDOW_WIDTH//2 - bw//2
+            by = WINDOW_HEIGHT - 140
+            brect = pygame.Rect(bx, by, bw, bh)
+            mx, my = pygame.mouse.get_pos()
+            bcolor = (180,180,180) if brect.collidepoint((mx,my)) else (210,210,210)
+            pygame.draw.rect(screen, bcolor, brect)
+            pygame.draw.rect(screen, BLACK, brect, 2)
+            bl = btn_font_local.render("戻る", True, BLACK)
+            screen.blit(bl, (bx + bw//2 - bl.get_width()//2, by + bh//2 - bl.get_height()//2))
+
+            pygame.display.flip()
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.MOUSEBUTTONDOWN:
+                    if brect.collidepoint(ev.pos):
+                        return
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key == pygame.K_ESCAPE:
+                        return
+            editor_clock.tick(30)
+
     while True:
         screen.fill((200, 200, 200))
         title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
@@ -154,6 +193,18 @@ def show_start_screen(screen):
         instruct = btn_font.render("キー1-4でも選択できます。Escで終了", True, BLACK)
         screen.blit(instruct, (WINDOW_WIDTH//2 - instruct.get_width()//2, y + btn_h + 40))
 
+        # デッキ作成ボタン（難易度選択の下部、中央に配置）
+        deck_w, deck_h = 260, 60
+        deck_x = WINDOW_WIDTH//2 - deck_w//2
+        deck_y = y + btn_h + 100
+        deck_rect = pygame.Rect(deck_x, deck_y, deck_w, deck_h)
+        mx, my = pygame.mouse.get_pos()
+        deck_color = (180,180,180) if deck_rect.collidepoint((mx,my)) else (210,210,210)
+        pygame.draw.rect(screen, deck_color, deck_rect)
+        pygame.draw.rect(screen, BLACK, deck_rect, 2)
+        deck_label = btn_font.render("デッキ作成", True, BLACK)
+        screen.blit(deck_label, (deck_x + deck_w//2 - deck_label.get_width()//2, deck_y + deck_h//2 - deck_label.get_height()//2))
+
         pygame.display.flip()
 
         for event in pygame.event.get():
@@ -161,12 +212,18 @@ def show_start_screen(screen):
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                # まず難易度ボタンのクリック判定（既存）
                 for i, (label, val) in enumerate(options):
                     x = start_x + i * (btn_w + spacing)
                     rect = pygame.Rect(x, y, btn_w, btn_h)
                     if rect.collidepoint(event.pos):
                         CPU_DIFFICULTY = val
                         return
+                # デッキ作成ボタンのクリック判定
+                if deck_rect.collidepoint(event.pos):
+                    show_deck_editor()
+                    # デッキ編集から戻ってきたら再描画して継続
+                    continue
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit()

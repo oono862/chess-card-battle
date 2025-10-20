@@ -1125,7 +1125,7 @@ while running:
                     pygame.quit()
                     sys.exit()
                 elif event.type == pygame.KEYDOWN:
-                    # R で再戦、Q または ESC で終了
+                    # R で再戦、Q または ESC で終了、D で難易度選択画面へ
                     if event.key == pygame.K_r:
                         # ゲーム状態をリセット
                         pieces = create_pieces()
@@ -1144,6 +1144,19 @@ while running:
                     elif event.key in (pygame.K_q, pygame.K_ESCAPE):
                         pygame.quit()
                         sys.exit()
+                    elif event.key == pygame.K_d:
+                        # 難易度選択画面に戻す
+                        try:
+                            show_start_screen(screen)
+                        except Exception:
+                            # 万が一失敗しても落ちないようにする
+                            pass
+                        # 選択結果を通知
+                        try:
+                            notif_message = f"難易度: {CPU_DIFFICULTY}"
+                            notif_until = time.time() + 2.0
+                        except Exception:
+                            pass
 
             # リスタート画面を描画
             draw_board()
@@ -1172,13 +1185,55 @@ while running:
                 # 本文
                 screen.blit(text_surf, (tx, ty))
 
+            # 再戦/難易度/補足の3行をまとまったブロックとして中央に縦配置し、重なりを防ぐ
             prompt = "[R] 再戦    [Q] 終了"
-            prompt_surf = info_font.render(prompt, True, GOLD)
-            screen.blit(prompt_surf, (WINDOW_WIDTH // 2 - prompt_surf.get_width() // 2, WINDOW_HEIGHT // 2))
-
+            diff_text = "[D] 難易度選択"
             note = "再戦時に盤面が初期化されます"
+
+            prompt_surf = info_font.render(prompt, True, GOLD)
+            diff_surf = info_font.render(diff_text, True, GOLD)
             note_surf = info_font.render(note, True, RED)
-            screen.blit(note_surf, (WINDOW_WIDTH // 2 - note_surf.get_width() // 2, WINDOW_HEIGHT // 2 + 40))
+
+            # 各行の高さと総高さを計算して、中央にブロックとして配置する
+            p_h = prompt_surf.get_height()
+            d_h = diff_surf.get_height()
+            n_h = note_surf.get_height()
+            padding = 8
+            total_h = p_h + d_h + n_h + padding * 2
+            top_y = WINDOW_HEIGHT // 2 - total_h // 2
+
+            # プロンプト
+            p_x = WINDOW_WIDTH // 2 - prompt_surf.get_width() // 2
+            p_y = top_y
+            try:
+                p_bg = pygame.Surface((prompt_surf.get_width() + 20, p_h + 12), pygame.SRCALPHA)
+                p_bg.fill((0, 0, 0, 160))
+                screen.blit(p_bg, (p_x - 10, p_y - 6))
+            except Exception:
+                pass
+            screen.blit(prompt_surf, (p_x, p_y))
+
+            # 難易度案内
+            d_x = WINDOW_WIDTH // 2 - diff_surf.get_width() // 2
+            d_y = p_y + p_h + padding
+            try:
+                d_bg = pygame.Surface((diff_surf.get_width() + 20, d_h + 12), pygame.SRCALPHA)
+                d_bg.fill((0, 0, 0, 160))
+                screen.blit(d_bg, (d_x - 10, d_y - 6))
+            except Exception:
+                pass
+            screen.blit(diff_surf, (d_x, d_y))
+
+            # 補足テキスト
+            n_x = WINDOW_WIDTH // 2 - note_surf.get_width() // 2
+            n_y = d_y + d_h + padding
+            try:
+                n_bg = pygame.Surface((note_surf.get_width() + 20, n_h + 12), pygame.SRCALPHA)
+                n_bg.fill((0, 0, 0, 160))
+                screen.blit(n_bg, (n_x - 10, n_y - 6))
+            except Exception:
+                pass
+            screen.blit(note_surf, (n_x, n_y))
 
             pygame.display.flip()
             # 再戦指示でループを抜ける

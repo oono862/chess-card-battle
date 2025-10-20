@@ -151,6 +151,7 @@ class NetworkManager:
                     pass
             self.conn = None
             self.running = False
+            # テスト用
 
     # --- Send ---
     def send(self, message):

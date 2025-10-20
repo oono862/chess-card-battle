@@ -124,7 +124,7 @@ def show_start_screen(screen):
     clock = pygame.time.Clock()
     title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)))
     btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)))
-    options = [("1 - Easy", 1), ("2 - Medium", 2), ("3 - Hard", 3), ("4 - Expert", 4)]
+    options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
 
     def show_deck_editor():
         """簡易デッキ作成画面のプレースホルダ。閉じるボタンで戻る。"""
@@ -937,6 +937,27 @@ while running:
     draw_board()
     for piece in pieces:
         piece.draw(screen)
+
+    # AIが思考中のときは盤面中央付近に「思考中」のテロップを表示
+    try:
+        if 'cpu_wait' in globals() and cpu_wait and current_turn == 'black' and not game_over:
+            thinking_text = "思考中"
+            # フォントサイズは盤面に合わせて調整
+            tfont = pygame.font.SysFont("Noto_SansJP", max(18, int(SCREEN_HEIGHT * 0.035)), bold=True)
+            txt_surf = render_text_with_outline(tfont, thinking_text, (255, 215, 0), outline_color=(0,0,0))
+            tx = BOARD_OFFSET_X + WIDTH // 2 - txt_surf.get_width() // 2
+            ty = BOARD_OFFSET_Y + HEIGHT // 2 - txt_surf.get_height() // 2
+            # 半透明の背景を用意
+            try:
+                overlay = pygame.Surface((txt_surf.get_width() + 20, txt_surf.get_height() + 12), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 160))
+                screen.blit(overlay, (tx - 10, ty - 6))
+            except Exception:
+                pygame.draw.rect(screen, (0,0,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12))
+            pygame.draw.rect(screen, (255,215,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12), 2)
+            screen.blit(txt_surf, (tx, ty))
+    except Exception:
+        pass
 
     # チェック中の表示（両者チェック中対応）
     if not game_over:

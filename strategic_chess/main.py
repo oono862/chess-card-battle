@@ -134,17 +134,18 @@ def show_start_screen(screen):
         btn_font_local = pygame.font.SysFont("Noto_SansJP", max(20, int(SCREEN_HEIGHT * 0.03)))
         while True:
             screen.fill((240, 240, 240))
+            win_w, win_h = screen.get_size()
             title = title_font.render("デッキ作成", True, BLACK)
-            screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 60))
+            screen.blit(title, (win_w//2 - title.get_width()//2, 60))
 
             # プレースホルダ説明
             info = info_font.render("ここにデッキ編集UIを実装します。戻るには下のボタンを押してください。", True, BLACK)
-            screen.blit(info, (WINDOW_WIDTH//2 - info.get_width()//2, 150))
+            screen.blit(info, (win_w//2 - info.get_width()//2, 150))
 
             # 閉じるボタン
             bw, bh = 220, 64
-            bx = WINDOW_WIDTH//2 - bw//2
-            by = WINDOW_HEIGHT - 140
+            bx = win_w//2 - bw//2
+            by = win_h - 140
             brect = pygame.Rect(bx, by, bw, bh)
             mx, my = pygame.mouse.get_pos()
             bcolor = (180,180,180) if brect.collidepoint((mx,my)) else (210,210,210)
@@ -167,15 +168,16 @@ def show_start_screen(screen):
 
     while True:
         screen.fill((200, 200, 200))
+        win_w, win_h = screen.get_size()
         title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
-        screen.blit(title_surf, (WINDOW_WIDTH // 2 - title_surf.get_width() // 2, 80))
+        screen.blit(title_surf, (win_w // 2 - title_surf.get_width() // 2, 80))
 
         btn_w = 300
         btn_h = 80
         spacing = 30
         total_w = len(options) * btn_w + (len(options) - 1) * spacing
-        start_x = WINDOW_WIDTH // 2 - total_w // 2
-        y = WINDOW_HEIGHT // 2 - btn_h // 2
+        start_x = win_w // 2 - total_w // 2
+        y = win_h // 2 - btn_h // 2
 
         mx, my = pygame.mouse.get_pos()
         clicked = False
@@ -191,11 +193,11 @@ def show_start_screen(screen):
             screen.blit(lab, (x + btn_w//2 - lab.get_width()//2, y + btn_h//2 - lab.get_height()//2))
 
         instruct = btn_font.render("キー1-4でも選択できます。Escで終了", True, BLACK)
-        screen.blit(instruct, (WINDOW_WIDTH//2 - instruct.get_width()//2, y + btn_h + 40))
+        screen.blit(instruct, (win_w//2 - instruct.get_width()//2, y + btn_h + 40))
 
         # デッキ作成ボタン（難易度選択の下部、中央に配置）
         deck_w, deck_h = 260, 60
-        deck_x = WINDOW_WIDTH//2 - deck_w//2
+        deck_x = win_w//2 - deck_w//2
         deck_y = y + btn_h + 100
         deck_rect = pygame.Rect(deck_x, deck_y, deck_w, deck_h)
         mx, my = pygame.mouse.get_pos()
@@ -497,6 +499,11 @@ def draw_board():
                 screen, color,
                 (BOARD_OFFSET_X + col * SQUARE_SIZE, BOARD_OFFSET_Y + row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
             )
+    # 盤面の左右端に太めの黒線を描画して境界を明確にする
+    left_x = BOARD_OFFSET_X
+    right_x = BOARD_OFFSET_X + 8 * SQUARE_SIZE
+    pygame.draw.rect(screen, BLACK, (left_x-2, BOARD_OFFSET_Y, 4, 8 * SQUARE_SIZE))
+    pygame.draw.rect(screen, BLACK, (right_x-2, BOARD_OFFSET_Y, 4, 8 * SQUARE_SIZE))
     # ギミック枠（上下配置）
     SILVER = (192, 192, 192)
     

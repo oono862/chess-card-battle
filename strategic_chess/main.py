@@ -1263,25 +1263,28 @@ while running:
                         if rect.collidepoint((mx, my)):
                             # '2' のギミックがクリックされたら右上カードを差し替える
                             # map gimmick names to image paths
+                            # Determine target image path for this gimmick
                             if name == '2':
-                                draw_board.current_card_path = 'images/m9(^Д^)/card_TEST_D2_2.png'
+                                target_path = 'images/m9(^Д^)/card_TEST_D2_2.png'
                             elif name == 'e':
-                                draw_board.current_card_path = 'images/m9(^Д^)/card_test_r.png'
+                                target_path = 'images/m9(^Д^)/card_test_r.png'
                             elif name == 'ボ収':
-                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_a.png'
+                                target_path = 'images/m9(^Д^)/card_test_l.png'
                             elif name == '２回復':
-                                draw_board.current_card_path = 'images/m9(^Д^)/card_TEST_S.png'
+                                target_path = 'images/m9(^Д^)/card_TEST_S.png'
                             elif name == '炎':
-                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_t.png'
+                                target_path = 'images/m9(^Д^)/dummy_card_t.png'
                             elif name == '氷':
-                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_m.png'
+                                target_path = 'images/m9(^Д^)/dummy_card_m.png'
                             elif name == '雷':
-                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_c.png'
+                                target_path = 'images/m9(^Д^)/dummy_card_c.png'
                             elif name == '風':
-                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_i.png'
+                                target_path = 'images/m9(^Д^)/dummy_card_i.png'
                             else:
                                 # 他のギミックは未対応（何もせず継続）
                                 continue
+
+                            draw_board.current_card_path = target_path
                             # キャッシュをクリアして即時反映
                             if hasattr(draw_board, 'card_img_cache'):
                                 draw_board.card_img_cache.clear()

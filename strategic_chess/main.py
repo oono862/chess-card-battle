@@ -1161,6 +1161,14 @@ while running:
                                 draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_a.png'
                             elif name == '２回復':
                                 draw_board.current_card_path = 'images/m9(^Д^)/card_TEST_S.png'
+                            elif name == '炎':
+                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_t.png'
+                            elif name == '氷':
+                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_m.png'
+                            elif name == '雷':
+                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_c.png'
+                            elif name == '風':
+                                draw_board.current_card_path = 'images/m9(^Д^)/dummy_card_i.png'
                             else:
                                 # 他のギミックは未対応（何もせず継続）
                                 continue

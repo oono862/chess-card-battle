@@ -124,7 +124,7 @@ def show_start_screen(screen):
     clock = pygame.time.Clock()
     title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)))
     btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)))
-    options = [("1 - Easy", 1), ("2 - Medium", 2), ("3 - Hard", 3), ("4 - Expert", 4)]
+    options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
 
     def show_deck_editor():
         """簡易デッキ作成画面のプレースホルダ。閉じるボタンで戻る。"""
@@ -134,17 +134,18 @@ def show_start_screen(screen):
         btn_font_local = pygame.font.SysFont("Noto_SansJP", max(20, int(SCREEN_HEIGHT * 0.03)))
         while True:
             screen.fill((240, 240, 240))
+            win_w, win_h = screen.get_size()
             title = title_font.render("デッキ作成", True, BLACK)
-            screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 60))
+            screen.blit(title, (win_w//2 - title.get_width()//2, 60))
 
             # プレースホルダ説明
             info = info_font.render("ここにデッキ編集UIを実装します。戻るには下のボタンを押してください。", True, BLACK)
-            screen.blit(info, (WINDOW_WIDTH//2 - info.get_width()//2, 150))
+            screen.blit(info, (win_w//2 - info.get_width()//2, 150))
 
             # 閉じるボタン
             bw, bh = 220, 64
-            bx = WINDOW_WIDTH//2 - bw//2
-            by = WINDOW_HEIGHT - 140
+            bx = win_w//2 - bw//2
+            by = win_h - 140
             brect = pygame.Rect(bx, by, bw, bh)
             mx, my = pygame.mouse.get_pos()
             bcolor = (180,180,180) if brect.collidepoint((mx,my)) else (210,210,210)
@@ -167,15 +168,16 @@ def show_start_screen(screen):
 
     while True:
         screen.fill((200, 200, 200))
+        win_w, win_h = screen.get_size()
         title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
-        screen.blit(title_surf, (WINDOW_WIDTH // 2 - title_surf.get_width() // 2, 80))
+        screen.blit(title_surf, (win_w // 2 - title_surf.get_width() // 2, 80))
 
         btn_w = 300
         btn_h = 80
         spacing = 30
         total_w = len(options) * btn_w + (len(options) - 1) * spacing
-        start_x = WINDOW_WIDTH // 2 - total_w // 2
-        y = WINDOW_HEIGHT // 2 - btn_h // 2
+        start_x = win_w // 2 - total_w // 2
+        y = win_h // 2 - btn_h // 2
 
         mx, my = pygame.mouse.get_pos()
         clicked = False
@@ -191,11 +193,11 @@ def show_start_screen(screen):
             screen.blit(lab, (x + btn_w//2 - lab.get_width()//2, y + btn_h//2 - lab.get_height()//2))
 
         instruct = btn_font.render("キー1-4でも選択できます。Escで終了", True, BLACK)
-        screen.blit(instruct, (WINDOW_WIDTH//2 - instruct.get_width()//2, y + btn_h + 40))
+        screen.blit(instruct, (win_w//2 - instruct.get_width()//2, y + btn_h + 40))
 
         # デッキ作成ボタン（難易度選択の下部、中央に配置）
         deck_w, deck_h = 260, 60
-        deck_x = WINDOW_WIDTH//2 - deck_w//2
+        deck_x = win_w//2 - deck_w//2
         deck_y = y + btn_h + 100
         deck_rect = pygame.Rect(deck_x, deck_y, deck_w, deck_h)
         mx, my = pygame.mouse.get_pos()
@@ -497,6 +499,11 @@ def draw_board():
                 screen, color,
                 (BOARD_OFFSET_X + col * SQUARE_SIZE, BOARD_OFFSET_Y + row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
             )
+    # 盤面の左右端に太めの黒線を描画して境界を明確にする
+    left_x = BOARD_OFFSET_X
+    right_x = BOARD_OFFSET_X + 8 * SQUARE_SIZE
+    pygame.draw.rect(screen, BLACK, (left_x-2, BOARD_OFFSET_Y, 4, 8 * SQUARE_SIZE))
+    pygame.draw.rect(screen, BLACK, (right_x-2, BOARD_OFFSET_Y, 4, 8 * SQUARE_SIZE))
     # ギミック枠（上下配置）
     SILVER = (192, 192, 192)
     
@@ -931,6 +938,27 @@ while running:
     for piece in pieces:
         piece.draw(screen)
 
+    # AIが思考中のときは盤面中央付近に「思考中」のテロップを表示
+    try:
+        if 'cpu_wait' in globals() and cpu_wait and current_turn == 'black' and not game_over:
+            thinking_text = "思考中"
+            # フォントサイズは盤面に合わせて調整
+            tfont = pygame.font.SysFont("Noto_SansJP", max(18, int(SCREEN_HEIGHT * 0.035)), bold=True)
+            txt_surf = render_text_with_outline(tfont, thinking_text, (255, 215, 0), outline_color=(0,0,0))
+            tx = BOARD_OFFSET_X + WIDTH // 2 - txt_surf.get_width() // 2
+            ty = BOARD_OFFSET_Y + HEIGHT // 2 - txt_surf.get_height() // 2
+            # 半透明の背景を用意
+            try:
+                overlay = pygame.Surface((txt_surf.get_width() + 20, txt_surf.get_height() + 12), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 160))
+                screen.blit(overlay, (tx - 10, ty - 6))
+            except Exception:
+                pygame.draw.rect(screen, (0,0,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12))
+            pygame.draw.rect(screen, (255,215,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12), 2)
+            screen.blit(txt_surf, (tx, ty))
+    except Exception:
+        pass
+
     # チェック中の表示（両者チェック中対応）
     if not game_over:
         check_colors = []
@@ -946,25 +974,31 @@ while running:
             # 新しいチェック状態が前回と異なる場合、順序を更新
             if check_colors != draw_board.last_check_colors:
                 draw_board.last_check_colors = check_colors.copy()
-            # 表示（駒の色に応じて位置を変える）
-            for color in draw_board.last_check_colors:
+            # 表示：左余白内（盤の左側スペース）に収める。トップのギミック領域と重ならないよう
+            # に、ギミック行の下あたりに縦並びで表示する。
+            left_margin = BOARD_OFFSET_X
+            # 基準Xは左余白の中央
+            for idx, color in enumerate(draw_board.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
                 check_text = font.render(msg, True, (255, 165, 0))
-                
-                # 駒の色に応じて位置を調整
-                if color == 'black':
-                    # 黒チェック中：現在の位置（盤面右寄り）
-                    text_x = BOARD_OFFSET_X - check_text.get_width() - 30
-                    text_y = BOARD_OFFSET_Y + 100 - SQUARE_SIZE
-                else:  # white
-                    # 白チェック中：黒チェック中の左側
-                    text_x = BOARD_OFFSET_X - check_text.get_width() - 150  # さらに左に120px移動
-                    text_y = BOARD_OFFSET_Y + 100 - SQUARE_SIZE
-                
+
+                text_w = check_text.get_width()
+                text_h = check_text.get_height()
+
+                # 中央配置（左余白内）
+                text_x = max(8, left_margin // 2 - text_w // 2)
+                # トップのギミック行の下に表示（ギミック領域と重ならないように配置）
+                text_y = GIMMICK_ROW_HEIGHT + 10 + idx * (text_h + 8)
+
                 # 背景を半透明の黒で塗りつぶして視認性を向上
-                bg_rect = pygame.Rect(text_x - 10, text_y - 5, check_text.get_width() + 20, check_text.get_height() + 10)
-                pygame.draw.rect(screen, (0, 0, 0, 180), bg_rect)
-                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)  # オレンジの枠線
+                bg_rect = pygame.Rect(text_x - 10, text_y - 5, text_w + 20, text_h + 10)
+                try:
+                    tmp = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+                    tmp.fill((0, 0, 0, 160))
+                    screen.blit(tmp, (bg_rect.x, bg_rect.y))
+                except Exception:
+                    pygame.draw.rect(screen, (0, 0, 0), bg_rect)
+                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)
                 screen.blit(check_text, (text_x, text_y))
 
     if selected_piece:
@@ -1277,8 +1311,9 @@ while running:
     # 黒の手番なら0.5秒待ってからAIで指す
     if current_turn == 'black' and not game_over:
         if 'cpu_wait' in globals() and cpu_wait:
-            if time.time() - cpu_wait_start >= 1.0:
-                # cpu_make_move関数が必要です。未定義の場合は定義してください。
+            # プレイヤー操作後に0.5秒待つ
+            if time.time() - cpu_wait_start >= 0.5:
+                # cpu_make_move関数を呼んでAIの手を反映
                 cpu_make_move(
                     pieces,
                     get_piece_at,
@@ -1290,9 +1325,11 @@ while running:
                 )
                 cpu_wait = False
         else:
-            # 既存のAI自動指し手処理
-            ai_result = ai_move(pieces)
-            if ai_result:
+            # TURN_CHANGE_EVENT が来なかった場合でも必ず待機してからAIを動かすように
+            cpu_wait = True
+            cpu_wait_start = time.time()
+            ai_result = None
+            if False:
                 from_row = ai_result['from_row']
                 from_col = ai_result['from_col']
                 to_row = ai_result['to_row']

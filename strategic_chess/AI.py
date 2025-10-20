@@ -10,17 +10,29 @@ import time  # 追加
 # 4: Expert (2手先読み + 高度な評価関数)
 AI_DIFFICULTY = 2  # デフォルトは Medium
 
-def get_valid_moves(piece, pieces, ROWS=8, COLS=8):
-    # piece: dict, pieces: list of dict
+# パフォーマンス関連定数
+MAX_ROOT_MOVES = 30        # ルートで評価する最大手数（多すぎる場合に打ち切る）
+MAX_TIME_PER_MOVE = 0.6    # Expert の探索で許容する最大時間（秒）
+SEARCH_DEADLINE = 0       # 探索の期限（time.time() 値）。検索開始時に設定する。
+
+def build_occupancy_map(pieces):
+    """(row,col) -> piece の辞書を返す。高速な占有判定のために使う。"""
+    return {(p['row'], p['col']): p for p in pieces}
+
+
+def get_valid_moves(piece, pieces, occupancy_map=None, ROWS=8, COLS=8):
+    """高速化版: occupancy_map を使って占有判定を O(1) にする。"""
     moves = []
+    if occupancy_map is None:
+        occupancy_map = build_occupancy_map(pieces)
+
     def is_occupied(row, col, same_color=None):
-        for p in pieces:
-            if p['row'] == row and p['col'] == col:
-                if same_color is None:
-                    return True
-                if (p['color'] == piece['color']) == same_color:
-                    return True
-        return False
+        p = occupancy_map.get((row, col))
+        if p is None:
+            return False
+        if same_color is None:
+            return True
+        return (p['color'] == piece['color']) == same_color
 
     def add_direction(dr, dc, max_steps=8):
         for step in range(1, max_steps + 1):
@@ -155,18 +167,20 @@ def evaluate_board_advanced(pieces):
     black_mobility = 0
     white_mobility = 0
     
+    # 盤面毎の占有マップを作成して get_valid_moves の内部ループを高速化
+    occupancy_map = build_occupancy_map(pieces)
     for p in pieces:
         # 駒の基本価値
         value = piece_values.get(p['name'], 0)
-        
+
         # 位置ボーナス（ナイト、ビショップ、ポーンに適用）
         position_bonus = 0
         if p['name'] in ['N', 'B', 'P']:
             position_bonus = center_bonus[p['row']][p['col']] * 0.1
-        
+
         # モビリティ（動ける手の数）
-        mobility = len(get_valid_moves(p, pieces))
-        
+        mobility = len(get_valid_moves(p, pieces, occupancy_map))
+
         if p['color'] == 'black':
             score += value + position_bonus
             black_mobility += mobility
@@ -232,11 +246,28 @@ def minimax_evaluation(pieces, depth, maximizing_player, alpha, beta):
     if depth == 0:
         return evaluate_board_advanced(pieces)
     
+    # 探索時間の上限チェック
+    if SEARCH_DEADLINE and time.time() > SEARCH_DEADLINE:
+        return evaluate_board(pieces)
+
+    # 占有マップを作って手の生成を高速化
+    occupancy_map = build_occupancy_map(pieces)
+
     if maximizing_player:  # 黒（AI）のターン
         max_eval = float('-inf')
         for piece in pieces:
             if piece['color'] == 'black':
-                for move in get_valid_moves(piece, pieces):
+                moves = get_valid_moves(piece, pieces, occupancy_map)
+                # 単純な手選択順: 取りを優先してアルファベータの効率を上げる
+                def move_score(m):
+                    target = occupancy_map.get((m[0], m[1]))
+                    return 1 if (target and target['color'] == 'white') else 0
+                moves.sort(key=move_score, reverse=True)
+
+                for move in moves:
+                    # 時間切れチェック
+                    if SEARCH_DEADLINE and time.time() > SEARCH_DEADLINE:
+                        return evaluate_board(pieces)
                     new_pieces = make_move_and_update(piece, move, pieces)
                     # チェックで自滅する手は除外
                     if is_in_check(new_pieces, 'black'):
@@ -253,7 +284,15 @@ def minimax_evaluation(pieces, depth, maximizing_player, alpha, beta):
         min_eval = float('inf')
         for piece in pieces:
             if piece['color'] == 'white':
-                for move in get_valid_moves(piece, pieces):
+                moves = get_valid_moves(piece, pieces, occupancy_map)
+                def move_score(m):
+                    target = occupancy_map.get((m[0], m[1]))
+                    return 1 if (target and target['color'] == 'black') else 0
+                moves.sort(key=move_score, reverse=True)
+
+                for move in moves:
+                    if SEARCH_DEADLINE and time.time() > SEARCH_DEADLINE:
+                        return evaluate_board(pieces)
                     new_pieces = make_move_and_update(piece, move, pieces)
                     if is_in_check(new_pieces, 'white'):
                         continue
@@ -276,7 +315,23 @@ def get_expert_move(pieces, legal_moves, safe_moves):
     
     # 安全な手がある場合はその中から、なければ合法手から選ぶ
     moves_to_evaluate = safe_moves if safe_moves else legal_moves
-    
+
+    # 探索の時間制限を設定
+    global SEARCH_DEADLINE
+    SEARCH_DEADLINE = time.time() + MAX_TIME_PER_MOVE
+
+    # ルートで評価する手数を制限する（取りや重要度でソートして上位を採用）
+    def simple_move_priority(md):
+        # 取る手なら高評価
+        for p in pieces:
+            if (p['row'], p['col']) == (md['to_row'], md['to_col']):
+                return 10
+        return 0
+
+    moves_to_evaluate = sorted(moves_to_evaluate, key=simple_move_priority, reverse=True)
+    if len(moves_to_evaluate) > MAX_ROOT_MOVES:
+        moves_to_evaluate = moves_to_evaluate[:MAX_ROOT_MOVES]
+
     for move_dict in moves_to_evaluate:
         # 元の駒を見つける
         piece = None
@@ -302,7 +357,8 @@ def get_expert_move(pieces, legal_moves, safe_moves):
 def main():
     # 標準入力から盤面情報を受け取る
     board_json = sys.stdin.readline()
-    time.sleep(0.5)  # 0.5秒待つ
+    # 最小限のウェイトに短縮（サブプロセス間の同期のための僅かな待ち）
+    time.sleep(0.05)
 
     # --- main.pyからの新しい入力形式に対応 ---
     data = json.loads(board_json)
@@ -380,6 +436,10 @@ def main():
         elif legal_moves:
             move = random.choice(legal_moves)
     
+    # 応答前に探索デッドラインをクリア
+    global SEARCH_DEADLINE
+    SEARCH_DEADLINE = 0
+
     print(json.dumps(move))
     sys.stdout.flush()
 

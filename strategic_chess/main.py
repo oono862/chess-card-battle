@@ -7,6 +7,20 @@ import time  # 追加
 
 pygame.init()
 
+# --- AI thinking display settings ---
+# 表示を有効にする/無効にする
+THINKING_ENABLED = True
+# AIが指す前の待機時間（秒、プレイヤー操作後の遅延）
+AI_THINK_DELAY = 0.5
+# ドット進捗の切替周波数 (Hz)
+THINK_DOT_FREQ = 4.0
+# フェードを有効にする
+THINKING_FADE = True
+
+# 簡易の画面通知（設定変更時に数秒表示する）
+notif_message = None
+notif_until = 0
+
 # 色定数（draw_boardより前に必ず定義）
 WHITE = (240, 240, 240)
 GRAY = (100, 100, 100)
@@ -938,24 +952,70 @@ while running:
     for piece in pieces:
         piece.draw(screen)
 
-    # AIが思考中のときは盤面中央付近に「思考中」のテロップを表示
+    # AIが思考中のときは盤面中央付近に「思考中」のテロップを表示（設定対応）
     try:
-        if 'cpu_wait' in globals() and cpu_wait and current_turn == 'black' and not game_over:
+        if THINKING_ENABLED and 'cpu_wait' in globals() and cpu_wait and current_turn == 'black' and not game_over:
             thinking_text = "思考中"
             # フォントサイズは盤面に合わせて調整
             tfont = pygame.font.SysFont("Noto_SansJP", max(18, int(SCREEN_HEIGHT * 0.035)), bold=True)
-            txt_surf = render_text_with_outline(tfont, thinking_text, (255, 215, 0), outline_color=(0,0,0))
+
+            # 経過時間
+            elapsed = 0.0
+            if 'cpu_wait_start' in globals() and cpu_wait_start:
+                elapsed = time.time() - cpu_wait_start
+
+            # ドット数 (1..3)
+            dots = int((elapsed * THINK_DOT_FREQ) % 3) + 1
+            base_text = thinking_text
+            dot_text = '・' * dots
+            full_text = f"{base_text}{dot_text}"
+
+            # フェード係数 (0..1)
+            alpha = 1.0
+            if THINKING_FADE:
+                alpha = min(1.0, max(0.0, elapsed / max(0.001, AI_THINK_DELAY)))
+
+            txt_surf = render_text_with_outline(tfont, full_text, (255, 215, 0), outline_color=(0,0,0))
             tx = BOARD_OFFSET_X + WIDTH // 2 - txt_surf.get_width() // 2
             ty = BOARD_OFFSET_Y + HEIGHT // 2 - txt_surf.get_height() // 2
-            # 半透明の背景を用意
+
+            # 半透明の背景を用意（フェードに合わせてアルファを変える）
+            bg_w = txt_surf.get_width() + 20
+            bg_h = txt_surf.get_height() + 12
+            bg_alpha = int(160 * alpha)
             try:
-                overlay = pygame.Surface((txt_surf.get_width() + 20, txt_surf.get_height() + 12), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 160))
+                overlay = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, bg_alpha))
                 screen.blit(overlay, (tx - 10, ty - 6))
             except Exception:
-                pygame.draw.rect(screen, (0,0,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12))
-            pygame.draw.rect(screen, (255,215,0), (tx - 10, ty - 6, txt_surf.get_width() + 20, txt_surf.get_height() + 12), 2)
-            screen.blit(txt_surf, (tx, ty))
+                pygame.draw.rect(screen, (0,0,0), (tx - 10, ty - 6, bg_w, bg_h))
+
+            # テキストにアルファを乗算してフェード効果を出す
+            try:
+                txt_copy = txt_surf.copy()
+                if alpha < 1.0:
+                    temp = pygame.Surface(txt_copy.get_size(), pygame.SRCALPHA)
+                    temp.blit(txt_copy, (0,0))
+                    temp.fill((255,255,255,int(255*alpha)), special_flags=pygame.BLEND_RGBA_MULT)
+                    txt_copy = temp
+                screen.blit(txt_copy, (tx, ty))
+            except Exception:
+                screen.blit(txt_surf, (tx, ty))
+    except Exception:
+        pass
+
+    # 通知表示（設定変更時に画面左上へ短時間表示）
+    try:
+        if notif_message and time.time() < notif_until:
+            nf_font = pygame.font.SysFont("Noto_SansJP", max(14, int(SCREEN_HEIGHT * 0.02)))
+            nf_surf = nf_font.render(notif_message, True, GOLD)
+            try:
+                tmp = pygame.Surface((nf_surf.get_width() + 12, nf_surf.get_height() + 8), pygame.SRCALPHA)
+                tmp.fill((0,0,0,150))
+                screen.blit(tmp, (10, 10))
+            except Exception:
+                pygame.draw.rect(screen, (0,0,0), (10,10,nf_surf.get_width()+12,nf_surf.get_height()+8))
+            screen.blit(nf_surf, (16, 14))
     except Exception:
         pass
 
@@ -1174,6 +1234,22 @@ while running:
             elif (event.key == pygame.K_F4 and (mods & pygame.KMOD_ALT)) or (event.key == pygame.K_q and (mods & pygame.KMOD_CTRL)):
                 running = False
 
+            # T キーで思考中表示のトグル（オン/オフ）
+            elif event.key == pygame.K_t:
+                THINKING_ENABLED = not THINKING_ENABLED
+                notif_message = f"思考中表示: {'ON' if THINKING_ENABLED else 'OFF'}"
+                notif_until = time.time() + 2.0
+
+            # '[' と ']' で AI_THINK_DELAY の増減（0.1秒刻み）
+            elif event.key == pygame.K_LEFTBRACKET:
+                AI_THINK_DELAY = max(0.0, AI_THINK_DELAY - 0.1)
+                notif_message = f"AI遅延: {AI_THINK_DELAY:.1f}s"
+                notif_until = time.time() + 2.0
+            elif event.key == pygame.K_RIGHTBRACKET:
+                AI_THINK_DELAY = min(5.0, AI_THINK_DELAY + 0.1)
+                notif_message = f"AI遅延: {AI_THINK_DELAY:.1f}s"
+                notif_until = time.time() + 2.0
+
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if game_over:
                 continue
@@ -1308,11 +1384,11 @@ while running:
                         cpu_wait_start = time.time()
                 selected_piece = None
 
-    # 黒の手番なら0.5秒待ってからAIで指す
+    # 黒の手番なら設定された待機時間を待ってからAIで指す
     if current_turn == 'black' and not game_over:
         if 'cpu_wait' in globals() and cpu_wait:
-            # プレイヤー操作後に0.5秒待つ
-            if time.time() - cpu_wait_start >= 0.5:
+            # プレイヤー操作後に設定された待機時間を待つ
+            if time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # cpu_make_move関数を呼んでAIの手を反映
                 cpu_make_move(
                     pieces,

@@ -953,25 +953,31 @@ while running:
             # 新しいチェック状態が前回と異なる場合、順序を更新
             if check_colors != draw_board.last_check_colors:
                 draw_board.last_check_colors = check_colors.copy()
-            # 表示（駒の色に応じて位置を変える）
-            for color in draw_board.last_check_colors:
+            # 表示：左余白内（盤の左側スペース）に収める。トップのギミック領域と重ならないよう
+            # に、ギミック行の下あたりに縦並びで表示する。
+            left_margin = BOARD_OFFSET_X
+            # 基準Xは左余白の中央
+            for idx, color in enumerate(draw_board.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
                 check_text = font.render(msg, True, (255, 165, 0))
-                
-                # 駒の色に応じて位置を調整
-                if color == 'black':
-                    # 黒チェック中：現在の位置（盤面右寄り）
-                    text_x = BOARD_OFFSET_X - check_text.get_width() - 30
-                    text_y = BOARD_OFFSET_Y + 100 - SQUARE_SIZE
-                else:  # white
-                    # 白チェック中：黒チェック中の左側
-                    text_x = BOARD_OFFSET_X - check_text.get_width() - 150  # さらに左に120px移動
-                    text_y = BOARD_OFFSET_Y + 100 - SQUARE_SIZE
-                
+
+                text_w = check_text.get_width()
+                text_h = check_text.get_height()
+
+                # 中央配置（左余白内）
+                text_x = max(8, left_margin // 2 - text_w // 2)
+                # トップのギミック行の下に表示（ギミック領域と重ならないように配置）
+                text_y = GIMMICK_ROW_HEIGHT + 10 + idx * (text_h + 8)
+
                 # 背景を半透明の黒で塗りつぶして視認性を向上
-                bg_rect = pygame.Rect(text_x - 10, text_y - 5, check_text.get_width() + 20, check_text.get_height() + 10)
-                pygame.draw.rect(screen, (0, 0, 0, 180), bg_rect)
-                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)  # オレンジの枠線
+                bg_rect = pygame.Rect(text_x - 10, text_y - 5, text_w + 20, text_h + 10)
+                try:
+                    tmp = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+                    tmp.fill((0, 0, 0, 160))
+                    screen.blit(tmp, (bg_rect.x, bg_rect.y))
+                except Exception:
+                    pygame.draw.rect(screen, (0, 0, 0), bg_rect)
+                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)
                 screen.blit(check_text, (text_x, text_y))
 
     if selected_piece:
@@ -1284,8 +1290,9 @@ while running:
     # 黒の手番なら0.5秒待ってからAIで指す
     if current_turn == 'black' and not game_over:
         if 'cpu_wait' in globals() and cpu_wait:
-            if time.time() - cpu_wait_start >= 1.0:
-                # cpu_make_move関数が必要です。未定義の場合は定義してください。
+            # プレイヤー操作後に0.5秒待つ
+            if time.time() - cpu_wait_start >= 0.5:
+                # cpu_make_move関数を呼んでAIの手を反映
                 cpu_make_move(
                     pieces,
                     get_piece_at,
@@ -1297,9 +1304,11 @@ while running:
                 )
                 cpu_wait = False
         else:
-            # 既存のAI自動指し手処理
-            ai_result = ai_move(pieces)
-            if ai_result:
+            # TURN_CHANGE_EVENT が来なかった場合でも必ず待機してからAIを動かすように
+            cpu_wait = True
+            cpu_wait_start = time.time()
+            ai_result = None
+            if False:
                 from_row = ai_result['from_row']
                 from_col = ai_result['from_col']
                 to_row = ai_result['to_row']

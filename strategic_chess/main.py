@@ -4,6 +4,7 @@ from gimmick import get_gimmick_list, FireGimmick, IceGimmick, ThunderGimmick, W
 import subprocess  # 追加
 import json        # 追加
 import time  # 追加
+import random
 
 pygame.init()
 
@@ -39,6 +40,21 @@ for g in gimmicks:
 # ギミック所持数管理（初期値0）
 player_gimmick_counts = {g.name: 0 for g in gimmicks}  # 左側（プレイヤー用）
 cpu_gimmick_counts = {g.name: 0 for g in gimmicks}     # 右側（CPU用）
+
+# デッキと手札（ランダム配布）
+player_hand = []  # list of gimmick objects
+ai_hand = []
+
+def deal_hands():
+    """ランダムにプレイヤーとAIに各4枚ずつ配る。種類ごとに等確率で選ぶ（重複あり）。"""
+    global player_hand, ai_hand
+    # pick 8 cards total, allow duplicates
+    picks = random.choices(gimmicks, k=8)
+    player_hand = picks[:4]
+    ai_hand = picks[4:]
+
+# 初期配布
+deal_hands()
 
 # 画面表示の設定
 info = pygame.display.Info()
@@ -504,6 +520,8 @@ def draw_board():
 
     # フレームごとにクリック領域リストを初期化（必ず存在させる）
     draw_board.player_gimmick_click_areas = []
+    # カード描画のクリック領域（上下のギミック領域内に並べたカード用）
+    draw_board.card_click_areas = []
 
     # 盤面をオフセット位置から描画
     for row in range(8):
@@ -688,83 +706,119 @@ def draw_board():
     gimmick_width = WINDOW_WIDTH // gimmicks_per_row
     row_height = GIMMICK_ROW_HEIGHT // 2
     
-    for i, gimmick in enumerate(gimmicks):
-        gimmick_name = gimmick.name
-        count_player = player_gimmick_counts.get(gimmick_name, 0)
-        count_cpu = cpu_gimmick_counts.get(gimmick_name, 0)
-        
-        # 上段(0-3)と下段(4-7)の配置を決定
-        row = i // gimmicks_per_row  # 0 or 1
-        col = i % gimmicks_per_row   # 0, 1, 2, 3
-        
-        # --- 上部のギミック枠（AI用・銀色） ---
-        y_top_upper = row_height // 2 + row * row_height
-        circle_center_top = (col * gimmick_width + gimmick_width // 2, y_top_upper)
-        pygame.draw.circle(screen, SILVER, circle_center_top, circle_radius)
-        pygame.draw.circle(screen, BLACK, circle_center_top, circle_radius, 2)
-        
-        cache_key = (gimmick_name, "top")
-        if cache_key not in font_cache:
-            gimmick_text_surface = text_font.render(gimmick_name, True, BLACK)
-            x_surface = x_font.render("×", True, BLACK)
-            font_cache[cache_key] = (gimmick_text_surface, x_surface)
+    # --- ギミック8アイコン表示をやめ、上下のスペースにそれぞれ4枚ずつカードを横並びで表示 ---
+    # player_hand / ai_hand は deal_hands() でランダムに配られている想定
+    try:
+        # カード幅を利用可能幅に合わせて決定（最大140）
+        side_padding = 20
+        max_card_w = 140
+        # 利用可能幅（左右パディングを残す）
+        avail_w = WINDOW_WIDTH - side_padding * 2
+        card_w = min(max_card_w, int(avail_w / 6))
+        card_h = int(card_w * (88/63))
+        # ギミック行に収まるように高さを制限（行高さの80%以内）
+        max_card_h = int(GIMMICK_ROW_HEIGHT * 0.8)
+        if card_h > max_card_h:
+            card_h = max_card_h
+            card_w = int(card_h * (63/88))
+
+        # 水平間隔を均等に計算して4枚を中央揃え
+        total_cards = 4
+        if avail_w <= total_cards * card_w:
+            # 幅が足りない場合は最小ギャップを確保して左寄せ（はみ出しはしないように縮小）
+            gap = 8
+            card_w = max(40, int((avail_w - gap * (total_cards + 1)) / total_cards))
+            card_h = int(card_w * (88/63))
+            total_w_cards = total_cards * card_w + gap * (total_cards - 1)
+            start_x = side_padding
         else:
-            gimmick_text_surface, x_surface = font_cache[cache_key]
-        
-        gimmick_text_rect = gimmick_text_surface.get_rect(center=circle_center_top)
-        screen.blit(gimmick_text_surface, gimmick_text_rect)
-        
-        count_surface = count_font.render(str(count_cpu), True, BLACK)
-        x_rect = x_surface.get_rect()
-        count_rect = count_surface.get_rect()
-        right_of_circle = circle_center_top[0] + circle_radius - 15
-        below_circle = circle_center_top[1] + circle_radius - 2
-        x_rect.topleft = (right_of_circle, below_circle)
-        count_rect.topleft = (x_rect.right + 1, below_circle)
-        screen.blit(x_surface, x_rect)
-        screen.blit(count_surface, count_rect)
-        
-        # --- 下部のギミック枠（プレイヤー用・金色） ---
-        # プレイヤー側は配置を逆にする：上段に炎氷雷風、下段に２ｅ収回
-        player_row = 1 - row  # 行を逆転（0→1, 1→0）
-        player_gimmick_index = player_row * gimmicks_per_row + col
-        if player_gimmick_index < len(gimmicks):
-            player_gimmick = gimmicks[player_gimmick_index]
-            player_gimmick_name = player_gimmick.name
-            player_count = player_gimmick_counts.get(player_gimmick_name, 0)
-            
-            y_bottom_upper = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT + row_height // 2 + row * row_height
-            circle_center_bottom = (col * gimmick_width + gimmick_width // 2, y_bottom_upper)
-            pygame.draw.circle(screen, GOLD, circle_center_bottom, circle_radius)
-            pygame.draw.circle(screen, BLACK, circle_center_bottom, circle_radius, 2)
-            
-            cache_key = (player_gimmick_name, "bottom")
-            if cache_key not in font_cache:
-                gimmick_text_surface = text_font.render(player_gimmick_name, True, BLACK)
-                x_surface = x_font.render("×", True, BLACK)
-                font_cache[cache_key] = (gimmick_text_surface, x_surface)
-            else:
-                gimmick_text_surface, x_surface = font_cache[cache_key]
-            
-            gimmick_text_rect = gimmick_text_surface.get_rect(center=circle_center_bottom)
-            screen.blit(gimmick_text_surface, gimmick_text_rect)
-            
-            count_surface = count_font.render(str(player_count), True, BLACK)
-            x_rect = x_surface.get_rect()
-            count_rect = count_surface.get_rect()
-            right_of_circle = circle_center_bottom[0] + circle_radius - 15
-            below_circle = circle_center_bottom[1] + circle_radius - 2
-            x_rect.topleft = (right_of_circle, below_circle)
-            count_rect.topleft = (x_rect.right + 1, below_circle)
-            screen.blit(x_surface, x_rect)
-            screen.blit(count_surface, count_rect)
-            # プレイヤーのギミックサークルをクリック可能にするため、
-            # クリック領域と名前を draw_board に保存しておく（イベント処理で参照）
-            if not hasattr(draw_board, 'player_gimmick_click_areas'):
-                draw_board.player_gimmick_click_areas = []
-            # 各フレームで上書きするので一旦リストをクリアするのは呼び出し元で行う
-            draw_board.player_gimmick_click_areas.append((player_gimmick_name, pygame.Rect(circle_center_bottom[0]-circle_radius, circle_center_bottom[1]-circle_radius, circle_radius*2, circle_radius*2)))
+            gap = int((avail_w - total_cards * card_w) / (total_cards + 1))
+            total_w_cards = total_cards * card_w + gap * (total_cards - 1)
+            # 中央揃え: 左余白から開始Xを決める
+            start_x = side_padding + (avail_w - total_w_cards) // 2
+
+        # 上部 (AI) - GIMMICK_ROW_HEIGHT 内に配置（中央寄せ、下に余裕を持たせる）
+        top_y = int((GIMMICK_ROW_HEIGHT - card_h) / 2)
+        for idx, card in enumerate(ai_hand):
+            cx = start_x + idx * (card_w + gap)
+            try:
+                icon_path = getattr(card, 'icon', None)
+                if icon_path:
+                    key = (icon_path, card_w, card_h)
+                    if not hasattr(draw_board, 'gimmick_icon_cache'):
+                        draw_board.gimmick_icon_cache = {}
+                    if key in draw_board.gimmick_icon_cache:
+                        surf = draw_board.gimmick_icon_cache[key]
+                    else:
+                        img = pygame.image.load(icon_path)
+                        surf = pygame.transform.smoothscale(img, (card_w, card_h)).convert_alpha()
+                        draw_board.gimmick_icon_cache[key] = surf
+                else:
+                    surf = None
+                if surf:
+                    # プレイヤーと同じ向きで表示（反転しない）
+                    screen.blit(surf, (cx, top_y))
+                else:
+                    # 画像がない場合は代替矩形と名称
+                    pygame.draw.rect(screen, (180,180,180), (cx, top_y, card_w, card_h))
+                    name = getattr(card, 'name', 'カード')
+                    t = text_font.render(name, True, BLACK)
+                    screen.blit(t, (cx + 6, top_y + 6))
+                    # AI側はクリックでプレビューしないため、クリック領域は登録しない
+            except Exception:
+                # 個別のカード描画で失敗しても他は描画を続行
+                try:
+                    pygame.draw.rect(screen, (180,180,180), (cx, top_y, card_w, card_h))
+                except Exception:
+                    pass
+
+        # 下部 (Player) - 下のギミックエリアに配置
+        bottom_y = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT + int((GIMMICK_ROW_HEIGHT - card_h) / 2)
+        for idx, card in enumerate(player_hand):
+            cx = start_x + idx * (card_w + gap)
+            try:
+                icon_path = getattr(card, 'icon', None)
+                if icon_path:
+                    key = (icon_path, card_w, card_h)
+                    if not hasattr(draw_board, 'gimmick_icon_cache'):
+                        draw_board.gimmick_icon_cache = {}
+                    if key in draw_board.gimmick_icon_cache:
+                        surf = draw_board.gimmick_icon_cache[key]
+                    else:
+                        img = pygame.image.load(icon_path)
+                        surf = pygame.transform.smoothscale(img, (card_w, card_h)).convert_alpha()
+                        draw_board.gimmick_icon_cache[key] = surf
+                else:
+                    surf = None
+                if surf:
+                    screen.blit(surf, (cx, bottom_y))
+                    try:
+                        rect = pygame.Rect(cx, bottom_y, card_w, card_h)
+                        draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
+                    except Exception:
+                        pass
+                else:
+                    pygame.draw.rect(screen, (220,220,150), (cx, bottom_y, card_w, card_h))
+                    name = getattr(card, 'name', 'カード')
+                    t = text_font.render(name, True, BLACK)
+                    screen.blit(t, (cx + 6, bottom_y + 6))
+                    try:
+                        rect = pygame.Rect(cx, bottom_y, card_w, card_h)
+                        draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
+                    except Exception:
+                        pass
+                # クリック領域は手札に対して別途扱う場合はここで追加可能
+            except Exception:
+                try:
+                    pygame.draw.rect(screen, (220,220,150), (cx, bottom_y, card_w, card_h))
+                except Exception:
+                    pass
+    except Exception:
+        # 表示に失敗しても致命的にしない
+        pass
     # game_over の表示はメインループ側で再戦画面を表示するため、ここでは描画しない
+
+    # （旧）右側に表示していた手札ブロックは削除しました。上下エリアに4枚ずつ表示する実装を使用します。
 
 def get_clicked_pos(pos):
     x, y = pos
@@ -1345,6 +1399,24 @@ while running:
                                 draw_board.card_img_cache.clear()
                             print('DEBUG: Gimmick clicked, set current_card_path ->', draw_board.current_card_path)
                             break
+                # カード領域のクリック判定（上下の手札）
+                if hasattr(draw_board, 'card_click_areas'):
+                    mx, my = pygame.mouse.get_pos()
+                    for card_obj, icon_path, rect in draw_board.card_click_areas:
+                        try:
+                            if rect.collidepoint((mx, my)):
+                                # アイコンパスがある場合は右上に拡大表示
+                                if icon_path:
+                                    draw_board.current_card_path = icon_path
+                                else:
+                                    # アイコンがなければ None（またはカード名に応じた画像を設定する拡張可）
+                                    draw_board.current_card_path = None
+                                if hasattr(draw_board, 'card_img_cache'):
+                                    draw_board.card_img_cache.clear()
+                                print('DEBUG: Card clicked, set current_card_path ->', draw_board.current_card_path)
+                                break
+                        except Exception:
+                            pass
             except Exception:
                 pass
 

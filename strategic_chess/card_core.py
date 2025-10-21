@@ -17,7 +17,7 @@ This file is pure Python and UI-agnostic so it can be tested independently.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Literal, Dict, Any
 import random
 
 
@@ -26,6 +26,19 @@ import random
 # -----------------------------
 
 EffectFn = Callable[["Game", "PlayerState"], str]
+PrecheckFn = Callable[["Game", "PlayerState"], Optional[str]]  # None: OK, str: error message
+
+
+@dataclass
+class PendingAction:
+    """Represents a UI-required follow-up action (e.g., choose a card to discard).
+
+    This demo only supports 'discard' selection from hand. Other target types
+    like board tiles or enemy pieces are declared for future integration with
+    the chess part, and are logged as TODO when triggered.
+    """
+    kind: Literal["discard", "target_tile", "target_piece"]
+    info: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -33,6 +46,7 @@ class Card:
     name: str
     cost: int
     effect: EffectFn
+    precheck: Optional[PrecheckFn] = None
 
     def can_play(self, player: "PlayerState") -> bool:
         return self.cost <= player.pp_current
@@ -72,6 +86,10 @@ class PlayerState:
     graveyard: List[Card] = field(default_factory=list)
     pp_max: int = 3
     pp_current: int = 3
+    hand_limit: int = 7
+    # Hooks for chess integration / movement modifiers
+    next_move_can_jump: bool = False
+    extra_moves_this_turn: int = 0
 
     def reset_pp(self) -> None:
         self.pp_current = self.pp_max
@@ -88,40 +106,91 @@ class Game:
     player: PlayerState
     turn: int = 1
     log: List[str] = field(default_factory=list)
+    pending: Optional[PendingAction] = None
+    # Placeholders for chess integration
+    blocked_tiles: Dict[Any, int] = field(default_factory=dict)  # tile -> turns left
+    frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
+
+    # ---- draw helper with hand limit ----
+    def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
+        """Draw up to n cards to hand respecting hand_limit.
+
+        Returns a list of (card, added) where added=False means the card
+        could not be added due to hand limit and was sent to graveyard.
+        """
+        results: List[Tuple[Optional[Card], bool]] = []
+        for _ in range(n):
+            c = self.player.deck.draw()
+            if c is None:
+                results.append((None, False))
+                continue
+            if len(self.player.hand.cards) >= self.player.hand_limit:
+                # overflow -> send to graveyard
+                self.player.graveyard.append(c)
+                self.log.append(f"手札上限{self.player.hand_limit}のため『{c.name}』は墓地へ。")
+                results.append((c, False))
+            else:
+                self.player.hand.add(c)
+                results.append((c, True))
+        return results
 
     def setup_battle(self) -> None:
         """Initial draw of 4 cards at battle start and PP reset."""
         self.player.reset_pp()
-        for _ in range(4):
-            drawn = self.player.deck.draw()
-            if drawn:
-                self.player.hand.add(drawn)
-        self.log.append("Battle start: drew 4 cards, PP reset to max.")
+        self.draw_to_hand(4)
+        self.log.append("バトル開始: 手札を4枚引き、PPを最大まで回復しました。")
 
     def start_turn(self) -> None:
         """At the start of each turn: draw 1 and restore PP to max."""
         self.turn += 1 if self.turn > 0 else 1
         self.player.reset_pp()
-        drawn = self.player.deck.draw()
-        if drawn:
-            self.player.hand.add(drawn)
-            self.log.append(f"Turn {self.turn} start: drew '{drawn.name}', PP restored to {self.player.pp_max}.")
+        # Decay board statuses (placeholder)
+        for k in list(self.blocked_tiles.keys()):
+            self.blocked_tiles[k] -= 1
+            if self.blocked_tiles[k] <= 0:
+                del self.blocked_tiles[k]
+        for k in list(self.frozen_pieces.keys()):
+            self.frozen_pieces[k] -= 1
+            if self.frozen_pieces[k] <= 0:
+                del self.frozen_pieces[k]
+
+        self.player.extra_moves_this_turn = 0
+        self.player.next_move_can_jump = False
+        res = self.draw_to_hand(1)
+        if not res or res[0][0] is None:
+            self.log.append(f"ターン{self.turn}開始: 山札が空。PPを{self.player.pp_max}に回復。")
         else:
-            self.log.append(f"Turn {self.turn} start: deck empty, PP restored to {self.player.pp_max}.")
+            c, added = res[0]
+            if added:
+                self.log.append(f"ターン{self.turn}開始: 『{c.name}』を1枚ドロー。PPを{self.player.pp_max}に回復。")
+            else:
+                self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
 
     def play_card(self, hand_index: int) -> Tuple[bool, str]:
         """Attempt to play a card from hand; returns (success, message)."""
+        if self.pending is not None:
+            return False, "操作待ち: 先に保留中の選択を完了してください。"
         if not (0 <= hand_index < len(self.player.hand.cards)):
-            return False, "Invalid hand index."
+            return False, "手札の番号が不正です。"
         card = self.player.hand.cards[hand_index]
         if not card.can_play(self.player):
-            return False, f"Not enough PP ({self.player.pp_current}) for '{card.name}' (cost {card.cost})."
+            return False, f"PPが不足しています（現在{self.player.pp_current}）。『{card.name}』のコストは{card.cost}です。"
+        # Optional precheck (e.g., cannot play if graveyard empty)
+        if card.precheck is not None:
+            err = card.precheck(self, self.player)
+            if err:
+                return False, err
         # Spend PP and resolve effect
         assert self.player.spend_pp(card.cost)
         self.player.hand.remove_at(hand_index)
-        self.player.graveyard.append(card)
+        # Resolve effect BEFORE sending the card itself to graveyard
         msg = card.effect(self, self.player)
-        msg_full = f"Played '{card.name}' (cost {card.cost}). {msg} PP now {self.player.pp_current}/{self.player.pp_max}."
+        # If the effect created a pending action, remember which card caused it
+        if self.pending is not None:
+            self.pending.info.setdefault('source_card_name', card.name)
+        # After resolution, move the used card to graveyard
+        self.player.graveyard.append(card)
+        msg_full = f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{self.player.pp_current}/{self.player.pp_max}。"
         self.log.append(msg_full)
         return True, msg_full
 
@@ -131,22 +200,22 @@ class Game:
 # -----------------------------
 
 def eff_draw1(game: Game, player: PlayerState) -> str:
-    c = player.deck.draw()
-    if c is None:
-        return "Deck empty: could not draw."
-    player.hand.add(c)
-    return f"Drew '{c.name}'."
+    res = game.draw_to_hand(1)
+    if not res or res[0][0] is None:
+        return "山札が空のためドローできません。"
+    c, added = res[0]
+    return f"『{c.name}』をドロー。" if added else f"手札上限のため『{c.name}』は墓地へ。"
 
 
 def eff_gain_pp1(game: Game, player: PlayerState) -> str:
     before = player.pp_current
     player.pp_current = min(player.pp_current + 1, player.pp_max)
-    return f"PP +1 ({before}->{player.pp_current})."
+    return f"PP+1（{before}→{player.pp_current}）。"
 
 
 def eff_placeholder_extra_move(game: Game, player: PlayerState) -> str:
     # Placeholder for chess integration, e.g., grant an extra move this turn
-    return "Grant an extra chess move (placeholder)."
+    return "チェスの追加手番を付与（仮）。"
 
 
 def make_sample_deck() -> Deck:
@@ -174,6 +243,122 @@ def new_game_with_sample_deck() -> Game:
     return game
 
 
+# -------------------------------------------------------
+# Extended effects based on provided card table (Japanese)
+# -------------------------------------------------------
+
+def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
+    """灼熱(1): 盤面の駒のいないマスを1つ選択→相手は次の相手ターンから2ターン通れない。
+
+    Demo: declare a pending target. Real board integration should apply
+    'blocked_tiles[tile] = turns'.
+    """
+    game.pending = PendingAction(
+        kind="target_tile",
+        info={"turns": 2, "note": "Block chosen tile for 2 turns (opponent)."},
+    )
+    return "封鎖するマスを選択してください（2ターン・デモでは選択のみ）。"
+
+
+def eff_freeze_piece(game: Game, player: PlayerState) -> str:
+    """氷結(1): 相手コマ1つ選択→次の相手ターン終わりまで行動不能。
+
+    Demo: declare a pending target_piece.
+    """
+    game.pending = PendingAction(
+        kind="target_piece",
+        info={"turns": 1, "note": "Freeze enemy piece until end of next opponent turn."},
+    )
+    return "凍結する相手コマを選択してください（デモでは選択のみ）。"
+
+
+def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
+    """暴風(1): 障害物を一つ飛び越えられる（次の移動1回に有効）。"""
+    player.next_move_can_jump = True
+    return "次の移動で障害物を1つ飛び越え可能。"
+
+
+def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
+    """迅雷(1): 2回行動（このターン中の追加行動+1）。"""
+    player.extra_moves_this_turn += 1
+    return "このターンの追加行動+1。"
+
+
+def eff_draw2(game: Game, player: PlayerState) -> str:
+    """2ドロー(1): 山札から2枚引く。"""
+    res = game.draw_to_hand(2)
+    items: List[str] = []
+    for c, added in res:
+        if c is None:
+            continue
+        items.append(c.name if added else f"{c.name}(墓地)")
+    return "ドロー: " + (", ".join(items) if items else "なし")
+
+
+def eff_alchemy(game: Game, player: PlayerState) -> str:
+    """錬成(0): 山札から1枚引き、その後手札から1枚選んで捨てる（保留アクション）。"""
+    res = game.draw_to_hand(1)
+    if not res or res[0][0] is None:
+        drew = "山札が空。 "
+    else:
+        c, added = res[0]
+        drew = (f"『{c.name}』をドロー。 " if added else f"手札上限のため『{c.name}』は墓地へ。 ")
+    game.pending = PendingAction(kind="discard", info={"count": 1})
+    return drew + "手札から1枚を選んで捨ててください。"
+
+
+def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:
+    """墓地ルーレット(1): ランダムで墓地のカードを回収して手札へ。"""
+    if not player.graveyard:
+        return "墓地が空です。"
+    idx = random.randrange(len(player.graveyard))
+    card = player.graveyard.pop(idx)
+    player.hand.add(card)
+    return f"墓地から『{card.name}』を回収。"
+
+
+def pre_graveyard_not_empty(game: Game, player: PlayerState) -> Optional[str]:
+    """墓地が空ならエラーを返し、カードを使用不可にする。"""
+    if not player.graveyard:
+        return "墓地が空のため『墓地ルーレット』は発動できません。"
+    return None
+
+
+def eff_leech_pp2(game: Game, player: PlayerState) -> str:
+    """摂取(1): PPを2回復（上限あり）。"""
+    before = player.pp_current
+    player.pp_current = min(player.pp_current + 2, player.pp_max)
+    return f"PP+2（{before}→{player.pp_current}）。"
+
+
+def make_rule_cards_deck() -> Deck:
+    """Create a deck containing the cards listed in the provided table."""
+    kinds = [
+        Card("灼熱", 1, eff_heat_block_tile),
+        Card("氷結", 1, eff_freeze_piece),
+        Card("暴風", 1, eff_storm_jump_once),
+        Card("迅雷", 1, eff_lightning_two_actions),
+        Card("2ドロー", 1, eff_draw2),
+        Card("錬成", 0, eff_alchemy),
+        Card("墓地ルーレット", 1, eff_graveyard_roulette, precheck=pre_graveyard_not_empty),
+        Card("摂取", 1, eff_leech_pp2),
+    ]
+    pool = []
+    for c in kinds:
+        pool.extend([Card(c.name, c.cost, c.effect, getattr(c, 'precheck', None)) for _ in range(3)])
+    random.shuffle(pool)
+    return Deck(pool)
+
+
+def new_game_with_rule_deck() -> Game:
+    deck = make_rule_cards_deck()
+    deck.shuffle()
+    player = PlayerState(deck=deck)
+    game = Game(player=player)
+    game.setup_battle()
+    return game
+
+
 __all__ = [
     "Card",
     "Deck",
@@ -181,4 +366,5 @@ __all__ = [
     "PlayerState",
     "Game",
     "new_game_with_sample_deck",
+    "new_game_with_rule_deck",
 ]

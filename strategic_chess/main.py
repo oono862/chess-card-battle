@@ -1202,14 +1202,23 @@ while running:
                         # 難易度選択画面に戻す
                         try:
                             show_start_screen(screen)
-                        except Exception:
-                            # 万が一失敗しても落ちないようにする
-                            pass
-                        # 選択結果を通知
-                        try:
+                            # 難易度選択後に盤面・状態を初期化して即再戦
+                            pieces = create_pieces()
+                            selected_piece = None
+                            current_turn = 'white'
+                            game_over = False
+                            game_over_winner = None
+                            en_passant_target = None
+                            cpu_wait = False
+                            cpu_wait_start = 0
+                            if hasattr(draw_board, 'font_cache'):
+                                draw_board.font_cache.clear()
+                            # 通知
                             notif_message = f"難易度: {CPU_DIFFICULTY}"
                             notif_until = time.time() + 2.0
+                            break
                         except Exception:
+                            # 万が一失敗しても落ちないようにする
                             pass
 
             # リスタート画面を描画

@@ -104,7 +104,7 @@ class PlayerState:
 @dataclass
 class Game:
     player: PlayerState
-    turn: int = 1
+    turn: int = 0
     log: List[str] = field(default_factory=list)
     pending: Optional[PendingAction] = None
     # Placeholders for chess integration
@@ -325,10 +325,22 @@ def pre_graveyard_not_empty(game: Game, player: PlayerState) -> Optional[str]:
 
 
 def eff_leech_pp2(game: Game, player: PlayerState) -> str:
-    """摂取(1): PPを2回復（上限あり）。"""
+    """\u6442\u53d6(1): PPを2回復（上限あり）。"""
     before = player.pp_current
     player.pp_current = min(player.pp_current + 2, player.pp_max)
     return f"PP+2（{before}→{player.pp_current}）。"
+
+
+# ---- name normalization to avoid legacy/encoding variants ----
+def _normalize_card_name(name: str) -> str:
+    """Normalize legacy or variant names to canonical ones.
+
+    Currently consolidates '掠取' -> '摂取'.
+    """
+    mapping = {
+        "掠取": "\u6442\u53d6",  # ensure canonical '摂取'
+    }
+    return mapping.get(name, name)
 
 
 def make_rule_cards_deck() -> Deck:
@@ -341,11 +353,14 @@ def make_rule_cards_deck() -> Deck:
         Card("2ドロー", 1, eff_draw2),
         Card("錬成", 0, eff_alchemy),
         Card("墓地ルーレット", 1, eff_graveyard_roulette, precheck=pre_graveyard_not_empty),
-        Card("摂取", 1, eff_leech_pp2),
+        Card("\u6442\u53d6", 1, eff_leech_pp2),
     ]
     pool = []
     for c in kinds:
         pool.extend([Card(c.name, c.cost, c.effect, getattr(c, 'precheck', None)) for _ in range(3)])
+    # Normalize any legacy variants just in case
+    for c in pool:
+        c.name = _normalize_card_name(c.name)
     random.shuffle(pool)
     return Deck(pool)
 

@@ -196,9 +196,20 @@ def show_start_screen(screen):
                         return
             editor_clock.tick(30)
 
+    # 背景画像をロード（1回のみ）
+    bg_img_path = r"c:\Users\Student\Desktop\chess-card-battle\strategic_chess\images\m9(^Д^)\ChatGPT Image 2025年10月21日 14_06_32.png"
+    try:
+        bg_img = pygame.image.load(bg_img_path)
+    except Exception:
+        bg_img = None
+
     while True:
-        screen.fill((200, 200, 200))
         win_w, win_h = screen.get_size()
+        if bg_img:
+            bg_scaled = pygame.transform.scale(bg_img, (win_w, win_h))
+            screen.blit(bg_scaled, (0, 0))
+        else:
+            screen.fill((200, 200, 200))
         title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
         screen.blit(title_surf, (win_w // 2 - title_surf.get_width() // 2, 80))
 
@@ -1182,6 +1193,7 @@ while running:
                     # R で再戦、Q または ESC で終了、D で難易度選択画面へ
                     if event.key == pygame.K_r:
                         # ゲーム状態をリセット
+                        deal_hands()  # カードを再配布（シャッフル）
                         pieces = create_pieces()
                         selected_piece = None
                         current_turn = 'white'
@@ -1203,6 +1215,7 @@ while running:
                         try:
                             show_start_screen(screen)
                             # 難易度選択後に盤面・状態を初期化して即再戦
+                            deal_hands()  # カードを再配布（シャッフル）
                             pieces = create_pieces()
                             selected_piece = None
                             current_turn = 'white'
@@ -1411,6 +1424,7 @@ while running:
                 # カード領域のクリック判定（上下の手札）
                 if hasattr(draw_board, 'card_click_areas'):
                     mx, my = pygame.mouse.get_pos()
+                    found_card = False
                     for card_obj, icon_path, rect in draw_board.card_click_areas:
                         try:
                             if rect.collidepoint((mx, my)):
@@ -1418,14 +1432,19 @@ while running:
                                 if icon_path:
                                     draw_board.current_card_path = icon_path
                                 else:
-                                    # アイコンがなければ None（またはカード名に応じた画像を設定する拡張可）
-                                    draw_board.current_card_path = None
+                                    # アイコンがなければダミー画像を表示
+                                    draw_board.current_card_path = "images/m9(^Д^)/dummy_card_t.png"  # ダミー画像パス
+                                # キャッシュ不整合防止
+                                draw_board.card_img_path_loaded = None
                                 if hasattr(draw_board, 'card_img_cache'):
                                     draw_board.card_img_cache.clear()
                                 print('DEBUG: Card clicked, set current_card_path ->', draw_board.current_card_path)
-                                break
+                                found_card = True
                         except Exception:
                             pass
+                    # どれか1枚でもクリックされたら break
+                    if found_card:
+                        pass
             except Exception:
                 pass
 
@@ -1495,6 +1514,11 @@ while running:
                 selected_piece = None
             else:
                 if clicked and clicked.color == current_turn:
+                    # 既に同じ駒が選択されている場合は消さない
+                    if selected_piece is None or selected_piece != clicked:
+                        draw_board.current_card_path = None
+                        if hasattr(draw_board, 'card_img_cache'):
+                            draw_board.card_img_cache.clear()
                     selected_piece = clicked
 
         elif event.type == TURN_CHANGE_EVENT:

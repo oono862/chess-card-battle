@@ -1,3 +1,6 @@
+# --- カードドロー管理 ---
+can_draw_card = True  # プレイヤーがこのターンでドロー可能か
+
 import pygame
 import sys
 from gimmick import get_gimmick_list, FireGimmick, IceGimmick, ThunderGimmick, WindGimmick, DoubleGimmick, ExplosionGimmick, CollectGimmick, RecoveryGimmick
@@ -44,6 +47,18 @@ cpu_gimmick_counts = {g.name: 0 for g in gimmicks}     # 右側（CPU用）
 # デッキと手札（ランダム配布）
 player_hand = []  # list of gimmick objects
 ai_hand = []
+
+def add_card_to_player_hand(card):
+    """手札へのカード追加を一元管理。手札上限(7枚)を超える場合は追加せず False を返す。
+    追加に成功したら True を返す。"""
+    global player_hand, notif_message, notif_until
+    if len(player_hand) >= 7:
+        notif_message = "手札が上限(7枚)です。これ以上ドローできません"
+        notif_until = time.time() + 2.0
+        print('DEBUG: add_card_to_player_hand refused - hand limit reached')
+        return False
+    player_hand.append(card)
+    return True
 
 def deal_hands():
     """ランダムにプレイヤーとAIに各4枚ずつ配る。種類ごとに等確率で選ぶ（重複あり）。"""
@@ -515,6 +530,20 @@ def create_pieces(): #初期状態の作成
     return pieces
 
 def draw_board():
+    # card_draw_rect は後で最前面に描画するのでここでは存在だけ確保する
+    draw_board.card_draw_rect = getattr(draw_board, 'card_draw_rect', None)
+    # ウィンドウサイズが変わっている可能性があるため、毎フレーム現在の画面サイズでレイアウトを再計算する
+    try:
+        win_w, win_h = screen.get_size()
+        # calculate_layout はウィンドウモード用に False, 幅高さを渡す
+        layout = calculate_layout(False, win_w, win_h)
+        # layout の戻り値: width, height, board_width, board_height, square_size, gimmick_row_height, board_offset_x, board_offset_y
+        global WINDOW_WIDTH, WINDOW_HEIGHT, WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y
+        WINDOW_WIDTH, WINDOW_HEIGHT = layout[0], layout[1]
+        WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y = layout[2:]
+    except Exception:
+        # 失敗しても無視して既存値を使う
+        pass
     # --- フォント・サーフェスをキャッシュ ---
     if not hasattr(draw_board, "font_cache"):
         draw_board.font_cache = {}
@@ -783,51 +812,149 @@ def draw_board():
                 except Exception:
                     pass
 
-        # 下部 (Player) - 下のギミックエリアに配置
-        bottom_y = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT + int((GIMMICK_ROW_HEIGHT - card_h) / 2)
-        for idx, card in enumerate(player_hand):
-            cx = start_x + idx * (card_w + gap)
-            try:
-                icon_path = getattr(card, 'icon', None)
-                if icon_path:
-                    key = (icon_path, card_w, card_h)
-                    if not hasattr(draw_board, 'gimmick_icon_cache'):
-                        draw_board.gimmick_icon_cache = {}
-                    if key in draw_board.gimmick_icon_cache:
-                        surf = draw_board.gimmick_icon_cache[key]
-                    else:
-                        img = pygame.image.load(icon_path)
-                        surf = pygame.transform.smoothscale(img, (card_w, card_h)).convert_alpha()
-                        draw_board.gimmick_icon_cache[key] = surf
+        # 下部 (Player) - 可変枚数に応じて自動配置
+        bottom_y_base = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT + int((GIMMICK_ROW_HEIGHT - card_h) / 2)
+        num_cards = len(player_hand)
+        # 最低1枚は表示する
+        if num_cards <= 0:
+            pass
+        else:
+            # まずは1行で収まるか試す
+            total_needed_w = num_cards * card_w + max(0, num_cards - 1) * gap
+            if total_needed_w <= avail_w:
+                # 中央揃え1行表示
+                row_count = 1
+                rows = [player_hand]
+                row_card_counts = [num_cards]
+            else:
+                # 1行に収められない場合は2行に分割（上段に多め、下段に残り）
+                row_count = 2
+                # 上段に ceil(num/2) を配置、下段に残り
+                top_n = (num_cards + 1) // 2
+                bottom_n = num_cards - top_n
+                rows = [player_hand[:top_n], player_hand[top_n:]]
+                row_card_counts = [top_n, bottom_n]
+
+            # 各行ごとに間隔を再計算して描画
+            # ギミック領域内に収めるための垂直配置計算
+            gimmick_top = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT
+            inner_padding = 6
+            available_inner_h = max(0, GIMMICK_ROW_HEIGHT - inner_padding * 2)
+
+            for r_idx, row_cards in enumerate(rows):
+                count = len(row_cards)
+                if count == 0:
+                    continue
+                # 行ごとに利用可能幅に合わせてカード幅を縮小する余地を計算
+                # まずは同じ card_w を使い、必要なら縮小
+                row_gap = gap
+                row_card_w = card_w
+                row_card_h = card_h
+                total_w = count * row_card_w + (count - 1) * row_gap
+                if total_w > avail_w:
+                    # 縮小して収める（最低幅 36）
+                    min_w = 36
+                    row_card_w = max(min_w, int((avail_w - (count - 1) * row_gap) / count))
+                    row_card_h = int(row_card_w * (88/63))
+                    total_w = count * row_card_w + (count - 1) * row_gap
+
+                start_x_row = side_padding + (avail_w - total_w) // 2
+                # 行ごとの Y を決定（ギミック領域内に収める）
+                if row_count == 1:
+                    # 1行表示はギミック領域の中央に配置
+                    row_y = gimmick_top + inner_padding + max(0, (available_inner_h - row_card_h) // 2)
                 else:
-                    surf = None
-                if surf:
-                    screen.blit(surf, (cx, bottom_y))
+                    # 2行表示時は上下に分割して配置する。行高さを available_inner_h/2 に揃える。
+                    per_row_h = max(1, available_inner_h // 2)
+                    # 必要に応じてカード高さを縮小して2行に収める
+                    if row_card_h > per_row_h:
+                        row_card_h = max(24, per_row_h)
+                        row_card_w = int(row_card_h * (63/88))
+                        # 再計算: 幅が変わったら total_w を更新し、start_x_row を再計算
+                        total_w = count * row_card_w + (count - 1) * row_gap
+                        start_x_row = side_padding + max(0, (avail_w - total_w) // 2)
+                    # 各行の上辺 Y を計算
+                    first_row_y = gimmick_top + inner_padding + max(0, (per_row_h - row_card_h) // 2)
+                    second_row_y = gimmick_top + inner_padding + per_row_h + max(0, (per_row_h - row_card_h) // 2)
+                    row_y = first_row_y if r_idx == 0 else second_row_y
+
+                for i, card in enumerate(row_cards):
+                    cx = start_x_row + i * (row_card_w + row_gap)
                     try:
-                        rect = pygame.Rect(cx, bottom_y, card_w, card_h)
-                        draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
+                        icon_path = getattr(card, 'icon', None)
+                        if icon_path:
+                            key = (icon_path, row_card_w, row_card_h)
+                            if not hasattr(draw_board, 'gimmick_icon_cache'):
+                                draw_board.gimmick_icon_cache = {}
+                            if key in draw_board.gimmick_icon_cache:
+                                surf = draw_board.gimmick_icon_cache[key]
+                            else:
+                                img = pygame.image.load(icon_path)
+                                surf = pygame.transform.smoothscale(img, (row_card_w, row_card_h)).convert_alpha()
+                                draw_board.gimmick_icon_cache[key] = surf
+                        else:
+                            surf = None
+                        if surf:
+                            screen.blit(surf, (cx, row_y))
+                            try:
+                                rect = pygame.Rect(cx, row_y, row_card_w, row_card_h)
+                                draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
+                            except Exception:
+                                pass
+                        else:
+                            pygame.draw.rect(screen, (220,220,150), (cx, row_y, row_card_w, row_card_h))
+                            name = getattr(card, 'name', 'カード')
+                            t = text_font.render(name, True, BLACK)
+                            screen.blit(t, (cx + 6, row_y + 6))
+                            try:
+                                rect = pygame.Rect(cx, row_y, row_card_w, row_card_h)
+                                draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
+                            except Exception:
+                                pass
                     except Exception:
-                        pass
-                else:
-                    pygame.draw.rect(screen, (220,220,150), (cx, bottom_y, card_w, card_h))
-                    name = getattr(card, 'name', 'カード')
-                    t = text_font.render(name, True, BLACK)
-                    screen.blit(t, (cx + 6, bottom_y + 6))
-                    try:
-                        rect = pygame.Rect(cx, bottom_y, card_w, card_h)
-                        draw_board.card_click_areas.append((card, getattr(card, 'icon', None), rect))
-                    except Exception:
-                        pass
-                # クリック領域は手札に対して別途扱う場合はここで追加可能
-            except Exception:
-                try:
-                    pygame.draw.rect(screen, (220,220,150), (cx, bottom_y, card_w, card_h))
-                except Exception:
-                    pass
+                        try:
+                            pygame.draw.rect(screen, (220,220,150), (cx, row_y, row_card_w, row_card_h))
+                        except Exception:
+                            pass
     except Exception:
         # 表示に失敗しても致命的にしない
         pass
     # game_over の表示はメインループ側で再戦画面を表示するため、ここでは描画しない
+
+    # --- ドロースペースを最前面に描画（左側余白中央、チェックテロップと重ならないように配置） ---
+    try:
+        # サイズ
+        draw_area_w = 140
+        draw_area_h = 70
+        # 左余白の中央に配置：BOARD_OFFSET_X が盤面の左端なので、その中央を使う
+        draw_area_x = max(10, (BOARD_OFFSET_X - draw_area_w) // 2)
+        # 盤面の垂直中央に合わせる（チェック表示は盤面上部か左上に出る想定なので被らない）
+        draw_area_y = BOARD_OFFSET_Y + HEIGHT // 2 - draw_area_h // 2
+        # 最小 Y を確保してチェック表示と被らないようにする（上部余白 + 8px）
+        min_top = GIMMICK_ROW_HEIGHT + 8
+        if draw_area_y < min_top:
+            draw_area_y = min_top
+        # 下に被らないように調整
+        max_bottom = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT - draw_area_h - 8
+        if draw_area_y > max_bottom:
+            draw_area_y = max_bottom
+
+        draw_rect = pygame.Rect(draw_area_x, draw_area_y, draw_area_w, draw_area_h)
+        draw_board.card_draw_rect = draw_rect
+        draw_color = (60, 140, 255) if can_draw_card else (180, 180, 180)
+        border_color = (0, 60, 180)
+        pygame.draw.rect(screen, draw_color, draw_rect)
+        pygame.draw.rect(screen, border_color, draw_rect, 6)
+        font_explain = pygame.font.SysFont("Noto_SansJP", 16, bold=True)
+        explain_text = "ここをクリックでカード入手" if can_draw_card else "このターンはドローできません"
+        explain_surf = font_explain.render(explain_text, True, border_color)
+        screen.blit(explain_surf, (draw_area_x, draw_area_y - 20))
+        font_draw = pygame.font.SysFont("Noto_SansJP", 20, bold=True)
+        label = "カードドロー" if can_draw_card else "ドロー不可"
+        label_surf = font_draw.render(label, True, (255,255,255) if can_draw_card else (120,120,120))
+        screen.blit(label_surf, (draw_area_x + draw_area_w//2 - label_surf.get_width()//2, draw_area_y + draw_area_h//2 - label_surf.get_height()//2))
+    except Exception:
+        pass
 
     # （旧）右側に表示していた手札ブロックは削除しました。上下エリアに4枚ずつ表示する実装を使用します。
 
@@ -1384,7 +1511,35 @@ while running:
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if game_over:
                 continue
-            row, col = get_clicked_pos(pygame.mouse.get_pos())
+            mx, my = pygame.mouse.get_pos()
+            # まずドロースペースがクリックされたかチェック（優先）
+            try:
+                if hasattr(draw_board, 'card_draw_rect') and draw_board.card_draw_rect and draw_board.card_draw_rect.collidepoint((mx, my)):
+                    print('DEBUG: draw area clicked at', (mx, my), 'rect=', draw_board.card_draw_rect)
+                    if can_draw_card:
+                        if len(player_hand) >= 7:
+                            notif_message = "手札が上限(7枚)です。これ以上ドローできません"
+                            notif_until = time.time() + 2.0
+                            print('DEBUG: Draw refused - hand limit reached')
+                        else:
+                            new_card = random.choice(gimmicks)
+                            added = add_card_to_player_hand(new_card)
+                            if added:
+                                can_draw_card = False
+                                notif_message = f"カードを入手: {new_card.name}"
+                                notif_until = time.time() + 2.0
+                                print('DEBUG: Drew card ->', new_card.name)
+                            else:
+                                # 追加失敗（上限）時は can_draw_card はそのまま
+                                pass
+                        
+                    else:
+                        notif_message = "このターンは既にドローしました"
+                        notif_until = time.time() + 2.0
+                    continue
+            except Exception as e:
+                print('DEBUG: draw area click check error', e)
+            row, col = get_clicked_pos((mx, my))
             clicked = get_piece_at(row, col, pieces)
             # ギミックのアイコンをクリックしたかチェック
             try:
@@ -1428,18 +1583,26 @@ while running:
                     for card_obj, icon_path, rect in draw_board.card_click_areas:
                         try:
                             if rect.collidepoint((mx, my)):
-                                # アイコンパスがある場合は右上に拡大表示
-                                if icon_path:
-                                    draw_board.current_card_path = icon_path
+                                # すでに拡大表示中のカードをもう一度クリックした場合はカードを使用（手札から削除）
+                                if draw_board.current_card_path == icon_path and card_obj in player_hand:
+                                    player_hand.remove(card_obj)
+                                    draw_board.current_card_path = None
+                                    draw_board.card_img_path_loaded = None
+                                    if hasattr(draw_board, 'card_img_cache'):
+                                        draw_board.card_img_cache.clear()
+                                    print('DEBUG: Card used and removed from hand:', icon_path)
+                                    found_card = True
                                 else:
-                                    # アイコンがなければダミー画像を表示
-                                    draw_board.current_card_path = "images/m9(^Д^)/dummy_card_t.png"  # ダミー画像パス
-                                # キャッシュ不整合防止
-                                draw_board.card_img_path_loaded = None
-                                if hasattr(draw_board, 'card_img_cache'):
-                                    draw_board.card_img_cache.clear()
-                                print('DEBUG: Card clicked, set current_card_path ->', draw_board.current_card_path)
-                                found_card = True
+                                    # アイコンパスがある場合は右上に拡大表示
+                                    if icon_path:
+                                        draw_board.current_card_path = icon_path
+                                    else:
+                                        draw_board.current_card_path = "images/m9(^Д^)/dummy_card_t.png"  # ダミー画像パス
+                                    draw_board.card_img_path_loaded = None
+                                    if hasattr(draw_board, 'card_img_cache'):
+                                        draw_board.card_img_cache.clear()
+                                    print('DEBUG: Card clicked, set current_card_path ->', draw_board.current_card_path)
+                                    found_card = True
                         except Exception:
                             pass
                     # どれか1枚でもクリックされたら break
@@ -1522,6 +1685,8 @@ while running:
                     selected_piece = clicked
 
         elif event.type == TURN_CHANGE_EVENT:
+            # ターン切り替え時にカードドロー可能フラグをリセット
+            can_draw_card = True
             # ターン切り替え後の処理をここで実行
             check_state = is_in_check(pieces, current_turn)
             # チェックメイト時のみ勝利判定

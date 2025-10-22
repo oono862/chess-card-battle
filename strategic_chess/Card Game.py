@@ -85,7 +85,6 @@ HELP_LINES = [
     "[D] 保留中: 捨て札確定",
     "[L] ログ表示切替",
     "[G] 墓地表示切替",
-    "[↑↓] ログスクロール",
     "[クリック] カード拡大",
     "[Esc] 終了",
 ]
@@ -123,7 +122,7 @@ def draw_panel():
     draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", 280, info_y, (40,40,90))
     draw_text(screen, f"墓地: {len(game.player.graveyard)}枚", 420, info_y, (90,40,40))
     
-    # 保留中表示
+    # 保留中表示（簡易）
     if getattr(game, 'pending', None) is not None:
         label = game.pending.kind
         src = game.pending.info.get('source_card_name')
@@ -159,28 +158,30 @@ def draw_panel():
         log_panel_top = board_area_top
         log_panel_width = W - log_panel_left - 24
         log_panel_height = board_area_height
-        
+
         # ログパネル背景
-        pygame.draw.rect(screen, (250, 250, 255), 
-                        (log_panel_left, log_panel_top, log_panel_width, log_panel_height))
-        pygame.draw.rect(screen, (100, 100, 120), 
-                        (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
-        
+        pygame.draw.rect(screen, (250, 250, 255),
+                         (log_panel_left, log_panel_top, log_panel_width, log_panel_height))
+        pygame.draw.rect(screen, (100, 100, 120),
+                         (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
+
         draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
-        
+        # 見出しのすぐ下にスクロールのヒントを表示
+        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30, (100, 100, 120))
+
         # ログの折り返し処理
         wrapped_lines = []
         max_log_width = log_panel_width - 30
         for line in game.log:
             for wline in wrap_text(f"• {line}", max_log_width):
                 wrapped_lines.append(wline)
-        
+
         # スクロールオフセットの範囲制限
         global log_scroll_offset
         max_lines_visible = (log_panel_height - 50) // 22
         max_scroll = max(0, len(wrapped_lines) - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
-        
+
         # 表示範囲を計算（最新が下）
         if len(wrapped_lines) <= max_lines_visible:
             visible_lines = wrapped_lines
@@ -188,18 +189,37 @@ def draw_panel():
             start_idx = len(wrapped_lines) - max_lines_visible - log_scroll_offset
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
-        
-        log_y = log_panel_top + 36
+
+        # ログ描画開始位置（見出しとヒントの下）
+        log_y = log_panel_top + 56
         for wline in visible_lines:
             if log_y < log_panel_top + log_panel_height - 10:
                 draw_text(screen, wline, log_panel_left + 10, log_y, (60, 60, 60))
                 log_y += 22
-        
-        # スクロール位置インジケーター
+
+        # スクロールバー表示
         if max_scroll > 0:
-            scroll_info = f"[{log_scroll_offset}/{max_scroll}]"
-            draw_text(screen, scroll_info, log_panel_left + 10, 
-                     log_panel_top + log_panel_height - 28, (100, 100, 100))
+            # スクロールバーのエリア
+            scrollbar_x = log_panel_left + log_panel_width - 15
+            scrollbar_y = log_panel_top + 56
+            scrollbar_height = log_panel_height - 66
+            scrollbar_width = 8
+            
+            # 背景（グレー）
+            pygame.draw.rect(screen, (200, 200, 200), 
+                           (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height))
+            
+            # スクロール位置を計算
+            total_lines = len(wrapped_lines)
+            scroll_ratio = log_scroll_offset / max_scroll if max_scroll > 0 else 0
+            
+            # つまみのサイズと位置
+            thumb_height = max(20, scrollbar_height * max_lines_visible / total_lines)
+            thumb_y = scrollbar_y + (scrollbar_height - thumb_height) * (1 - scroll_ratio)
+            
+            # つまみ（濃いグレー）
+            pygame.draw.rect(screen, (100, 100, 100), 
+                           (scrollbar_x, thumb_y, scrollbar_width, thumb_height))
     else:
         # ログ非表示時のヒント
         draw_text(screen, "[L] ログ表示", W - 240, board_area_top + board_area_height - 30, (100, 100, 120))
@@ -223,24 +243,42 @@ def draw_panel():
         rect = pygame.Rect(x, card_y, card_w, card_h)
         card_rects.append((rect, i))
         
-        # カード背景
-        color = (220, 255, 220) if c.cost <= game.player.pp_current else (255, 220, 220)
-        pygame.draw.rect(screen, color, rect)
-        pygame.draw.rect(screen, (80, 80, 80), rect, 2)
+        # カード画像のみ表示
+        thumb = get_card_image(c.name, size=(card_w, card_h))
+        screen.blit(thumb, (x, card_y))
         
-        # サムネイル画像
-        thumb = get_card_image(c.name, size=(card_w - 10, int((card_w - 10) * 1.4)))
-        screen.blit(thumb, (x + 5, card_y + 5))
+        # 錬成で選択中のカードを金色の枠で強調
+        if (getattr(game, 'pending', None) is not None and 
+            game.pending.kind == 'discard' and 
+            game.pending.info.get('selected') == i):
+            # 太い金色の枠
+            pygame.draw.rect(screen, (255, 215, 0), rect, 5)
+            # 外側にもう一層、少し濃い金色
+            pygame.draw.rect(screen, (218, 165, 32), rect.inflate(4, 4), 3)
         
-        # カード番号
-        num_surf = FONT.render(f"[{i+1}]", True, (0, 0, 0))
-        screen.blit(num_surf, (x + 5, card_y + 5))
+        # カード下部にボタン番号を大きく表示
+        button_number = f"[{i+1}]"
+        # 背景ボックス
+        button_bg_width = 35
+        button_bg_height = 30
+        button_bg_x = x + (card_w - button_bg_width) // 2
+        button_bg_y = card_y + card_h - button_bg_height - 5
         
-        # カード名とコスト（下部）
-        name_surf = TINY.render(c.name[:7], True, (0, 0, 0))
-        screen.blit(name_surf, (x + 5, card_y + card_h - 35))
-        cost_surf = SMALL.render(f"Cost:{c.cost}", True, (60, 60, 180))
-        screen.blit(cost_surf, (x + 5, card_y + card_h - 18))
+        # PP足りるかで色を変える
+        if c.cost <= game.player.pp_current:
+            bg_color = (100, 200, 100)  # 緑（使用可能）
+        else:
+            bg_color = (200, 100, 100)  # 赤（PP不足）
+        
+        pygame.draw.rect(screen, bg_color, (button_bg_x, button_bg_y, button_bg_width, button_bg_height))
+        pygame.draw.rect(screen, (255, 255, 255), (button_bg_x, button_bg_y, button_bg_width, button_bg_height), 2)
+        
+        # 番号テキスト
+        num_surf = FONT.render(button_number, True, (255, 255, 255))
+        num_x = button_bg_x + (button_bg_width - num_surf.get_width()) // 2
+        num_y = button_bg_y + (button_bg_height - num_surf.get_height()) // 2
+        screen.blit(num_surf, (num_x, num_y))
+
 
     # === 状態表示（右下）===
     state_x = W - 240
@@ -307,6 +345,42 @@ def draw_panel():
         # 拡大画像のみ表示
         large_img = get_card_image(c.name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
+
+    # === 保留中の操作説明オーバーレイ ===
+    if getattr(game, 'pending', None) is not None:
+        # 操作説明テキストを決定
+        if game.pending.kind == 'discard':
+            instruction_text = "手札から捨てるカードを選択: [1-7]で選択 → [D]で確定"
+        elif game.pending.kind == 'target_tile':
+            instruction_text = "封鎖するマスを選択してください（未実装）"
+        elif game.pending.kind == 'target_piece':
+            instruction_text = "凍結する相手コマを選択してください（未実装）"
+        else:
+            instruction_text = "選択を完了してください"
+        
+        # ボックスサイズ計算
+        text_surface = FONT.render(instruction_text, True, (0, 0, 0))
+        text_width = text_surface.get_width()
+        box_padding = 30
+        box_width = text_width + box_padding * 2
+        box_height = 80
+        
+        # カード拡大表示の横に配置（右側）
+        if enlarged_card_index is not None:
+            box_x = (W - 300) // 2 + 300 + 30  # カードの右側
+        else:
+            box_x = (W - box_width) // 2  # 中央
+        box_y = (H - box_height) // 2
+        
+        # 背景ボックス
+        pygame.draw.rect(screen, (255, 255, 200), (box_x, box_y, box_width, box_height))
+        pygame.draw.rect(screen, (180, 60, 0), (box_x, box_y, box_width, box_height), 4)
+        
+        # タイトル
+        draw_text(screen, "⚠ 操作待ち", box_x + box_padding, box_y + 15, (180, 60, 0))
+        # 操作説明テキスト
+        draw_text(screen, instruction_text, box_x + box_padding, box_y + 45, (60, 60, 60))
+
 
 
 def handle_keydown(key):

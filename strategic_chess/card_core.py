@@ -168,6 +168,9 @@ class Game:
 
     def play_card(self, hand_index: int) -> Tuple[bool, str]:
         """Attempt to play a card from hand; returns (success, message)."""
+        # Block play before the first turn officially starts
+        if self.turn <= 0:
+            return False, "ターンが開始していません。[T]で開始してください。"
         if self.pending is not None:
             return False, "操作待ち: 先に保留中の選択を完了してください。"
         if not (0 <= hand_index < len(self.player.hand.cards)):

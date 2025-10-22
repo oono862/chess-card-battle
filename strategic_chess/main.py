@@ -167,8 +167,8 @@ def show_start_screen(screen):
     """
     global CPU_DIFFICULTY
     clock = pygame.time.Clock()
-    title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)))
-    btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)))
+    title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)), bold=True)
+    btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)), bold=True)
     options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
 
     def show_deck_editor():
@@ -225,7 +225,8 @@ def show_start_screen(screen):
             screen.blit(bg_scaled, (0, 0))
         else:
             screen.fill((200, 200, 200))
-        title_surf = title_font.render("CPUの難易度を選択してください", True, BLACK)
+        # タイトルはアウトライン付きで描画して背景上での視認性を確保
+        title_surf = render_text_with_outline(title_font, "CPUの難易度を選択してください", fg_color=(20,20,20), outline_color=(240,240,240))
         screen.blit(title_surf, (win_w // 2 - title_surf.get_width() // 2, 80))
 
         btn_w = 300
@@ -248,7 +249,8 @@ def show_start_screen(screen):
             lab = btn_font.render(label, True, BLACK)
             screen.blit(lab, (x + btn_w//2 - lab.get_width()//2, y + btn_h//2 - lab.get_height()//2))
 
-        instruct = btn_font.render("キー1-4でも選択できます。Escで終了", True, BLACK)
+        # 補助テキストも太字＋アウトラインで描画して読みやすくする
+        instruct = render_text_with_outline(btn_font, "キー1-4でも選択できます。Escで終了", fg_color=(30,30,30), outline_color=(240,240,240))
         screen.blit(instruct, (win_w//2 - instruct.get_width()//2, y + btn_h + 40))
 
         # デッキ作成ボタン（難易度選択の下部、中央に配置）
@@ -532,17 +534,30 @@ def create_pieces(): #初期状態の作成
 def draw_board():
     # card_draw_rect は後で最前面に描画するのでここでは存在だけ確保する
     draw_board.card_draw_rect = getattr(draw_board, 'card_draw_rect', None)
-    # ウィンドウサイズが変わっている可能性があるため、毎フレーム現在の画面サイズでレイアウトを再計算する
+    # ウィンドウサイズ変化時のみレイアウトを再計算する（毎フレーム呼ばない）
     try:
-        win_w, win_h = screen.get_size()
-        # calculate_layout はウィンドウモード用に False, 幅高さを渡す
-        layout = calculate_layout(False, win_w, win_h)
-        # layout の戻り値: width, height, board_width, board_height, square_size, gimmick_row_height, board_offset_x, board_offset_y
-        global WINDOW_WIDTH, WINDOW_HEIGHT, WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y
-        WINDOW_WIDTH, WINDOW_HEIGHT = layout[0], layout[1]
-        WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y = layout[2:]
+        if not hasattr(draw_board, '_last_window_size'):
+            # 初回は None にして必ず一度レイアウト再計算を行う
+            draw_board._last_window_size = None
+            draw_board._last_fullscreen = None
+        cur_size = screen.get_size()
+        cur_fullscreen = bool(screen.get_flags() & pygame.FULLSCREEN)
+        # 再計算条件: サイズが変わった OR フルスクリーン状態が変わった
+        if cur_size != draw_board._last_window_size or cur_fullscreen != getattr(draw_board, '_last_fullscreen', None):
+            draw_board._last_window_size = cur_size
+            draw_board._last_fullscreen = cur_fullscreen
+            win_w, win_h = cur_size
+            # フルスクリーン時は常に calculate_layout(True) を使う（内部で SCREEN_WIDTH/HEIGHT を使う）
+            if cur_fullscreen:
+                layout = calculate_layout(True)
+            else:
+                layout = calculate_layout(False, win_w, win_h)
+            # layout の戻り値: width, height, board_width, board_height, square_size, gimmick_row_height, board_offset_x, board_offset_y
+            global WINDOW_WIDTH, WINDOW_HEIGHT, WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y
+            WINDOW_WIDTH, WINDOW_HEIGHT = layout[0], layout[1]
+            WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y = layout[2:]
     except Exception:
-        # 失敗しても無視して既存値を使う
+        # 失敗しても既存のレイアウトを使い続ける
         pass
     # --- フォント・サーフェスをキャッシュ ---
     if not hasattr(draw_board, "font_cache"):

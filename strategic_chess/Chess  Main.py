@@ -1566,7 +1566,7 @@ while running:
                             # map gimmick names to image paths
                             # Determine target image path for this gimmick
                             if name == '2':
-                                target_path = 'images/m9(^Д^)/card_TEST_D2_2.png'
+                                target_path = 'images/2ドロー.png'
                             elif name == 'e':
                                 target_path = 'images/m9(^Д^)/card_test_r.png'
                             elif name == 'ボ収':

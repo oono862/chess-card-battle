@@ -95,16 +95,25 @@ cpu_wait_start = 0.0
 def create_pieces():
     p = []
     # White on bottom (rows 6-7), black on top (rows 0-1)
-    p += [{'row':7, 'col':0, 'name':'R', 'color':'white'}, {'row':7, 'col':1, 'name':'N', 'color':'white'},
-          {'row':7, 'col':2, 'name':'B', 'color':'white'}, {'row':7, 'col':3, 'name':'Q', 'color':'white'},
-          {'row':7, 'col':4, 'name':'K', 'color':'white'}, {'row':7, 'col':5, 'name':'B', 'color':'white'},
-          {'row':7, 'col':6, 'name':'N', 'color':'white'}, {'row':7, 'col':7, 'name':'R', 'color':'white'}]
-    p += [{'row':6, 'col':i, 'name':'P', 'color':'white'} for i in range(8)]
-    p += [{'row':0, 'col':0, 'name':'R', 'color':'black'}, {'row':0, 'col':1, 'name':'N', 'color':'black'},
-          {'row':0, 'col':2, 'name':'B', 'color':'black'}, {'row':0, 'col':3, 'name':'Q', 'color':'black'},
-          {'row':0, 'col':4, 'name':'K', 'color':'black'}, {'row':0, 'col':5, 'name':'B', 'color':'black'},
-          {'row':0, 'col':6, 'name':'N', 'color':'black'}, {'row':0, 'col':7, 'name':'R', 'color':'black'}]
-    p += [{'row':1, 'col':i, 'name':'P', 'color':'black'} for i in range(8)]
+    # has_moved フラグを追加（キャスリング判定用）
+    p += [{'row':7, 'col':0, 'name':'R', 'color':'white', 'has_moved':False}, 
+          {'row':7, 'col':1, 'name':'N', 'color':'white', 'has_moved':False},
+          {'row':7, 'col':2, 'name':'B', 'color':'white', 'has_moved':False}, 
+          {'row':7, 'col':3, 'name':'Q', 'color':'white', 'has_moved':False},
+          {'row':7, 'col':4, 'name':'K', 'color':'white', 'has_moved':False}, 
+          {'row':7, 'col':5, 'name':'B', 'color':'white', 'has_moved':False},
+          {'row':7, 'col':6, 'name':'N', 'color':'white', 'has_moved':False}, 
+          {'row':7, 'col':7, 'name':'R', 'color':'white', 'has_moved':False}]
+    p += [{'row':6, 'col':i, 'name':'P', 'color':'white', 'has_moved':False} for i in range(8)]
+    p += [{'row':0, 'col':0, 'name':'R', 'color':'black', 'has_moved':False}, 
+          {'row':0, 'col':1, 'name':'N', 'color':'black', 'has_moved':False},
+          {'row':0, 'col':2, 'name':'B', 'color':'black', 'has_moved':False}, 
+          {'row':0, 'col':3, 'name':'Q', 'color':'black', 'has_moved':False},
+          {'row':0, 'col':4, 'name':'K', 'color':'black', 'has_moved':False}, 
+          {'row':0, 'col':5, 'name':'B', 'color':'black', 'has_moved':False},
+          {'row':0, 'col':6, 'name':'N', 'color':'black', 'has_moved':False}, 
+          {'row':0, 'col':7, 'name':'R', 'color':'black', 'has_moved':False}]
+    p += [{'row':1, 'col':i, 'name':'P', 'color':'black', 'has_moved':False} for i in range(8)]
     return p
 
 
@@ -427,6 +436,18 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             nr,nc = r+dir, c+dc
             if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
                 moves.append((nr,nc))
+        # en passant
+        global en_passant_target
+        if en_passant_target is not None:
+            target_r, target_c = en_passant_target
+            # アンパサン可能条件: 自分のポーンが5段目（白）または4段目（黒）にいて、
+            # 隣の列に相手のポーンが2マス前進で横に来た場合
+            if piece['color'] == 'white' and r == 3:  # 白は5段目（インデックス3）
+                if abs(c - target_c) == 1 and target_r == 2:
+                    moves.append((target_r, target_c))
+            elif piece['color'] == 'black' and r == 4:  # 黒は4段目（インデックス4）
+                if abs(c - target_c) == 1 and target_r == 5:
+                    moves.append((target_r, target_c))
     elif name == 'N':
         for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
             nr,nc = r+dr, c+dc
@@ -457,6 +478,34 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 nr,nc = r+dr, c+dc
                 if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
                     moves.append((nr,nc))
+        
+        # キャスリング
+        if not piece.get('has_moved', False) and not ignore_check:
+            # キング側キャスリング（ショートキャスリング）
+            if piece['color'] == 'white':
+                king_row = 7
+            else:
+                king_row = 0
+            
+            # キングサイドキャスリング（右側）
+            rook_kingside = get_piece_at(king_row, 7)
+            if (rook_kingside and rook_kingside['name'] == 'R' and 
+                rook_kingside['color'] == piece['color'] and 
+                not rook_kingside.get('has_moved', False)):
+                # キングとルークの間が空いているか確認
+                if not occupied(king_row, 5) and not occupied(king_row, 6):
+                    # キングが通過するマスが攻撃されていないか確認（チェックを避ける）
+                    # これはignore_check=Falseの時のフィルタリングで処理
+                    moves.append((king_row, 6))  # キャスリング後のキングの位置
+            
+            # クイーンサイドキャスリング（左側）
+            rook_queenside = get_piece_at(king_row, 0)
+            if (rook_queenside and rook_queenside['name'] == 'R' and 
+                rook_queenside['color'] == piece['color'] and 
+                not rook_queenside.get('has_moved', False)):
+                # キングとルークの間が空いているか確認
+                if not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3):
+                    moves.append((king_row, 2))  # キャスリング後のキングの位置
 
     # filter moves that leave king in check
     if not ignore_check:
@@ -476,13 +525,48 @@ def has_legal_moves_for(color):
 
 def apply_move(piece, to_r, to_c):
     global en_passant_target, chess_current_turn
-    # remove captured
-    target = get_piece_at(to_r,to_c)
+    from_r, from_c = piece['row'], piece['col']
+    
+    # アンパサン処理: 移動先にコマがないが、en_passant_targetの位置への移動の場合
+    target = get_piece_at(to_r, to_c)
+    if piece['name'] == 'P' and target is None and en_passant_target is not None:
+        if (to_r, to_c) == en_passant_target:
+            # アンパサンによる捕獲: 隣のポーンを削除
+            captured_row = to_r + (1 if piece['color'] == 'white' else -1)
+            captured_piece = get_piece_at(captured_row, to_c)
+            if captured_piece and captured_piece['name'] == 'P':
+                pieces.remove(captured_piece)
+    
+    # 通常の捕獲
     if target:
         pieces.remove(target)
+    
+    # キャスリング処理
+    if piece['name'] == 'K' and abs(to_c - from_c) == 2:
+        # キャスリングが実行された
+        if to_c == 6:  # キングサイド
+            rook = get_piece_at(to_r, 7)
+            if rook and rook['name'] == 'R':
+                rook['col'] = 5  # ルークをキングの隣に移動
+                rook['has_moved'] = True
+        elif to_c == 2:  # クイーンサイド
+            rook = get_piece_at(to_r, 0)
+            if rook and rook['name'] == 'R':
+                rook['col'] = 3  # ルークをキングの隣に移動
+                rook['has_moved'] = True
+    
     # move piece
     piece['row'] = to_r
     piece['col'] = to_c
+    piece['has_moved'] = True  # 移動履歴を記録
+    
+    # en_passant_targetの更新: ポーンが2マス前進した場合のみ設定
+    if piece['name'] == 'P' and abs(to_r - from_r) == 2:
+        # 次のターンでアンパサン可能な位置を記録
+        en_passant_target = ((from_r + to_r) // 2, to_c)
+    else:
+        en_passant_target = None
+    
     # pawn promotion: enqueue selection instead of auto-promote
     global promotion_pending
     if piece['name']=='P' and (piece['row']==0 or piece['row']==7):

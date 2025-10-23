@@ -637,11 +637,15 @@ def wrap_text(text: str, max_width: int):
 def draw_panel():
     screen.fill((240, 240, 245))
 
-    # === 上部エリア: 基本情報バー（縦並び）===
-    info_x = 24
-    info_y = 20
-    # 行間（文字下に余白を確保）
-    line_height = 30
+    # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
+    left_panel_width = 180  # 左側の基本情報パネルの幅
+    left_margin = 20
+    top_margin = 20
+    
+    # 基本情報の配置（左側）
+    info_x = left_margin
+    info_y = top_margin
+    line_height = 35
     
     # ターン数
     draw_text(screen, f"ターン: {game.turn}", info_x, info_y)
@@ -661,18 +665,17 @@ def draw_panel():
     global grave_label_rect
     grave_label_rect = pygame.Rect(info_x, info_y, grave_surf.get_width(), grave_surf.get_height())
     draw_text(screen, grave_text, info_x, info_y, (90,40,40))
-    # ブロックの下に追加の余白を付ける
-    info_y += line_height
-    extra_bottom_margin = 16  # 基本情報ブロック下のマージン
-    basic_info_block_bottom = info_y + extra_bottom_margin
     
-    # 保留中表示（右上に移動）
+    # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
+        info_y += line_height + 10
         label = game.pending.kind
         src = game.pending.info.get('source_card_name')
         if src:
             label = f"{src} ({label})"
-        draw_text(screen, f"⚠ 保留中: {label}", 200, 20, (180, 60, 0))
+        draw_text(screen, f"⚠ 保留中:", info_x, info_y, (180, 60, 0))
+        info_y += 20
+        draw_text(screen, label, info_x, info_y, (180, 60, 0))
 
     # 右上: ヘルプ（簡潔に）
     help_x = W - 250
@@ -683,34 +686,29 @@ def draw_panel():
         draw_text(screen, hl, help_x, help_y, (30, 30, 90))
         help_y += 20
 
-    # === 中央エリア: チェス盤用の空白エリア ===
-    board_area_left = 24
-    # 基本情報ブロックの実高さに追従して盤面開始位置を決定
-    board_area_top = basic_info_block_bottom  # これにより「墓地」行の下にも明確な余白が入る
-    board_area_width = 750
-    # compute available height for board so it doesn't overlap hand area at bottom
-    # reserve space for top info (approx 100px) and for hand area (card_h + margins)
-    reserved_top = max(100, basic_info_block_bottom)
+    # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
+    board_area_left = left_margin + left_panel_width + 20  # 左パネル + 余白
+    board_area_top = top_margin  # 画面上部から開始
+    # 手札エリアとの干渉を避けるため、下部の予約領域を計算
     card_h = 140
     reserved_bottom = card_h + 80  # hand area + margin
-    avail_height = H - reserved_top - reserved_bottom
-    # make board area square by using min of width and available height
-    board_area_height = min(board_area_width, max(200, avail_height))
+    avail_height = H - board_area_top - reserved_bottom
+    # 盤面を正方形にするため、利用可能な幅と高さの小さい方を使用
+    avail_width = W - board_area_left - 20  # 右端までの余白を考慮
+    board_size = min(avail_width, avail_height)
+    # 他の箇所で参照されるため、board_area_width と board_area_height を定義
+    board_area_width = board_size
+    board_area_height = board_size
     
-    # チェス盤の描画（8x8）
-    # NOTE: fill only the actual board rect (board_left/board_top/board_size) below
-    # rather than the entire board_area. This removes the visual side-padding
-    # while keeping the board position and size unchanged.
-    # compute square size and center the square within the reserved area
-    board_size = min(board_area_width, board_area_height)
+    # チェス盤の描画（8x8）- 画面上部から直接配置（センタリングなし）
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left + (board_area_width - board_size)//2
-    board_top = board_area_top + (board_area_height - board_size)//2
+    board_left = board_area_left
+    board_top = board_area_top
     # use pale greenish theme similar to original design
     light = (235, 248, 240)
     dark = (200, 220, 200)
-    # draw board background only for the actual board rectangle to avoid side margins
+    # draw board background
     try:
         pygame.draw.rect(screen, (200, 220, 200), (board_left, board_top, board_size, board_size))
         pygame.draw.rect(screen, (120, 140, 120), (board_left, board_top, board_size, board_size), 2)
@@ -1272,6 +1270,17 @@ def handle_mouse_click(pos):
         show_grave = not show_grave
         return
     
+    # 墓地オーバーレイ内のカードクリックで拡大表示
+    if show_grave and grave_card_rects:
+        for rect, card_name in grave_card_rects:
+            if rect.collidepoint(pos):
+                # toggle enlarged display
+                if enlarged_card_name == card_name:
+                    enlarged_card_name = None
+                else:
+                    enlarged_card_name = card_name
+                return
+    
     # カードのクリック判定（優先）
     for rect, idx in card_rects:
         if rect.collidepoint(pos):
@@ -1299,22 +1308,24 @@ def handle_mouse_click(pos):
                 return
 
     # 盤面クリック判定 (draw_panel と同じ配置計算を行う)
-    board_area_left = 24
-    board_area_top = 70
-    board_area_width = 750
-    # same available-height calculation as draw_panel: reserve space for top info and hand area
-    reserved_top = 100
+    # レイアウト: 左側に基本情報パネル、その右にチェス盤
+    left_panel_width = 180
+    left_margin = 20
+    top_margin = 20
+    
+    board_area_left = left_margin + left_panel_width + 20
+    board_area_top = top_margin
     card_h = 140
     reserved_bottom = card_h + 80
-    avail_height = H - reserved_top - reserved_bottom
-    board_area_height = min(board_area_width, max(200, avail_height))
+    avail_height = H - board_area_top - reserved_bottom
+    avail_width = W - board_area_left - 20
+    board_size = min(avail_width, avail_height)
 
-    # compute square size and centered board within reserved area (same as draw_panel)
-    board_size = min(board_area_width, board_area_height)
+    # 盤面は画面上部から直接配置（センタリングなし）
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left + (board_area_width - board_size)//2
-    board_top = board_area_top + (board_area_height - board_size)//2
+    board_left = board_area_left
+    board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
     if board_rect.collidepoint(pos):

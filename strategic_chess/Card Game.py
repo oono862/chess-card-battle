@@ -660,6 +660,10 @@ def draw_panel():
     global grave_label_rect
     grave_label_rect = pygame.Rect(info_x, info_y, grave_surf.get_width(), grave_surf.get_height())
     draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    # ブロックの下に追加の余白を付ける
+    info_y += line_height
+    extra_bottom_margin = 16  # 基本情報ブロック下のマージン
+    basic_info_block_bottom = info_y + extra_bottom_margin
     
     # 保留中表示（右上に移動）
     if getattr(game, 'pending', None) is not None:
@@ -680,11 +684,12 @@ def draw_panel():
 
     # === 中央エリア: チェス盤用の空白エリア ===
     board_area_left = 24
-    board_area_top = 120  # 縦並び情報の下に配置
+    # 基本情報ブロックの実高さに追従して盤面開始位置を決定
+    board_area_top = basic_info_block_bottom  # これにより「墓地」行の下にも明確な余白が入る
     board_area_width = 750
     # compute available height for board so it doesn't overlap hand area at bottom
     # reserve space for top info (approx 100px) and for hand area (card_h + margins)
-    reserved_top = 100
+    reserved_top = max(100, basic_info_block_bottom)
     card_h = 140
     reserved_bottom = card_h + 80  # hand area + margin
     avail_height = H - reserved_top - reserved_bottom

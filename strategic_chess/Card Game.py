@@ -30,6 +30,7 @@ show_grave = False
 show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
+enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 
 # CPU 難易度 (1=Easy,2=Medium,3=Hard,4=Expert)
 CPU_DIFFICULTY = 2
@@ -98,6 +99,8 @@ def show_start_screen(screen):
     """起動時に難易度を選択する簡易メニュー。
     1-4 のキーか、画面上のボタンで選択可能。選択はグローバル CPU_DIFFICULTY に保存される。
     """
+    # 選択結果をグローバルに反映
+    global CPU_DIFFICULTY
     # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
     user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"

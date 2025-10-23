@@ -132,10 +132,11 @@ def show_start_screen(screen):
     title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
     btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
     options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
-    btn_w = 300
+    # ボタン幅を広げてテキストが見切れないようにする
+    btn_w = 240
     btn_h = 80
     # use larger horizontal spacing between buttons to match screenshot
-    spacing = 48
+    spacing = 20
     total_h = len(options) * btn_h + (len(options) - 1) * spacing
     # place title near top and move buttons further down to create generous whitespace like reference
     title_y = int(H * 0.08)

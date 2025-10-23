@@ -37,8 +37,17 @@ class PendingAction:
     like board tiles or enemy pieces are declared for future integration with
     the chess part, and are logged as TODO when triggered.
     """
-    kind: Literal["discard", "target_tile", "target_piece"]
+    kind: Literal["discard", "target_tile", "target_piece", "confirm"]
     info: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PrePlayCheck:
+    """カード使用前の確認が必要な場合の情報を保持"""
+    hand_index: int
+    card: Card
+    needs_confirmation: bool = False
+    confirmation_message: str = ""
 
 
 @dataclass
@@ -178,6 +187,21 @@ class Game:
         card = self.player.hand.cards[hand_index]
         if not card.can_play(self.player):
             return False, f"PPが不足しています（現在{self.player.pp_current}）。『{card.name}』のコストは{card.cost}です。"
+        
+        # 墓地ルーレット専用: 墓地が空なら確認を先に出す（カード未消費）
+        if card.name == "墓地ルーレット" and not self.player.graveyard:
+            self.pending = PendingAction(
+                kind="confirm",
+                info={
+                    "id": "confirm_grave_roulette_empty",
+                    "message": "墓地から回収できるカードがありません。\n使用しますか？",
+                    "yes_label": "はい(Y)",
+                    "no_label": "いいえ(N)",
+                    "hand_index": hand_index,  # カードの位置を保存
+                },
+            )
+            return True, "確認待ち"
+        
         # Optional precheck (e.g., cannot play if graveyard empty)
         if card.precheck is not None:
             err = card.precheck(self, self.player)
@@ -313,7 +337,12 @@ def eff_alchemy(game: Game, player: PlayerState) -> str:
 def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:
     """墓地ルーレット(1): ランダムで墓地のカードを回収して手札へ。"""
     if not player.graveyard:
+        # 墓地が空の場合は何もしない（確認はplay_card内で行われる）
         return "墓地が空です。"
+    idx = random.randrange(len(player.graveyard))
+    card = player.graveyard.pop(idx)
+    player.hand.add(card)
+    return f"墓地から『{card.name}』を回収。"
     idx = random.randrange(len(player.graveyard))
     card = player.graveyard.pop(idx)
     player.hand.add(card)
@@ -354,8 +383,9 @@ def make_rule_cards_deck() -> Deck:
         Card("暴風", 1, eff_storm_jump_once),
         Card("迅雷", 1, eff_lightning_two_actions),
         Card("2ドロー", 1, eff_draw2),
-        Card("錬成", 0, eff_alchemy),
-        Card("墓地ルーレット", 1, eff_graveyard_roulette, precheck=pre_graveyard_not_empty),
+    Card("錬成", 0, eff_alchemy),
+    # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
+    Card("墓地ルーレット", 1, eff_graveyard_roulette),
         Card("\u6442\u53d6", 1, eff_leech_pp2),
     ]
     pool = []

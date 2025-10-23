@@ -661,8 +661,9 @@ def draw_panel():
     board_area_height = min(board_area_width, max(200, avail_height))
     
     # チェス盤の描画（8x8）
-    pygame.draw.rect(screen, (200, 220, 200), (board_area_left, board_area_top, board_area_width, board_area_height))
-    pygame.draw.rect(screen, (120, 140, 120), (board_area_left, board_area_top, board_area_width, board_area_height), 2)
+    # NOTE: fill only the actual board rect (board_left/board_top/board_size) below
+    # rather than the entire board_area. This removes the visual side-padding
+    # while keeping the board position and size unchanged.
     # compute square size and center the square within the reserved area
     board_size = min(board_area_width, board_area_height)
     square_w = board_size // 8
@@ -672,6 +673,13 @@ def draw_panel():
     # use pale greenish theme similar to original design
     light = (235, 248, 240)
     dark = (200, 220, 200)
+    # draw board background only for the actual board rectangle to avoid side margins
+    try:
+        pygame.draw.rect(screen, (200, 220, 200), (board_left, board_top, board_size, board_size))
+        pygame.draw.rect(screen, (120, 140, 120), (board_left, board_top, board_size, board_size), 2)
+    except Exception:
+        # fallback: nothing
+        pass
     for rr in range(8):
         for cc in range(8):
             rrect = pygame.Rect(board_left + cc*square_w, board_top + rr*square_h, square_w, square_h)

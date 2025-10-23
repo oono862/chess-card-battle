@@ -630,6 +630,7 @@ def ai_make_move():
             candidates.append((p, mv))
 
     if not candidates:
+        # AI has no legal moves (do not log to game.log because only card-related logs should be recorded)
         return
 
     # Difficulty 1: fully random
@@ -845,6 +846,11 @@ def draw_panel():
             rrect = pygame.Rect(board_left + cc*square_w, board_top + rr*square_h, square_w, square_h)
             pygame.draw.rect(screen, light if (rr+cc)%2==0 else dark, rrect)
 
+    # save computed board rectangle for other UI code (promotion overlay, click handlers)
+    draw_panel.board_left = board_left
+    draw_panel.board_top = board_top
+    draw_panel.board_size = board_size
+
     # 駒の描画（画像があれば画像で、なければフォールバックで丸と文字）
     for p in pieces:
         cell_x = board_left + p['col']*square_w
@@ -879,6 +885,13 @@ def draw_panel():
     right_x = board_left + 8 * square_w
     pygame.draw.rect(screen, (20,20,20), (left_x-3, board_top, 6, 8 * square_h))
     pygame.draw.rect(screen, (20,20,20), (right_x-3, board_top, 6, 8 * square_h))
+    # 盤面の上下にも同様の黒枠線を追加
+    top_y = board_top
+    bottom_y = board_top + 8 * square_h
+    # 上端
+    pygame.draw.rect(screen, (20,20,20), (board_left, top_y-3, 8 * square_w, 6))
+    # 下端
+    pygame.draw.rect(screen, (20,20,20), (board_left, bottom_y-3, 8 * square_w, 6))
 
     # === 右側エリア: ログ（切替式）===
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
@@ -1180,11 +1193,24 @@ def draw_panel():
     if promotion_pending is not None:
         promot = promotion_pending
         opts = ['Q','R','B','N']
-        # サイズ・配置
+        # サイズ・配置: 盤面内に収まるように調整
         box_w = 460
         box_h = 160
-        box_x = (W - box_w)//2
-        box_y = (H - box_h)//2
+        # default margins inside board
+        margin = 12
+        # if draw_panel saved the board rect, prefer to place the box inside the board
+        if hasattr(draw_panel, 'board_left') and hasattr(draw_panel, 'board_top') and hasattr(draw_panel, 'board_size'):
+            bleft = draw_panel.board_left
+            btop = draw_panel.board_top
+            bsize = draw_panel.board_size
+            # constrain box size to fit within board with margin
+            box_w = min(box_w, bsize - margin*2)
+            box_h = min(box_h, bsize - margin*2)
+            box_x = bleft + (bsize - box_w)//2
+            box_y = btop + (bsize - box_h)//2
+        else:
+            box_x = (W - box_w)//2
+            box_y = (H - box_h)//2
         pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
         pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
         # ヘッダ
@@ -1193,8 +1219,15 @@ def draw_panel():
         screen.blit(hdr, (box_x + (box_w - hdr.get_width())//2, box_y + 8))
 
         # 選択肢を横並びに描画（駒画像を使う）
+        # decide option square size and spacing to fit inside box_w
         opt_w = 96
-        spacing = (box_w - 24 - len(opts)*opt_w) // (len(opts)-1)
+        min_spacing = 6
+        total_opts_width = len(opts) * opt_w
+        if total_opts_width + 24 + min_spacing * (len(opts)-1) > box_w:
+            # need to shrink option width to fit
+            available = box_w - 24 - min_spacing * (len(opts)-1)
+            opt_w = max(40, available // len(opts))
+        spacing = max(min_spacing, (box_w - 24 - len(opts)*opt_w) // (len(opts)-1))
         ox = box_x + 12
         oy = box_y + 48
         promo_rects = []
@@ -1242,7 +1275,7 @@ def draw_panel():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index
+    global log_scroll_offset, show_log, enlarged_card_index, chess_current_turn, cpu_wait, cpu_wait_start
     
     if key == pygame.K_ESCAPE:
         pygame.quit()
@@ -1286,9 +1319,10 @@ def handle_keydown(key):
             sel = opts[idx]
             piece = promotion_pending['piece']
             piece['name'] = sel
+            # promotion occurred; do not append to game.log per card-only logging policy
             # promotion resolved: clear pending and finish player's turn
             promotion_pending = None
-            # after promotion, switch turn and possibly start AI (handled elsewhere)
+            # after promotion, switch turn and possibly start AI
             chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
             if chess_current_turn == 'black':
                 import time
@@ -1359,7 +1393,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn, cpu_wait, cpu_wait_start
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1418,15 +1452,22 @@ def handle_mouse_click(pos):
         for r, o in draw_panel.promo_rects:
             if r.collidepoint(pos):
                 # 選択された昇格駒で置き換え
-                piece = promotion_pending.get('piece')
-                if piece is not None:
-                    piece['name'] = o
-                    # promotion occurred; do not append to game.log
-                promotion_pending = None
-                # clear selection/highlights just in case
-                selected_piece = None
-                highlight_squares = []
-                return
+                    piece = promotion_pending.get('piece')
+                    if piece is not None:
+                        piece['name'] = o
+                        # promotion occurred; do not append to game.log
+                    # promotion resolved: clear pending and finish player's turn
+                    promotion_pending = None
+                    # clear selection/highlights just in case
+                    selected_piece = None
+                    highlight_squares = []
+                    # switch turn and start AI if applicable
+                    chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
+                    if chess_current_turn == 'black':
+                        import time
+                        cpu_wait = True
+                        cpu_wait_start = time.time()
+                    return
 
     # 盤面クリック判定 (draw_panel と同じ配置計算を行う)
     board_area_left = 24
@@ -1468,6 +1509,13 @@ def handle_mouse_click(pos):
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
                 apply_move(selected_piece, row, col)
+                # If a promotion is pending, do NOT switch turn or start AI yet.
+                # The promotion overlay/selection will complete the turn when resolved.
+                if promotion_pending is not None:
+                    # clear selection/highlights and wait for player to choose promotion
+                    selected_piece = None
+                    highlight_squares = []
+                    return
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
                 # クリア
@@ -1477,7 +1525,6 @@ def handle_mouse_click(pos):
                 if chess_current_turn == 'black':
                     # start non-blocking AI wait; main_loop will invoke the AI after delay
                     import time
-                    global cpu_wait, cpu_wait_start
                     cpu_wait = True
                     cpu_wait_start = time.time()
                     # do not flip turn here; ai_make_move() will perform moves and

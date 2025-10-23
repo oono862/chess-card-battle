@@ -41,6 +41,16 @@ _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
 
+# クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
+confirm_yes_rect = None
+confirm_no_rect = None
+grave_label_rect = None
+grave_card_rects = []
+scrollbar_rect = None
+dragging_scrollbar = False
+drag_start_y = 0
+drag_start_offset = 0
+
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
     Cache scaled images by (name,color,size). If file not found, return None to indicate fallback.
@@ -1213,7 +1223,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, selected_piece, highlight_squares, promotion_pending, chess_current_turn
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn, show_grave
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1252,7 +1262,6 @@ def handle_mouse_click(pos):
     
     # 墓地ラベルのクリックで墓地表示切替
     if grave_label_rect and grave_label_rect.collidepoint(pos):
-        global show_grave
         show_grave = not show_grave
         return
     
@@ -1346,6 +1355,13 @@ def handle_mouse_click(pos):
 
 def main_loop():
     global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn
+    # スクロール関連の初期化（ローカル扱いによるUnboundLocalErrorを防止）
+    global dragging_scrollbar, drag_start_y, drag_start_offset, scrollbar_rect
+    dragging_scrollbar = False
+    drag_start_y = 0
+    drag_start_offset = 0
+    # scrollbar_rect は draw_panel 内で更新されるが、初期 None を明示
+    scrollbar_rect = None
     
     while True:
         for event in pygame.event.get():

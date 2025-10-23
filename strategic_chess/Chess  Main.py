@@ -9,7 +9,7 @@ import json        # 追加
 import time  # 追加
 import random
 
-pygame.init()
+# pygame.init()  # Card Game.pyで初期化済みのためコメントアウト
 
 # --- AI thinking display settings ---
 # 表示を有効にする/無効にする
@@ -40,44 +40,44 @@ print("利用可能なギミック:")
 for g in gimmicks:
     print(f"{g.name}: {g.get_description()}")
 
-# ギミック所持数管理（初期値0）
-player_gimmick_counts = {g.name: 0 for g in gimmicks}  # 左側（プレイヤー用）
-cpu_gimmick_counts = {g.name: 0 for g in gimmicks}     # 右側（CPU用）
+# ギミック所持数管理（初期値0） - Card Game.pyのcard_core.pyで管理
+# player_gimmick_counts = {g.name: 0 for g in gimmicks}  # 左側（プレイヤー用）
+# cpu_gimmick_counts = {g.name: 0 for g in gimmicks}     # 右側（CPU用）
 
-# デッキと手札（ランダム配布）
-player_hand = []  # list of gimmick objects
-ai_hand = []
+# デッキと手札（ランダム配布） - Card Game.pyのcard_core.pyで管理
+# player_hand = []  # list of gimmick objects
+# ai_hand = []
 
-def add_card_to_player_hand(card):
-    """手札へのカード追加を一元管理。手札上限(7枚)を超える場合は追加せず False を返す。
-    追加に成功したら True を返す。"""
-    global player_hand, notif_message, notif_until
-    if len(player_hand) >= 7:
-        notif_message = "手札が上限(7枚)です。これ以上ドローできません"
-        notif_until = time.time() + 2.0
-        print('DEBUG: add_card_to_player_hand refused - hand limit reached')
-        return False
-    player_hand.append(card)
-    return True
+# def add_card_to_player_hand(card):  # Card Game.pyで管理
+#     """手札へのカード追加を一元管理。手札上限(7枚)を超える場合は追加せず False を返す。
+#     追加に成功したら True を返す。"""
+#     global player_hand, notif_message, notif_until
+#     if len(player_hand) >= 7:
+#         notif_message = "手札が上限(7枚)です。これ以上ドローできません"
+#         notif_until = time.time() + 2.0
+#         print('DEBUG: add_card_to_player_hand refused - hand limit reached')
+#         return False
+#     player_hand.append(card)
+#     return True
 
-def deal_hands():
-    """ランダムにプレイヤーとAIに各4枚ずつ配る。種類ごとに等確率で選ぶ（重複あり）。"""
-    global player_hand, ai_hand
-    # pick 8 cards total, allow duplicates
-    picks = random.choices(gimmicks, k=8)
-    player_hand = picks[:4]
-    ai_hand = picks[4:]
+# def deal_hands():  # Card Game.pyで管理
+#     """ランダムにプレイヤーとAIに各4枚ずつ配る。種類ごとに等確率で選ぶ（重複あり）。"""
+#     global player_hand, ai_hand
+#     # pick 8 cards total, allow duplicates
+#     picks = random.choices(gimmicks, k=8)
+#     player_hand = picks[:4]
+#     ai_hand = picks[4:]
 
-# 初期配布
-deal_hands()
+# 初期配布 - Card Game.pyで管理
+# deal_hands()
 
-# 画面表示の設定
-info = pygame.display.Info()
-SCREEN_WIDTH = info.current_w
-SCREEN_HEIGHT = info.current_h
+# 画面表示の設定（Card Game.pyからscreen変数を受け取る想定）
+# info = pygame.display.Info()  # Card Game.py側で管理
+# SCREEN_WIDTH = info.current_w
+# SCREEN_HEIGHT = info.current_h
 
 # フルスクリーンフラグ（起動時はウィンドウモードにする）
-is_fullscreen = False
+# is_fullscreen = False  # Card Game.py側で管理
 # CPU(黒)の難易度: 1=Easy, 2=Medium, 3=Hard, 4=Expert
 CPU_DIFFICULTY = 3
 
@@ -108,13 +108,13 @@ def calculate_layout(is_fullscreen_mode, window_width=None, window_height=None):
 # 初期レイアウト計算
 WINDOW_WIDTH, WINDOW_HEIGHT, WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y = calculate_layout(is_fullscreen)
 
-# 画面モードを設定（起動時はリサイズ可能なウィンドウ）
-screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
-pygame.display.set_caption("チェスエレメント")
+# 画面モードを設定（Card Game.pyで管理）
+# screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+# pygame.display.set_caption("チェスエレメント")
 
 # フォントサイズを画面サイズに応じて調整
-base_font_size = int(SCREEN_HEIGHT * 0.04)  # 画面高さの4%
-font = pygame.font.SysFont("Noto_SansJP", base_font_size)
+# base_font_size = int(SCREEN_HEIGHT * 0.04)  # 画面高さの4%
+# font = pygame.font.SysFont("Noto_SansJP", base_font_size)
 
 
 
@@ -366,8 +366,8 @@ def show_promotion_menu_with_images(screen, piece_color):
                         break
     return selected
 
-# 起動時に難易度選択画面を表示（関数定義の後で呼び出す）
-show_start_screen(screen)
+# 起動時に難易度選択画面を表示（Card Game.pyから呼び出す想定のためコメントアウト）
+# show_start_screen(screen)
 
 class Piece:
     def __init__(self, row, col, name, color):
@@ -1772,3 +1772,8 @@ while running:
 
 pygame.quit()
 sys.exit()
+# ���ӁF���̃t�@�C����Card Game.py�Ɠ������邽�߂ɕҏW����Ă��܂��B
+# - pygame.init()���R�����g�A�E�g�ς�
+# - �Ɨ�����screen�ϐ��쐬���R�����g�A�E�g�ς�
+# - hand�Ǘ��@�\���R�����g�A�E�g�ς݁icard_core.py�ŊǗ��j
+# - ���C�����[�v�͎c���Ă��܂����ACard Game.py����Ăяo���z��ł�

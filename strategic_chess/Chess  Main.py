@@ -1,15 +1,25 @@
 # --- カードドロー管理 ---
-can_draw_card = True  # プレイヤーがこのターンでドロー可能か
+can_draw_card = False  # ギミック（カードドロー）機能は削除済みのため常に無効
 
 import pygame
 import sys
-from gimmick import get_gimmick_list, FireGimmick, IceGimmick, ThunderGimmick, WindGimmick, DoubleGimmick, ExplosionGimmick, CollectGimmick, RecoveryGimmick
+# Gimmick system removed for new game; provide empty stubs so code depending on names won't fail
+def get_gimmick_list():
+    return []
+class FireGimmick: pass
+class IceGimmick: pass
+class ThunderGimmick: pass
+class WindGimmick: pass
+class DoubleGimmick: pass
+class ExplosionGimmick: pass
+class CollectGimmick: pass
+class RecoveryGimmick: pass
 import subprocess  # 追加
 import json        # 追加
 import time  # 追加
 import random
 
-# pygame.init()  # Card Game.pyで初期化済みのためコメントアウト
+pygame.init()
 
 # --- AI thinking display settings ---
 # 表示を有効にする/無効にする
@@ -35,49 +45,18 @@ GOLD = (255, 215, 0)
 RED  = (255,0,0)
 
 # --- ギミック一覧の取得と表示（例） ---
-gimmicks = get_gimmick_list()
-print("利用可能なギミック:")
-for g in gimmicks:
-    print(f"{g.name}: {g.get_description()}")
+gimmicks = []  # gimmick support removed
+# 手札はギミック機能を削除したため空リストにしておく（参照が残る箇所のため）
+player_hand = []
+ai_hand = []
 
-# ギミック所持数管理（初期値0） - Card Game.pyのcard_core.pyで管理
-# player_gimmick_counts = {g.name: 0 for g in gimmicks}  # 左側（プレイヤー用）
-# cpu_gimmick_counts = {g.name: 0 for g in gimmicks}     # 右側（CPU用）
-
-# デッキと手札（ランダム配布） - Card Game.pyのcard_core.pyで管理
-# player_hand = []  # list of gimmick objects
-# ai_hand = []
-
-# def add_card_to_player_hand(card):  # Card Game.pyで管理
-#     """手札へのカード追加を一元管理。手札上限(7枚)を超える場合は追加せず False を返す。
-#     追加に成功したら True を返す。"""
-#     global player_hand, notif_message, notif_until
-#     if len(player_hand) >= 7:
-#         notif_message = "手札が上限(7枚)です。これ以上ドローできません"
-#         notif_until = time.time() + 2.0
-#         print('DEBUG: add_card_to_player_hand refused - hand limit reached')
-#         return False
-#     player_hand.append(card)
-#     return True
-
-# def deal_hands():  # Card Game.pyで管理
-#     """ランダムにプレイヤーとAIに各4枚ずつ配る。種類ごとに等確率で選ぶ（重複あり）。"""
-#     global player_hand, ai_hand
-#     # pick 8 cards total, allow duplicates
-#     picks = random.choices(gimmicks, k=8)
-#     player_hand = picks[:4]
-#     ai_hand = picks[4:]
-
-# 初期配布 - Card Game.pyで管理
-# deal_hands()
-
-# 画面表示の設定（Card Game.pyからscreen変数を受け取る想定）
-# info = pygame.display.Info()  # Card Game.py側で管理
-# SCREEN_WIDTH = info.current_w
-# SCREEN_HEIGHT = info.current_h
+# 画面表示の設定
+info = pygame.display.Info()
+SCREEN_WIDTH = info.current_w
+SCREEN_HEIGHT = info.current_h
 
 # フルスクリーンフラグ（起動時はウィンドウモードにする）
-# is_fullscreen = False  # Card Game.py側で管理
+is_fullscreen = False
 # CPU(黒)の難易度: 1=Easy, 2=Medium, 3=Hard, 4=Expert
 CPU_DIFFICULTY = 3
 
@@ -108,13 +87,13 @@ def calculate_layout(is_fullscreen_mode, window_width=None, window_height=None):
 # 初期レイアウト計算
 WINDOW_WIDTH, WINDOW_HEIGHT, WIDTH, HEIGHT, SQUARE_SIZE, GIMMICK_ROW_HEIGHT, BOARD_OFFSET_X, BOARD_OFFSET_Y = calculate_layout(is_fullscreen)
 
-# 画面モードを設定（Card Game.pyで管理）
-# screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
-# pygame.display.set_caption("チェスエレメント")
+# 画面モードを設定（起動時はリサイズ可能なウィンドウ）
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+pygame.display.set_caption("チェスエレメント")
 
 # フォントサイズを画面サイズに応じて調整
-# base_font_size = int(SCREEN_HEIGHT * 0.04)  # 画面高さの4%
-# font = pygame.font.SysFont("Noto_SansJP", base_font_size)
+base_font_size = int(SCREEN_HEIGHT * 0.04)  # 画面高さの4%
+font = pygame.font.SysFont("Noto_SansJP", base_font_size)
 
 
 
@@ -366,8 +345,8 @@ def show_promotion_menu_with_images(screen, piece_color):
                         break
     return selected
 
-# 起動時に難易度選択画面を表示（Card Game.pyから呼び出す想定のためコメントアウト）
-# show_start_screen(screen)
+# 起動時に難易度選択画面を表示（関数定義の後で呼び出す）
+show_start_screen(screen)
 
 class Piece:
     def __init__(self, row, col, name, color):
@@ -574,8 +553,8 @@ def draw_board():
     screen.fill(WHITE)
 
     # フレームごとにクリック領域リストを初期化（必ず存在させる）
-    draw_board.player_gimmick_click_areas = []
     # カード描画のクリック領域（上下のギミック領域内に並べたカード用）
+    draw_board.player_gimmick_click_areas = []
     draw_board.card_click_areas = []
 
     # 盤面をオフセット位置から描画
@@ -594,11 +573,7 @@ def draw_board():
     # ギミック枠（上下配置）
     SILVER = (192, 192, 192)
     
-    # 上部のギミック枠（AI用・銀色）
-    pygame.draw.rect(screen, SILVER, (0, 0, WINDOW_WIDTH, GIMMICK_ROW_HEIGHT))
-    
-    # 下部のギミック枠（プレイヤー用・金色）
-    pygame.draw.rect(screen, GOLD, (0, WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT, WINDOW_WIDTH, GIMMICK_ROW_HEIGHT))
+    # ギミック枠は削除済み（領域は保持するため何も描かない）
     
     # --- 右上余白にギミックカード画像を表示 ---
     # カード画像は一度オリジナルを読み込み、必要時だけ高品質に縮小/拡大してキャッシュする
@@ -936,40 +911,8 @@ def draw_board():
         pass
     # game_over の表示はメインループ側で再戦画面を表示するため、ここでは描画しない
 
-    # --- ドロースペースを最前面に描画（左側余白中央、チェックテロップと重ならないように配置） ---
-    try:
-        # サイズ
-        draw_area_w = 140
-        draw_area_h = 70
-        # 左余白の中央に配置：BOARD_OFFSET_X が盤面の左端なので、その中央を使う
-        draw_area_x = max(10, (BOARD_OFFSET_X - draw_area_w) // 2)
-        # 盤面の垂直中央に合わせる（チェック表示は盤面上部か左上に出る想定なので被らない）
-        draw_area_y = BOARD_OFFSET_Y + HEIGHT // 2 - draw_area_h // 2
-        # 最小 Y を確保してチェック表示と被らないようにする（上部余白 + 8px）
-        min_top = GIMMICK_ROW_HEIGHT + 8
-        if draw_area_y < min_top:
-            draw_area_y = min_top
-        # 下に被らないように調整
-        max_bottom = WINDOW_HEIGHT - GIMMICK_ROW_HEIGHT - draw_area_h - 8
-        if draw_area_y > max_bottom:
-            draw_area_y = max_bottom
-
-        draw_rect = pygame.Rect(draw_area_x, draw_area_y, draw_area_w, draw_area_h)
-        draw_board.card_draw_rect = draw_rect
-        draw_color = (60, 140, 255) if can_draw_card else (180, 180, 180)
-        border_color = (0, 60, 180)
-        pygame.draw.rect(screen, draw_color, draw_rect)
-        pygame.draw.rect(screen, border_color, draw_rect, 6)
-        font_explain = pygame.font.SysFont("Noto_SansJP", 16, bold=True)
-        explain_text = "ここをクリックでカード入手" if can_draw_card else "このターンはドローできません"
-        explain_surf = font_explain.render(explain_text, True, border_color)
-        screen.blit(explain_surf, (draw_area_x, draw_area_y - 20))
-        font_draw = pygame.font.SysFont("Noto_SansJP", 20, bold=True)
-        label = "カードドロー" if can_draw_card else "ドロー不可"
-        label_surf = font_draw.render(label, True, (255,255,255) if can_draw_card else (120,120,120))
-        screen.blit(label_surf, (draw_area_x + draw_area_w//2 - label_surf.get_width()//2, draw_area_y + draw_area_h//2 - label_surf.get_height()//2))
-    except Exception:
-        pass
+    # ギミック（カードドロー）機能は削除済みなので何も描かず rect は None にしておく
+    draw_board.card_draw_rect = None
 
     # （旧）右側に表示していた手札ブロックは削除しました。上下エリアに4枚ずつ表示する実装を使用します。
 
@@ -1335,7 +1278,7 @@ while running:
                     # R で再戦、Q または ESC で終了、D で難易度選択画面へ
                     if event.key == pygame.K_r:
                         # ゲーム状態をリセット
-                        deal_hands()  # カードを再配布（シャッフル）
+                        # deal_hands() removed (gimmick system disabled)
                         pieces = create_pieces()
                         selected_piece = None
                         current_turn = 'white'
@@ -1357,7 +1300,7 @@ while running:
                         try:
                             show_start_screen(screen)
                             # 難易度選択後に盤面・状態を初期化して即再戦
-                            deal_hands()  # カードを再配布（シャッフル）
+                            # deal_hands() removed (gimmick system disabled)
                             pieces = create_pieces()
                             selected_piece = None
                             current_turn = 'white'
@@ -1531,100 +1474,17 @@ while running:
             try:
                 if hasattr(draw_board, 'card_draw_rect') and draw_board.card_draw_rect and draw_board.card_draw_rect.collidepoint((mx, my)):
                     print('DEBUG: draw area clicked at', (mx, my), 'rect=', draw_board.card_draw_rect)
-                    if can_draw_card:
-                        if len(player_hand) >= 7:
-                            notif_message = "手札が上限(7枚)です。これ以上ドローできません"
-                            notif_until = time.time() + 2.0
-                            print('DEBUG: Draw refused - hand limit reached')
-                        else:
-                            new_card = random.choice(gimmicks)
-                            added = add_card_to_player_hand(new_card)
-                            if added:
-                                can_draw_card = False
-                                notif_message = f"カードを入手: {new_card.name}"
-                                notif_until = time.time() + 2.0
-                                print('DEBUG: Drew card ->', new_card.name)
-                            else:
-                                # 追加失敗（上限）時は can_draw_card はそのまま
-                                pass
-                        
-                    else:
-                        notif_message = "このターンは既にドローしました"
-                        notif_until = time.time() + 2.0
+                    # Card draw feature removed; show notification
+                    notif_message = "カード機能はこのバージョンで無効化されています"
+                    notif_until = time.time() + 1.5
                     continue
             except Exception as e:
                 print('DEBUG: draw area click check error', e)
             row, col = get_clicked_pos((mx, my))
             clicked = get_piece_at(row, col, pieces)
-            # ギミックのアイコンをクリックしたかチェック
-            try:
-                if hasattr(draw_board, 'player_gimmick_click_areas'):
-                    mx, my = pygame.mouse.get_pos()
-                    for name, rect in draw_board.player_gimmick_click_areas:
-                        if rect.collidepoint((mx, my)):
-                            # '2' のギミックがクリックされたら右上カードを差し替える
-                            # map gimmick names to image paths
-                            # Determine target image path for this gimmick
-                            if name == '2':
-                                target_path = 'images/2ドロー.png'
-                            elif name == 'e':
-                                target_path = 'images/m9(^Д^)/card_test_r.png'
-                            elif name == 'ボ収':
-                                target_path = 'images/m9(^Д^)/card_test_l.png'
-                            elif name == '２回復':
-                                target_path = 'images/m9(^Д^)/card_TEST_S.png'
-                            elif name == '炎':
-                                target_path = 'images/m9(^Д^)/dummy_card_t.png'
-                            elif name == '氷':
-                                target_path = 'images/m9(^Д^)/dummy_card_m.png'
-                            elif name == '雷':
-                                target_path = 'images/m9(^Д^)/dummy_card_c.png'
-                            elif name == '風':
-                                target_path = 'images/m9(^Д^)/dummy_card_i.png'
-                            else:
-                                # 他のギミックは未対応（何もせず継続）
-                                continue
-
-                            draw_board.current_card_path = target_path
-                            # キャッシュをクリアして即時反映
-                            if hasattr(draw_board, 'card_img_cache'):
-                                draw_board.card_img_cache.clear()
-                            print('DEBUG: Gimmick clicked, set current_card_path ->', draw_board.current_card_path)
-                            break
-                # カード領域のクリック判定（上下の手札）
-                if hasattr(draw_board, 'card_click_areas'):
-                    mx, my = pygame.mouse.get_pos()
-                    found_card = False
-                    for card_obj, icon_path, rect in draw_board.card_click_areas:
-                        try:
-                            if rect.collidepoint((mx, my)):
-                                # すでに拡大表示中のカードをもう一度クリックした場合はカードを使用（手札から削除）
-                                if draw_board.current_card_path == icon_path and card_obj in player_hand:
-                                    player_hand.remove(card_obj)
-                                    draw_board.current_card_path = None
-                                    draw_board.card_img_path_loaded = None
-                                    if hasattr(draw_board, 'card_img_cache'):
-                                        draw_board.card_img_cache.clear()
-                                    print('DEBUG: Card used and removed from hand:', icon_path)
-                                    found_card = True
-                                else:
-                                    # アイコンパスがある場合は右上に拡大表示
-                                    if icon_path:
-                                        draw_board.current_card_path = icon_path
-                                    else:
-                                        draw_board.current_card_path = "images/m9(^Д^)/dummy_card_t.png"  # ダミー画像パス
-                                    draw_board.card_img_path_loaded = None
-                                    if hasattr(draw_board, 'card_img_cache'):
-                                        draw_board.card_img_cache.clear()
-                                    print('DEBUG: Card clicked, set current_card_path ->', draw_board.current_card_path)
-                                    found_card = True
-                        except Exception:
-                            pass
-                    # どれか1枚でもクリックされたら break
-                    if found_card:
-                        pass
-            except Exception:
-                pass
+            # ギミック／カードUIは削除済みのため、クリック処理は行わない
+            # （将来的に機能を戻す場合はここに処理を追加）
+            pass
 
             if selected_piece:
                 valid_moves = selected_piece.get_valid_moves(pieces)
@@ -1772,8 +1632,3 @@ while running:
 
 pygame.quit()
 sys.exit()
-# ���ӁF���̃t�@�C����Card Game.py�Ɠ������邽�߂ɕҏW����Ă��܂��B
-# - pygame.init()���R�����g�A�E�g�ς�
-# - �Ɨ�����screen�ϐ��쐬���R�����g�A�E�g�ς�
-# - hand�Ǘ��@�\���R�����g�A�E�g�ς݁icard_core.py�ŊǗ��j
-# - ���C�����[�v�͎c���Ă��܂����ACard Game.py����Ăяo���z��ł�

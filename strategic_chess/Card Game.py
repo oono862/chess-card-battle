@@ -630,7 +630,6 @@ def ai_make_move():
             candidates.append((p, mv))
 
     if not candidates:
-        game.log.append('AI: 動ける手がありません')
         return
 
     # Difficulty 1: fully random
@@ -681,7 +680,7 @@ def ai_make_move():
 
     p, mv = sel
     apply_move(p, mv[0], mv[1])
-    game.log.append(f"AI({CPU_DIFFICULTY}): {p['name']} を {mv} に移動")
+    # AI move performed; do not append to game.log (card-only logging policy)
 
 # initialize pieces
 pieces = create_pieces()
@@ -1287,8 +1286,14 @@ def handle_keydown(key):
             sel = opts[idx]
             piece = promotion_pending['piece']
             piece['name'] = sel
-            game.log.append(f"昇格: ポーンを{sel}に昇格させました。")
+            # promotion resolved: clear pending and finish player's turn
             promotion_pending = None
+            # after promotion, switch turn and possibly start AI (handled elsewhere)
+            chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
+            if chess_current_turn == 'black':
+                import time
+                cpu_wait = True
+                cpu_wait_start = time.time()
             return
         # pending中: discardのみ選択を許可し、それ以外は行動不可
         if getattr(game, 'pending', None) is not None:
@@ -1416,7 +1421,7 @@ def handle_mouse_click(pos):
                 piece = promotion_pending.get('piece')
                 if piece is not None:
                     piece['name'] = o
-                    game.log.append(f"昇格: ポーンを{o}に昇格させました。")
+                    # promotion occurred; do not append to game.log
                 promotion_pending = None
                 # clear selection/highlights just in case
                 selected_piece = None
@@ -1454,23 +1459,15 @@ def handle_mouse_click(pos):
         if selected_piece is None:
             if clicked and clicked['color'] == chess_current_turn:
                 selected_piece = clicked
-                # debug: print selected piece and its valid moves
                 try:
                     moves = get_valid_moves(clicked)
-                except Exception as e:
-                    print("DEBUG: get_valid_moves raised:", e)
+                except Exception:
                     moves = []
-                print("DEBUG: selected_piece=", clicked)
-                print("DEBUG: valid_moves=", moves)
                 highlight_squares = moves
         else:
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
-                # debug: applying move
-                print(f"DEBUG: applying move {selected_piece['name']} -> {(row,col)}")
                 apply_move(selected_piece, row, col)
-                print("DEBUG: move applied")
-                game.log.append(f"{selected_piece['name']} を {(row,col)} へ移動")
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
                 # クリア
@@ -1491,11 +1488,8 @@ def handle_mouse_click(pos):
                     selected_piece = clicked
                     try:
                         moves = get_valid_moves(clicked)
-                    except Exception as e:
-                        print("DEBUG: get_valid_moves raised:", e)
+                    except Exception:
                         moves = []
-                    print("DEBUG: selected_piece changed=", clicked)
-                    print("DEBUG: valid_moves=", moves)
                     highlight_squares = moves
                 else:
                     selected_piece = None

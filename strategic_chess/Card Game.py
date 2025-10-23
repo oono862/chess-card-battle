@@ -82,16 +82,29 @@ cpu_wait_start = 0.0
 def create_pieces():
     p = []
     # White on bottom (rows 6-7), black on top (rows 0-1)
-    p += [{'row':7, 'col':0, 'name':'R', 'color':'white'}, {'row':7, 'col':1, 'name':'N', 'color':'white'},
-          {'row':7, 'col':2, 'name':'B', 'color':'white'}, {'row':7, 'col':3, 'name':'Q', 'color':'white'},
-          {'row':7, 'col':4, 'name':'K', 'color':'white'}, {'row':7, 'col':5, 'name':'B', 'color':'white'},
-          {'row':7, 'col':6, 'name':'N', 'color':'white'}, {'row':7, 'col':7, 'name':'R', 'color':'white'}]
-    p += [{'row':6, 'col':i, 'name':'P', 'color':'white'} for i in range(8)]
-    p += [{'row':0, 'col':0, 'name':'R', 'color':'black'}, {'row':0, 'col':1, 'name':'N', 'color':'black'},
-          {'row':0, 'col':2, 'name':'B', 'color':'black'}, {'row':0, 'col':3, 'name':'Q', 'color':'black'},
-          {'row':0, 'col':4, 'name':'K', 'color':'black'}, {'row':0, 'col':5, 'name':'B', 'color':'black'},
-          {'row':0, 'col':6, 'name':'N', 'color':'black'}, {'row':0, 'col':7, 'name':'R', 'color':'black'}]
-    p += [{'row':1, 'col':i, 'name':'P', 'color':'black'} for i in range(8)]
+    # include has_moved flag to support castling logic
+    p += [
+        {'row':7, 'col':0, 'name':'R', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':1, 'name':'N', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':2, 'name':'B', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':3, 'name':'Q', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':4, 'name':'K', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':5, 'name':'B', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':6, 'name':'N', 'color':'white', 'has_moved': False},
+        {'row':7, 'col':7, 'name':'R', 'color':'white', 'has_moved': False},
+    ]
+    p += [{'row':6, 'col':i, 'name':'P', 'color':'white', 'has_moved': False} for i in range(8)]
+    p += [
+        {'row':0, 'col':0, 'name':'R', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':1, 'name':'N', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':2, 'name':'B', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':3, 'name':'Q', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':4, 'name':'K', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':5, 'name':'B', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':6, 'name':'N', 'color':'black', 'has_moved': False},
+        {'row':0, 'col':7, 'name':'R', 'color':'black', 'has_moved': False},
+    ]
+    p += [{'row':1, 'col':i, 'name':'P', 'color':'black', 'has_moved': False} for i in range(8)]
     return p
 
 
@@ -348,8 +361,10 @@ def show_deck_modal(screen):
         clock.tick(30)
 
 
-def get_piece_at(row, col):
-    for pc in pieces:
+def get_piece_at(row, col, pcs=None):
+    """Return piece dict at (row,col) from pcs list (or global pieces if pcs is None)."""
+    use_list = pcs if pcs is not None else pieces
+    for pc in use_list:
         if pc['row'] == row and pc['col'] == col:
             return pc
     return None
@@ -357,14 +372,21 @@ def get_piece_at(row, col):
 def on_board(r,c):
     return 0 <= r < 8 and 0 <= c < 8
 
-def simulate_move(src_piece, to_r, to_c):
-    # return new pieces list after move (deep copy of dicts)
-    new = [dict(p) for p in pieces if not (p['row']==to_r and p['col']==to_c)]
+def simulate_move(src_piece, to_r, to_c, pcs=None):
+    """Return new pieces list after moving src_piece to (to_r,to_c).
+    If pcs is provided, simulate on that list; otherwise use global pieces.
+    The returned list contains dict copies of pieces.
+    """
+    base = pcs if pcs is not None else pieces
+    # remove any piece at destination
+    new = [dict(p) for p in base if not (p['row'] == to_r and p['col'] == to_c)]
     moved = dict(src_piece)
-    # remove source from new
-    new = [p for p in new if not (p['row']==src_piece['row'] and p['col']==src_piece['col'] and p['name']==src_piece['name'] and p['color']==src_piece['color'])]
+    # remove source from new (match by identity fields)
+    new = [p for p in new if not (p['row'] == src_piece['row'] and p['col'] == src_piece['col'] and p['name'] == src_piece['name'] and p['color'] == src_piece['color'])]
     moved['row'] = to_r
     moved['col'] = to_c
+    # mark as moved (affects castling/en-passant logic in simulations)
+    moved['has_moved'] = True
     new.append(moved)
     return new
 
@@ -394,10 +416,18 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
     name = piece['name']
     r,c = piece['row'], piece['col']
     def occupied(rr,cc):
-        return get_piece_at(rr,cc) is not None
+        return get_piece_at(rr,cc, pcs) is not None
     def occupied_by_color(rr,cc,color):
-        p = get_piece_at(rr,cc)
+        p = get_piece_at(rr,cc, pcs)
         return p is not None and p['color']==color
+
+    # helper to find rook dict by position
+    def get_rook_at(row, col):
+        p = get_piece_at(row, col, pcs)
+        return p if p and p['name'] == 'R' else None
+
+    # ensure has_moved field exists for compatibility
+    has_moved = piece.get('has_moved', False)
 
     if name == 'P':
         dir = -1 if piece['color']=='white' else 1
@@ -413,6 +443,16 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             nr,nc = r+dir, c+dc
             if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
                 moves.append((nr,nc))
+        # en-passant
+        for dc in (-1, 1):
+            nr, nc = r + dir, c + dc
+            if (
+                en_passant_target is not None and
+                (nr, nc) == en_passant_target and
+                abs(piece['col'] - nc) == 1 and
+                ((piece['color'] == 'white' and piece['row'] == 3) or (piece['color'] == 'black' and piece['row'] == 4))
+            ):
+                moves.append((nr, nc))
     elif name == 'N':
         for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
             nr,nc = r+dr, c+dc
@@ -444,11 +484,71 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
                     moves.append((nr,nc))
 
+    # castling (king and rook must not have moved, king not in check, and passing squares not attacked)
+    # skip castling generation when called with ignore_check=True to avoid recursion
+    if not ignore_check and not has_moved and piece['col'] == 4 and not is_in_check(pcs, piece['color']):
+            row = piece['row']
+            # kingside
+            kingside_rook = get_rook_at(row, 7)
+            if (kingside_rook and kingside_rook['color'] == piece['color'] and not kingside_rook.get('has_moved', False)):
+                if all(get_piece_at(row, c, pcs) is None for c in [5,6]):
+                    safe = True
+                    for c in [4,5,6]:
+                        temp_pcs = []
+                        for p in pcs:
+                            if p is piece:
+                                temp_p = dict(p)
+                                temp_p['row'] = row
+                                temp_p['col'] = c
+                                temp_p['has_moved'] = True
+                                temp_pcs.append(temp_p)
+                            elif p is kingside_rook:
+                                temp_rook = dict(p)
+                                temp_rook['row'] = row
+                                temp_rook['col'] = 7
+                                temp_rook['has_moved'] = True
+                                temp_pcs.append(temp_rook)
+                            else:
+                                temp_pcs.append(p)
+                        if is_in_check(temp_pcs, piece['color']):
+                            safe = False
+                            break
+                    if safe:
+                        moves.append((row, 6))
+
+            # queenside
+            queenside_rook = get_rook_at(row, 0)
+            if (queenside_rook and queenside_rook['color'] == piece['color'] and not queenside_rook.get('has_moved', False)):
+                if all(get_piece_at(row, c, pcs) is None for c in [1,2,3]):
+                    safe = True
+                    for c in [4,3,2]:
+                        temp_pcs = []
+                        for p in pcs:
+                            if p is piece:
+                                temp_p = dict(p)
+                                temp_p['row'] = row
+                                temp_p['col'] = c
+                                temp_p['has_moved'] = True
+                                temp_pcs.append(temp_p)
+                            elif p is queenside_rook:
+                                temp_rook = dict(p)
+                                temp_rook['row'] = row
+                                temp_rook['col'] = 0
+                                temp_rook['has_moved'] = True
+                                temp_pcs.append(temp_rook)
+                            else:
+                                temp_pcs.append(p)
+                        if is_in_check(temp_pcs, piece['color']):
+                            safe = False
+                            break
+                    if safe:
+                        moves.append((row, 2))
+
     # filter moves that leave king in check
     if not ignore_check:
         legal = []
         for mv in moves:
-            newp = simulate_move(piece, mv[0], mv[1])
+            newp = simulate_move(piece, mv[0], mv[1], pcs)
             if not is_in_check(newp, piece['color']):
                 legal.append(mv)
         return legal
@@ -462,18 +562,59 @@ def has_legal_moves_for(color):
 
 def apply_move(piece, to_r, to_c):
     global en_passant_target, chess_current_turn
-    # remove captured
-    target = get_piece_at(to_r,to_c)
+    # remember current en_passant target for capture handling
+    old_en_passant = en_passant_target
+
+    # normal capture (destination square)
+    target = get_piece_at(to_r, to_c)
     if target:
-        pieces.remove(target)
+        try:
+            pieces.remove(target)
+        except ValueError:
+            pass
+
+    # en-passant capture: if moving pawn to old_en_passant square, remove the pawn that moved two squares
+    if piece['name'] == 'P' and old_en_passant is not None and (to_r, to_c) == old_en_passant:
+        cap_row = to_r + (1 if piece['color'] == 'white' else -1)
+        cap_col = to_c
+        cap = get_piece_at(cap_row, cap_col)
+        if cap and cap['name'] == 'P' and cap['color'] != piece['color']:
+            try:
+                pieces.remove(cap)
+            except ValueError:
+                pass
+
     # move piece
     piece['row'] = to_r
     piece['col'] = to_c
+    piece['has_moved'] = True
     # pawn promotion: enqueue selection instead of auto-promote
     global promotion_pending
     if piece['name']=='P' and (piece['row']==0 or piece['row']==7):
         # mark promotion pending; keep piece as pawn until selection
         promotion_pending = {'piece': piece, 'color': piece['color']}
+    # set en_passant target based on this move (clear by default)
+    en_passant_target = None
+    if piece['name'] == 'P':
+        start_row = 6 if piece['color'] == 'white' else 1
+        if abs((piece['row'] - start_row)) == 2:
+            passed_row = (piece['row'] + start_row) // 2
+            en_passant_target = (passed_row, piece['col'])
+
+    # handle castling: if king moved two squares, move the rook accordingly
+    if piece['name'] == 'K':
+        # kingside
+        if piece['col'] == 6:
+            rook = get_piece_at(piece['row'], 7)
+            if rook and rook['name'] == 'R' and rook['color'] == piece['color']:
+                rook['col'] = 5
+                rook['has_moved'] = True
+        # queenside
+        if piece['col'] == 2:
+            rook = get_piece_at(piece['row'], 0)
+            if rook and rook['name'] == 'R' and rook['color'] == piece['color']:
+                rook['col'] = 3
+                rook['has_moved'] = True
     # turn change handled by caller
 
 def ai_make_move():
@@ -1213,7 +1354,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, selected_piece, highlight_squares, promotion_pending, chess_current_turn
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1284,7 +1425,7 @@ def handle_mouse_click(pos):
 
     # 盤面クリック判定 (draw_panel と同じ配置計算を行う)
     board_area_left = 24
-    board_area_top = 70
+    board_area_top = 120
     board_area_width = 750
     # same available-height calculation as draw_panel: reserve space for top info and hand area
     reserved_top = 100
@@ -1313,11 +1454,22 @@ def handle_mouse_click(pos):
         if selected_piece is None:
             if clicked and clicked['color'] == chess_current_turn:
                 selected_piece = clicked
-                highlight_squares = get_valid_moves(clicked)
+                # debug: print selected piece and its valid moves
+                try:
+                    moves = get_valid_moves(clicked)
+                except Exception as e:
+                    print("DEBUG: get_valid_moves raised:", e)
+                    moves = []
+                print("DEBUG: selected_piece=", clicked)
+                print("DEBUG: valid_moves=", moves)
+                highlight_squares = moves
         else:
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
+                # debug: applying move
+                print(f"DEBUG: applying move {selected_piece['name']} -> {(row,col)}")
                 apply_move(selected_piece, row, col)
+                print("DEBUG: move applied")
                 game.log.append(f"{selected_piece['name']} を {(row,col)} へ移動")
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
@@ -1337,7 +1489,14 @@ def handle_mouse_click(pos):
                 # 別の自駒を選択するかキャンセル
                 if clicked and clicked['color'] == chess_current_turn:
                     selected_piece = clicked
-                    highlight_squares = get_valid_moves(clicked)
+                    try:
+                        moves = get_valid_moves(clicked)
+                    except Exception as e:
+                        print("DEBUG: get_valid_moves raised:", e)
+                        moves = []
+                    print("DEBUG: selected_piece changed=", clicked)
+                    print("DEBUG: valid_moves=", moves)
+                    highlight_squares = moves
                 else:
                     selected_piece = None
                     highlight_squares = []
@@ -1346,7 +1505,12 @@ def handle_mouse_click(pos):
 
 def main_loop():
     global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn
-    
+
+    # local UI drag state initialization (avoid UnboundLocalError)
+    dragging_scrollbar = False
+    drag_start_y = 0
+    drag_start_offset = 0
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:

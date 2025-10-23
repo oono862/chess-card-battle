@@ -1506,6 +1506,11 @@ def handle_mouse_click(pos):
                     moves = []
                 highlight_squares = moves
         else:
+            # If user clicked the already-selected piece, treat as deselect
+            if clicked is selected_piece:
+                selected_piece = None
+                highlight_squares = []
+                return
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
                 apply_move(selected_piece, row, col)

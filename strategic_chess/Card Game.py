@@ -31,6 +31,8 @@ show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
+show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
+opponent_hand_count = 5  # 相手の手札枚数（仮の値、実際はゲームロジックから取得）
 
 # CPU 難易度 (1=Easy,2=Medium,3=Hard,4=Expert)
 CPU_DIFFICULTY = 2
@@ -45,6 +47,7 @@ _piece_image_cache = {}
 confirm_yes_rect = None
 confirm_no_rect = None
 grave_label_rect = None
+opponent_hand_rect = None
 grave_card_rects = []
 scrollbar_rect = None
 dragging_scrollbar = False
@@ -607,6 +610,7 @@ HELP_LINES = [
     "[D] 保留中: 捨て札確定",
     "[L] ログ表示切替",
     "[G] 墓地表示切替",
+    "[H] 相手の手札表示",
     "[クリック] カード拡大",
     "[Esc] 終了",
 ]
@@ -665,6 +669,14 @@ def draw_panel():
     global grave_label_rect
     grave_label_rect = pygame.Rect(info_x, info_y, grave_surf.get_width(), grave_surf.get_height())
     draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    info_y += line_height
+    
+    # 相手の手札表示（クリック可能領域として矩形を保存）
+    opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
+    opponent_hand_surf = FONT.render(opponent_hand_text, True, (100,50,100))
+    global opponent_hand_rect
+    opponent_hand_rect = pygame.Rect(info_x, info_y, opponent_hand_surf.get_width(), opponent_hand_surf.get_height())
+    draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
@@ -935,6 +947,54 @@ def draw_panel():
                 if gx > overlay_x + overlay_w - 100:
                     break
 
+    # === 相手の手札オーバーレイ ===
+    if show_opponent_hand:
+        overlay_w = 600
+        overlay_h = 400
+        overlay_x = (W - overlay_w) // 2
+        overlay_y = (H - overlay_h) // 2
+        
+        overlay = pygame.Surface((overlay_w, overlay_h))
+        overlay.fill((230, 230, 240))
+        overlay.set_alpha(245)
+        screen.blit(overlay, (overlay_x, overlay_y))
+        
+        pygame.draw.rect(screen, (100, 100, 120), (overlay_x, overlay_y, overlay_w, overlay_h), 3)
+        
+        draw_text(screen, f"相手の手札 ({opponent_hand_count}枚) [H]で閉じる", overlay_x + 20, overlay_y + 20, (100, 50, 100))
+        
+        # カード裏面を横並びで表示（画像未実装のため仮の矩形）
+        card_back_w = 70
+        card_back_h = 95
+        start_x = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count, 7) + 10 * (min(opponent_hand_count, 7) - 1))) // 2
+        cy = overlay_y + 80
+        
+        for i in range(opponent_hand_count):
+            if i >= 7:  # 1行に7枚まで
+                cy += card_back_h + 20
+                start_x = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count - 7, 7) + 10 * (min(opponent_hand_count - 7, 7) - 1))) // 2
+                if i == 7:
+                    pass  # 2行目の開始位置を再計算済み
+            
+            row = i // 7
+            col = i % 7
+            if row > 0:
+                cx = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count - 7, 7) + 10 * (min(opponent_hand_count - 7, 7) - 1))) // 2 + col * (card_back_w + 10)
+            else:
+                cx = start_x + col * (card_back_w + 10)
+            
+            actual_cy = overlay_y + 80 + row * (card_back_h + 20)
+            
+            # カード裏面（仮実装：グレーの矩形とパターン）
+            card_rect = pygame.Rect(cx, actual_cy, card_back_w, card_back_h)
+            pygame.draw.rect(screen, (150, 150, 160), card_rect)
+            pygame.draw.rect(screen, (80, 80, 90), card_rect, 2)
+            # 裏面パターン（斜線）
+            for j in range(0, card_back_w + card_back_h, 10):
+                pygame.draw.line(screen, (120, 120, 130), (cx, actual_cy + j), (cx + j, actual_cy), 1)
+            # 中央にテキスト
+            draw_text(screen, "?", cx + card_back_w // 2 - 8, actual_cy + card_back_h // 2 - 10, (80, 80, 90))
+
     # === カード拡大表示オーバーレイ ===
     if enlarged_card_index is not None and 0 <= enlarged_card_index < len(game.player.hand.cards):
         c = game.player.hand.cards[enlarged_card_index]
@@ -1151,6 +1211,12 @@ def handle_keydown(key):
         show_grave = not show_grave
         return
     
+    if key == pygame.K_h:
+        # 相手の手札表示切替
+        global show_opponent_hand
+        show_opponent_hand = not show_opponent_hand
+        return
+    
     # 1-9 キーでカード使用
     if pygame.K_1 <= key <= pygame.K_9:
         idx = key - pygame.K_1
@@ -1195,7 +1261,19 @@ def handle_keydown(key):
                 else:
                     game.log.append("確認: はい → 効果なし（墓地が空）")
             else:
+                # その他の確認（通常の墓地ルーレット実行など）
                 game.log.append("確認: はい")
+                # 保留されていた効果を実行
+                if game.pending.info.get('execute_on_confirm'):
+                    hand_idx = game.pending.info.get('hand_index')
+                    if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                        # 墓地が空でない場合の墓地ルーレット実行
+                        import random
+                        if game.player.graveyard:
+                            idx = random.randrange(len(game.player.graveyard))
+                            recovered = game.player.graveyard.pop(idx)
+                            game.player.hand.add(recovered)
+                            game.log.append(f"墓地から『{recovered.name}』を回収。")
             game.pending = None
             log_scroll_offset = 0
             return
@@ -1228,7 +1306,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn, show_grave
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn, show_grave, show_opponent_hand
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1253,7 +1331,19 @@ def handle_mouse_click(pos):
                 else:
                     game.log.append("確認: はい")
             else:
+                # その他の確認（通常の墓地ルーレット実行など）
                 game.log.append("確認: はい")
+                # 保留されていた効果を実行
+                if game.pending.info.get('execute_on_confirm'):
+                    hand_idx = game.pending.info.get('hand_index')
+                    if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                        # 墓地が空でない場合の墓地ルーレット実行
+                        import random
+                        if game.player.graveyard:
+                            idx = random.randrange(len(game.player.graveyard))
+                            recovered = game.player.graveyard.pop(idx)
+                            game.player.hand.add(recovered)
+                            game.log.append(f"墓地から『{recovered.name}』を回収。")
             game.pending = None
             return
         if confirm_no_rect and confirm_no_rect.collidepoint(pos):
@@ -1268,6 +1358,11 @@ def handle_mouse_click(pos):
     # 墓地ラベルのクリックで墓地表示切替
     if grave_label_rect and grave_label_rect.collidepoint(pos):
         show_grave = not show_grave
+        return
+    
+    # 相手の手札ラベルのクリックで表示切替
+    if opponent_hand_rect and opponent_hand_rect.collidepoint(pos):
+        show_opponent_hand = not show_opponent_hand
         return
     
     # 墓地オーバーレイ内のカードクリックで拡大表示

@@ -343,10 +343,6 @@ def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:
     card = player.graveyard.pop(idx)
     player.hand.add(card)
     return f"墓地から『{card.name}』を回収。"
-    idx = random.randrange(len(player.graveyard))
-    card = player.graveyard.pop(idx)
-    player.hand.add(card)
-    return f"墓地から『{card.name}』を回収。"
 
 
 def pre_graveyard_not_empty(game: Game, player: PlayerState) -> Optional[str]:

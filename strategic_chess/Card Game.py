@@ -702,7 +702,8 @@ HELP_LINES = [
 
 def draw_text(surf, text, x, y, color=(20, 20, 20)):
     img = FONT.render(text, True, color)
-    surf.blit(img, (x, y))
+    rect = surf.blit(img, (x, y))
+    return rect
 
 
 def wrap_text(text: str, max_width: int):
@@ -749,18 +750,14 @@ def draw_panel():
     
     # 墓地表示（クリック可能領域として矩形を保存）
     grave_text = f"墓地: {len(game.player.graveyard)}枚"
-    grave_surf = FONT.render(grave_text, True, (90,40,40))
     global grave_label_rect
-    grave_label_rect = pygame.Rect(info_x, info_y, grave_surf.get_width(), grave_surf.get_height())
-    draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40))
     info_y += line_height
     
     # 相手の手札表示（クリック可能領域として矩形を保存）
     opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
-    opponent_hand_surf = FONT.render(opponent_hand_text, True, (100,50,100))
     global opponent_hand_rect
-    opponent_hand_rect = pygame.Rect(info_x, info_y, opponent_hand_surf.get_width(), opponent_hand_surf.get_height())
-    draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:

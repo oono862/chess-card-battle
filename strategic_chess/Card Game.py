@@ -10,11 +10,11 @@ except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck
 
-# チェスロジックを外部モジュール化
+# チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
-    from . import chess_rules_simple as chess
+    from . import chess_engine as chess
 except Exception:
-    import chess_rules_simple as chess
+    import chess_engine as chess
 
 
 pygame.init()
@@ -384,9 +384,9 @@ def ai_make_move():
     global CPU_DIFFICULTY
     candidates = []  # list of (piece, move)
     for p in chess.pieces:
-        if p['color'] != 'black':
+        if p.color != 'black':
             continue
-        v = chess.get_valid_moves(p)
+        v = p.get_valid_moves(chess.pieces)
         for mv in v:
             candidates.append((p, mv))
 
@@ -414,7 +414,7 @@ def ai_make_move():
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
         for p, mv in candidates:
             tgt = chess.get_piece_at(mv[0], mv[1])
-            score = values.get(tgt['name'],0) if tgt else 0
+            score = values.get(tgt.name,0) if tgt else 0
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
@@ -432,7 +432,7 @@ def ai_make_move():
             if chess.is_in_check(newp, 'black'):
                 continue
             tgt = chess.get_piece_at(mv[0], mv[1])
-            score = values.get(tgt['name'],0) if tgt else 0
+            score = values.get(tgt.name,0) if tgt else 0
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
@@ -442,7 +442,7 @@ def ai_make_move():
 
     p, mv = sel
     apply_move(p, mv[0], mv[1])
-    game.log.append(f"AI({CPU_DIFFICULTY}): {p['name']} を {mv} に移動")
+    game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
 
 # initialize pieces (module already initializes on import)
 
@@ -618,25 +618,25 @@ def draw_panel():
 
     # 駒の描画（画像があれば画像で、なければフォールバックで丸と文字）
     for p in chess.pieces:
-        cell_x = board_left + p['col']*square_w
-        cell_y = board_top + p['row']*square_h
+        cell_x = board_left + p.col*square_w
+        cell_y = board_top + p.row*square_h
         # leave small padding so piece images don't touch square edges
         padding = max(6, int(square_w * 0.08))
         img_w = square_w - padding*2
         img_h = square_h - padding*2
-        img = get_piece_image_surface(p['name'], p['color'], (img_w, img_h))
+        img = get_piece_image_surface(p.name, p.color, (img_w, img_h))
         if img is not None:
             screen.blit(img, (cell_x + padding, cell_y + padding))
         else:
             cx = cell_x + square_w//2
             cy = cell_y + square_h//2
             radius = min(square_w, square_h)//2 - padding
-            if p['color'] == 'white':
+            if p.color == 'white':
                 pygame.draw.circle(screen, (250,250,250), (cx,cy), radius)
-                label = SMALL.render(p['name'], True, (0,0,0))
+                label = SMALL.render(p.name, True, (0,0,0))
             else:
                 pygame.draw.circle(screen, (40,40,40), (cx,cy), radius)
-                label = SMALL.render(p['name'], True, (255,255,255))
+                label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
 
     # ハイライト（選択可能な移動先）
@@ -1108,7 +1108,7 @@ def handle_keydown(key):
             opts = ['Q','R','B','N']
             sel = opts[idx]
             piece = chess.promotion_pending['piece']
-            piece['name'] = sel
+            piece.name = sel
             game.log.append(f"昇格: ポーンを{sel}に昇格させました。")
             chess.promotion_pending = None
             return
@@ -1275,7 +1275,7 @@ def handle_mouse_click(pos):
                 # 選択された昇格駒で置き換え
                 piece = chess.promotion_pending.get('piece')
                 if piece is not None:
-                    piece['name'] = o
+                    piece.name = o
                     game.log.append(f"昇格: ポーンを{o}に昇格させました。")
                 chess.promotion_pending = None
                 # clear selection/highlights just in case
@@ -1314,14 +1314,14 @@ def handle_mouse_click(pos):
         clicked = chess.get_piece_at(row, col)
         # 選択していない場合は自分の駒を選択
         if selected_piece is None:
-            if clicked and clicked['color'] == chess_current_turn:
+            if clicked and clicked.color == chess_current_turn:
                 selected_piece = clicked
-                highlight_squares = chess.get_valid_moves(clicked)
+                highlight_squares = clicked.get_valid_moves(chess.pieces)
         else:
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
                 apply_move(selected_piece, row, col)
-                game.log.append(f"{selected_piece['name']} を {(row,col)} へ移動")
+                game.log.append(f"{selected_piece.name} を {(row,col)} へ移動")
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
                 # クリア
@@ -1338,9 +1338,9 @@ def handle_mouse_click(pos):
                     # main_loop will flip turn back to player after AI completes
             else:
                 # 別の自駒を選択するかキャンセル
-                if clicked and clicked['color'] == chess_current_turn:
+                if clicked and clicked.color == chess_current_turn:
                     selected_piece = clicked
-                    highlight_squares = chess.get_valid_moves(clicked)
+                    highlight_squares = clicked.get_valid_moves(chess.pieces)
                 else:
                     selected_piece = None
                     highlight_squares = []

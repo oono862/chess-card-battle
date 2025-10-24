@@ -97,6 +97,56 @@ THINK_DOT_FREQ = 4.0
 cpu_wait = False
 cpu_wait_start = 0.0
 
+# --- Debug setup helpers (F1-F4) for quick rule testing ---
+def debug_setup_castling():
+    """Set a simple board where white can castle both sides (no black pieces)."""
+    chess.pieces.clear()
+    # white king and rooks only
+    chess.pieces.append(chess.Piece(7,4,'K','white'))
+    chess.pieces.append(chess.Piece(7,0,'R','white'))
+    chess.pieces.append(chess.Piece(7,7,'R','white'))
+    # Ensure they are unmoved
+    for p in chess.pieces:
+        p.has_moved = False
+    # Clear en passant and selections
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
+
+def debug_setup_en_passant():
+    """Set a board where white can perform en passant to the right."""
+    chess.pieces.clear()
+    wp = chess.Piece(3,4,'P','white')  # e5
+    bp = chess.Piece(3,5,'P','black')  # f5 (assume just moved two steps)
+    chess.pieces.extend([wp, bp])
+    # Set EP target square (the intermediate square the pawn passed)
+    chess.en_passant_target = (2,5)  # f6 from white perspective (row 2)
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
+
+def debug_setup_promotion():
+    """Set a board where white pawn can promote next move."""
+    chess.pieces.clear()
+    wp = chess.Piece(1,0,'P','white')  # a7 -> a8 で昇格
+    chess.pieces.append(wp)
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
+
+def debug_reset_initial():
+    chess.pieces[:] = chess.create_pieces()
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
+
 def create_pieces():
     # 互換のためのエイリアス（将来的に削除予定）
     return chess.create_pieces()
@@ -1110,6 +1160,20 @@ def handle_keydown(key):
         # 相手の手札表示切替
         global show_opponent_hand
         show_opponent_hand = not show_opponent_hand
+        return
+
+    # --- DEBUG: 盤面セットショートカット ---
+    if key == pygame.K_F1:
+        debug_setup_castling()
+        return
+    if key == pygame.K_F2:
+        debug_setup_en_passant()
+        return
+    if key == pygame.K_F3:
+        debug_setup_promotion()
+        return
+    if key == pygame.K_F4:
+        debug_reset_initial()
         return
     
     # 1-9 キーでカード使用

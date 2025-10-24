@@ -519,15 +519,14 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             nr,nc = r+dir, c+dc
             if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,color) and not is_blocked_tile(nr, nc, color):
                 moves.append((nr,nc))
-        # en passant
-        global en_passant_target
-        if en_passant_target is not None:
-            target_r, target_c = en_passant_target
+        # en passant — use chess.en_passant_target if present
+        if getattr(chess, 'en_passant_target', None) is not None:
+            target_r, target_c = chess.en_passant_target
             if color == 'white' and r == 3:
-                if abs(c - target_c) == 1 and target_r == 2 and not is_blocked_tile(target_r, target_c, piece['color']):
+                if abs(c - target_c) == 1 and target_r == 2 and not is_blocked_tile(target_r, target_c, color):
                     moves.append((target_r, target_c))
             elif color == 'black' and r == 4:
-                if abs(c - target_c) == 1 and target_r == 5 and not is_blocked_tile(target_r, target_c, piece['color']):
+                if abs(c - target_c) == 1 and target_r == 5 and not is_blocked_tile(target_r, target_c, color):
                     moves.append((target_r, target_c))
     elif name == 'N':
         for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:

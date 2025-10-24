@@ -746,17 +746,112 @@ def draw_panel():
                 label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
 
-    # ハイライト（選択可能な移動先）
-    for hr,hc in highlight_squares:
-        hrect = pygame.Rect(board_left + hc*square_w, board_top + hr*square_h, square_w, square_h)
-        s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
-        s.fill((255,255,0,80))
-        screen.blit(s, hrect.topleft)
+    # ハイライト（選択可能な移動先）- Chess Main準拠の色分け
+    if selected_piece:
+        for hr, hc in highlight_squares:
+            hrect = pygame.Rect(board_left + hc*square_w, board_top + hr*square_h, square_w, square_h)
+            
+            # 移動先の色分け判定
+            is_en_passant = False
+            is_castling = False
+            is_checkmate = False
+            
+            # アンパサン判定
+            if selected_piece.name == 'P' and chess.en_passant_target is not None:
+                if (hr, hc) == chess.en_passant_target:
+                    if ((selected_piece.color == 'white' and selected_piece.row == 3) or
+                        (selected_piece.color == 'black' and selected_piece.row == 4)):
+                        is_en_passant = True
+            
+            # キャスリング判定
+            if selected_piece.name == 'K' and abs(hc - selected_piece.col) == 2:
+                is_castling = True
+            
+            # チェックメイト/キング捕獲判定
+            target_piece = chess.get_piece_at(hr, hc)
+            if target_piece and target_piece.name == 'K' and target_piece.color != selected_piece.color:
+                is_checkmate = True
+            else:
+                # 相手を詰ませる手かどうかを判定
+                temp_pieces = chess.simulate_move(selected_piece, hr, hc)
+                next_turn = 'black' if selected_piece.color == 'white' else 'white'
+                # 詰み判定: 相手がチェックで、合法手なし
+                if any(p.name == 'K' and p.color == next_turn for p in temp_pieces):
+                    # has_legal_moves_forはグローバルpiecesを使うので、一時的に使えない
+                    # 代わりに手動で判定
+                    is_mate = chess.is_in_check(temp_pieces, next_turn)
+                    if is_mate:
+                        # 相手に合法手があるか簡易チェック
+                        has_moves = False
+                        for tp in temp_pieces:
+                            if tp.color == next_turn:
+                                moves = tp.get_valid_moves(temp_pieces)
+                                for mv in moves:
+                                    test = chess.simulate_move(tp, mv[0], mv[1])
+                                    if not chess.is_in_check(test, next_turn):
+                                        has_moves = True
+                                        break
+                            if has_moves:
+                                break
+                        if not has_moves:
+                            is_checkmate = True
+            
+            # 色決定（Chess Main準拠）
+            if is_checkmate:
+                highlight_color = (255, 0, 0, 100)  # 赤: チェックメイト/キング捕獲
+            elif is_en_passant:
+                highlight_color = (0, 0, 255, 100)  # 青: アンパサン
+            elif is_castling:
+                highlight_color = (255, 215, 0, 100)  # 金: キャスリング
+            else:
+                highlight_color = (0, 255, 0, 80)  # 緑: 通常移動
+            
+            s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+            s.fill(highlight_color)
+            screen.blit(s, hrect.topleft)
     # 盤面の左右に太めの黒線を描画して境界を明確に（元実装に近づける）
     left_x = board_left
     right_x = board_left + 8 * square_w
     pygame.draw.rect(screen, (20,20,20), (left_x-3, board_top, 6, 8 * square_h))
     pygame.draw.rect(screen, (20,20,20), (right_x-3, board_top, 6, 8 * square_h))
+    
+    # === チェック中の表示（Chess Main準拠）===
+    if not game_over:
+        check_colors = []
+        if chess.is_in_check(chess.pieces, 'white'):
+            check_colors.append('white')
+        if chess.is_in_check(chess.pieces, 'black'):
+            check_colors.append('black')
+        
+        if check_colors:
+            # チェック状態の変化を追跡
+            if not hasattr(draw_panel, "last_check_colors"):
+                draw_panel.last_check_colors = []
+            if check_colors != draw_panel.last_check_colors:
+                draw_panel.last_check_colors = check_colors.copy()
+            
+            # 左パネルの下部に表示（手札の上）
+            check_x = left_margin + 10
+            check_y = H - 270  # 手札の上に配置
+            
+            for idx, color in enumerate(draw_panel.last_check_colors):
+                msg = f"{'白' if color == 'white' else '黒'}チェック中"
+                check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+                check_text = check_font.render(msg, True, (255, 165, 0))
+                
+                text_w = check_text.get_width()
+                text_h = check_text.get_height()
+                
+                # 背景を半透明の黒で塗りつぶして視認性を向上
+                bg_rect = pygame.Rect(check_x - 5, check_y - 3 + idx * (text_h + 10), text_w + 10, text_h + 6)
+                try:
+                    tmp = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+                    tmp.fill((0, 0, 0, 160))
+                    screen.blit(tmp, (bg_rect.x, bg_rect.y))
+                except Exception:
+                    pygame.draw.rect(screen, (0, 0, 0), bg_rect)
+                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)
+                screen.blit(check_text, (check_x, check_y + idx * (text_h + 10)))
 
     # === 右側エリア: ログ（切替式）===
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset

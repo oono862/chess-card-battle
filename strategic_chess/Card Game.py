@@ -370,7 +370,19 @@ def is_in_check(pcs, color):
     return chess.is_in_check(pcs, color)
 
 def get_valid_moves(piece, pcs=None, ignore_check=False):
-    return chess.get_valid_moves(piece, pcs=pcs, ignore_check=ignore_check)
+    # Wrapper that also filters out moves leaving own king in check
+    if pcs is None:
+        pcs = chess.pieces
+    # Piece-class API
+    moves = piece.get_valid_moves(pcs)
+    if not ignore_check:
+        legal = []
+        for mv in moves:
+            newp = chess.simulate_move(piece, mv[0], mv[1])
+            if not chess.is_in_check(newp, piece.color):
+                legal.append(mv)
+        return legal
+    return moves
 
 def has_legal_moves_for(color):
     return chess.has_legal_moves_for(color)
@@ -1316,7 +1328,7 @@ def handle_mouse_click(pos):
         if selected_piece is None:
             if clicked and clicked.color == chess_current_turn:
                 selected_piece = clicked
-                highlight_squares = clicked.get_valid_moves(chess.pieces)
+                highlight_squares = get_valid_moves(clicked)
         else:
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
@@ -1340,7 +1352,7 @@ def handle_mouse_click(pos):
                 # 別の自駒を選択するかキャンセル
                 if clicked and clicked.color == chess_current_turn:
                     selected_piece = clicked
-                    highlight_squares = clicked.get_valid_moves(chess.pieces)
+                    highlight_squares = get_valid_moves(clicked)
                 else:
                     selected_piece = None
                     highlight_squares = []

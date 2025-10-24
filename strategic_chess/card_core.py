@@ -119,6 +119,8 @@ class Game:
     # Placeholders for chess integration
     blocked_tiles: Dict[Any, int] = field(default_factory=dict)  # tile -> turns left
     frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
+    # which color the blocked tile applies to (tile -> 'white'|'black')
+    blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -157,6 +159,11 @@ class Game:
         for k in list(self.blocked_tiles.keys()):
             self.blocked_tiles[k] -= 1
             if self.blocked_tiles[k] <= 0:
+                # remove owner mapping as well
+                try:
+                    del self.blocked_tiles_owner[k]
+                except Exception:
+                    pass
                 del self.blocked_tiles[k]
         for k in list(self.frozen_pieces.keys()):
             self.frozen_pieces[k] -= 1
@@ -300,9 +307,9 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
 
 
 def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
-    """暴風(1): 障害物を一つ飛び越えられる（次の移動1回に有効）。"""
+    """暴風(1): 駒を一つ飛び越えられる（次の移動1回に有効）。"""
     player.next_move_can_jump = True
-    return "次の移動で障害物を1つ飛び越え可能。"
+    return "次の移動で駒を1つ飛び越え可能。"
 
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:

@@ -48,6 +48,7 @@ IMG_DIR = os.path.join(os.path.dirname(__file__), "images")
 _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
+chess_log = []  # チェス専用ログ（カード用の game.log と分離）
 
 # クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
 confirm_yes_rect = None
@@ -465,16 +466,141 @@ def is_in_check(pcs, color):
     return chess.is_in_check(pcs, color)
 
 def get_valid_moves(piece, pcs=None, ignore_check=False):
-    # Wrapper that also filters out moves leaving own king in check
+    # pcs: list of piece dicts; if None, use global pieces
     if pcs is None:
-        pcs = chess.pieces
-    # Piece-class API
-    moves = piece.get_valid_moves(pcs)
+        # prefer local 'pieces' (dict-style) if present, otherwise fall back to chess.pieces
+        pcs = globals().get('pieces', chess.pieces)
+    moves = []
+    # If this piece is frozen by a card effect, it cannot move
+    if getattr(game, 'frozen_pieces', None) is not None:
+        if id(piece) in game.frozen_pieces and game.frozen_pieces[id(piece)] > 0:
+            return []
+
+    # small accessor to support both object-style Piece and dict-style pieces
+    def _pget(p, key, default=None):
+        if hasattr(p, key):
+            return getattr(p, key)
+        try:
+            return p[key]
+        except Exception:
+            return default
+
+    name = _pget(piece, 'name')
+    r, c = _pget(piece, 'row'), _pget(piece, 'col')
+    color = _pget(piece, 'color')
+
+    def occupied(rr,cc):
+        return get_piece_at(rr,cc) is not None
+    def occupied_by_color(rr,cc,color):
+        p = get_piece_at(rr,cc)
+        return p is not None and _pget(p, 'color')==color
+    def is_blocked_tile(rr, cc, color):
+        # If a blocked tile applies to this color, disallow moving there
+        try:
+            if getattr(game, 'blocked_tiles_owner', None) is not None:
+                owner = game.blocked_tiles_owner.get((rr, cc))
+                if owner == color:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if name == 'P':
+        dir = -1 if color == 'white' else 1
+        # forward
+        if on_board(r+dir, c) and not occupied(r+dir,c) and not is_blocked_tile(r+dir, c, color):
+            moves.append((r+dir,c))
+            # double from starting rank
+            start_row = 6 if color == 'white' else 1
+            if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c) and not is_blocked_tile(r+2*dir, c, color):
+                moves.append((r+2*dir,c))
+        # captures
+        for dc in (-1,1):
+            nr,nc = r+dir, c+dc
+            if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,color) and not is_blocked_tile(nr, nc, color):
+                moves.append((nr,nc))
+        # en passant
+        global en_passant_target
+        if en_passant_target is not None:
+            target_r, target_c = en_passant_target
+            if color == 'white' and r == 3:
+                if abs(c - target_c) == 1 and target_r == 2 and not is_blocked_tile(target_r, target_c, piece['color']):
+                    moves.append((target_r, target_c))
+            elif color == 'black' and r == 4:
+                if abs(c - target_c) == 1 and target_r == 5 and not is_blocked_tile(target_r, target_c, piece['color']):
+                    moves.append((target_r, target_c))
+    elif name == 'N':
+        for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
+            nr,nc = r+dr, c+dc
+            if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
+                moves.append((nr,nc))
+    elif name in ('B','R','Q'):
+        directions = []
+        if name in ('B','Q'):
+            directions += [(-1,-1),(-1,1),(1,-1),(1,1)]
+        if name in ('R','Q'):
+            directions += [(-1,0),(1,0),(0,-1),(0,1)]
+        for dr,dc in directions:
+            step = 1
+            jumped = False
+            while True:
+                nr,nc = r+dr*step, c+dc*step
+                if not on_board(nr,nc):
+                    break
+                if occupied(nr,nc):
+                    if not occupied_by_color(nr,nc,color):
+                        moves.append((nr,nc))
+                    # If player's card granted a single jump ability, allow jumping over one piece     
+                    can_jump = False
+                    try:
+                        can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+                    except Exception:
+                        can_jump = False
+                    if can_jump and not jumped:
+                        # attempt to land on the next square beyond this occupied square
+                        step2 = step + 1
+                        nr2, nc2 = r+dr*step2, c+dc*step2
+                        if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, piece['color']):     
+                            moves.append((nr2, nc2))
+                        # only allow a single jump; stop after
+                    break
+                moves.append((nr,nc))
+                step += 1
+    elif name == 'K':
+        for dr in (-1,0,1):
+            for dc in (-1,0,1):
+                if dr==0 and dc==0: continue
+                nr,nc = r+dr, c+dc
+                if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
+                    moves.append((nr,nc))
+
+        # キャスリング
+        if not _pget(piece, 'has_moved', False) and not ignore_check:
+            if color == 'white':
+                king_row = 7
+            else:
+                king_row = 0
+
+            rook_kingside = get_piece_at(king_row, 7)
+            if (rook_kingside and _pget(rook_kingside, 'name') == 'R' and
+                _pget(rook_kingside, 'color') == color and
+                not _pget(rook_kingside, 'has_moved', False)):
+                if not occupied(king_row, 5) and not occupied(king_row, 6):
+                    moves.append((king_row, 6))  # キャスリング後のキングの位置
+
+            rook_queenside = get_piece_at(king_row, 0)
+            if (rook_queenside and _pget(rook_queenside, 'name') == 'R' and
+                _pget(rook_queenside, 'color') == color and
+                not _pget(rook_queenside, 'has_moved', False)):
+                if not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3):
+                    moves.append((king_row, 2))  # キャスリング後のキングの位置
+
+    # filter moves that leave king in check
     if not ignore_check:
         legal = []
         for mv in moves:
-            newp = chess.simulate_move(piece, mv[0], mv[1])
-            if not chess.is_in_check(newp, piece.color):
+            newp = simulate_move(piece, mv[0], mv[1])
+            if not is_in_check(newp, color):
                 legal.append(mv)
         return legal
     return moves
@@ -1593,24 +1719,76 @@ def handle_mouse_click(pos):
     board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
-    if board_rect.collidepoint(pos) and not game_over:  # ゲーム終了時は盤面操作を無効化
+    if board_rect.collidepoint(pos) and not game_over:
         col = (pos[0] - board_left) // square_w
         row = (pos[1] - board_top) // square_h
         # bounds safety
         col = int(max(0, min(7, col)))
         row = int(max(0, min(7, row)))
 
-        clicked = chess.get_piece_at(row, col)
-        # 選択していない場合は自分の駒を選択
+        clicked = get_piece_at(row, col)
+        # If a card effect is waiting for a tile/piece target, handle it here first
+        if getattr(game, 'pending', None) is not None:
+            if game.pending.kind == 'target_tile':
+                # require empty tile
+                if clicked is None:
+                    turns = game.pending.info.get('turns', 2)
+                    # assume card used by player -> applies to opponent color
+                    applies_to = game.pending.info.get('for_color', 'black')
+                    try:
+                        game.blocked_tiles[(row, col)] = turns
+                        game.blocked_tiles_owner[(row, col)] = applies_to
+                    except Exception:
+                        # Fallback to simple int-only mapping
+                        game.blocked_tiles[(row, col)] = turns
+                    game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
+                    game.pending = None
+                else:
+                    game.log.append("そのマスは空ではありません。別のマスを選んでください。")
+                    return
+            if game.pending.kind == 'target_piece':
+                # must select an opponent piece
+                # assume player controls white
+                player_color = 'white'
+                # clicked may be a Piece object or dict; normalize check
+                clicked_color = None
+                try:
+                    clicked_color = clicked.color
+                except Exception:
+                    try:
+                        clicked_color = clicked.get('color') if clicked is not None else None
+                    except Exception:
+                        clicked_color = None
+                if clicked is not None and clicked_color is not None and clicked_color != player_color:
+                    turns = game.pending.info.get('turns', 1)
+                    try:
+                        game.frozen_pieces[id(clicked)] = turns
+                    except Exception:
+                        game.frozen_pieces[id(clicked)] = turns
+                    # try to get a readable name
+                    try:
+                        name = clicked.name
+                    except Exception:
+                        name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                    game.log.append(f"凍結: {name} を {turns} ターン凍結")
+                    game.pending = None
+                else:
+                    game.log.append("相手の駒を選んでください。")
+                return
+        # Normal piece selection / move handling
         if selected_piece is None:
-            if clicked and clicked.color == chess_current_turn:
+            if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
                 selected_piece = clicked
                 highlight_squares = get_valid_moves(clicked)
         else:
-            # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
                 apply_move(selected_piece, row, col)
-                game.log.append(f"{selected_piece.name} を {(row,col)} へ移動")
+                # log safely for both object and dict styles
+                try:
+                    name = selected_piece.name
+                except Exception:
+                    name = selected_piece.get('name', str(selected_piece)) if isinstance(selected_piece, dict) else str(selected_piece)
+                chess_log.append(f"{name} を {(row,col)} へ移動")
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
                 # クリア
@@ -1618,16 +1796,13 @@ def handle_mouse_click(pos):
                 highlight_squares = []
                 # AI の手
                 if chess_current_turn == 'black':
-                    # start non-blocking AI wait; main_loop will invoke the AI after delay
                     import time
                     global cpu_wait, cpu_wait_start
                     cpu_wait = True
                     cpu_wait_start = time.time()
-                    # do not flip turn here; ai_make_move() will perform moves and
-                    # main_loop will flip turn back to player after AI completes
             else:
-                # 別の自駒を選択するかキャンセル
-                if clicked and clicked.color == chess_current_turn:
+                # select another own piece or cancel
+                if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
                     selected_piece = clicked
                     highlight_squares = get_valid_moves(clicked)
                 else:

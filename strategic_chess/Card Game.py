@@ -10,6 +10,12 @@ except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck
 
+# チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
+try:
+    from . import chess_engine as chess
+except Exception:
+    import chess_engine as chess
+
 
 pygame.init()
 
@@ -74,16 +80,17 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
     _piece_image_cache[key] = surf
     return surf
 
-# ------------------ Chess integration (embedded) ------------------
-# Simple piece representation compatible with AI module expectations
-pieces = []  # list of dicts: {'row':int,'col':int,'name':str,'color':'white'|'black'}
-selected_piece = None  # selected piece dict or None
-highlight_squares = []  # list of (r,c) legal moves to highlight
+"""
+------------------ Chess integration (via external module) ------------------
+UI側で持つ状態のみここに保持し、ルールや盤面状態（pieces等）は chess_rules_simple モジュールに委譲します。
+"""
+selected_piece = None  # 選択中の駒（dict）
+highlight_squares = []  # ハイライトする移動先座標のリスト
 chess_current_turn = 'white'
-en_passant_target = None
-promotion_pending = None  # {'piece': piece, 'color': str} when a pawn reached last rank
+game_over = False      # ゲームが終わったかどうか
+game_over_winner = None # 勝者（まだ決まっていない）
 
-# AI thinking/display settings (recreate behavior from Chess  Main.py)
+# AI thinking/display settings
 THINKING_ENABLED = True
 AI_THINK_DELAY = 0.5
 THINK_DOT_FREQ = 4.0
@@ -92,29 +99,102 @@ THINK_DOT_FREQ = 4.0
 cpu_wait = False
 cpu_wait_start = 0.0
 
+# --- Debug setup helpers (F1-F4) for quick rule testing ---
+def debug_setup_castling():
+    """Set a simple board where white can castle both sides (no black pieces)."""
+    chess.pieces.clear()
+    # white king and rooks only
+    chess.pieces.append(chess.Piece(7,4,'K','white'))
+    chess.pieces.append(chess.Piece(7,0,'R','white'))
+    chess.pieces.append(chess.Piece(7,7,'R','white'))
+    # Ensure they are unmoved
+    for p in chess.pieces:
+        p.has_moved = False
+    # Clear en passant and selections
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
+
+def debug_setup_en_passant():
+    """Set a board where white can perform en passant to the right."""
+    chess.pieces.clear()
+    wp = chess.Piece(3,4,'P','white')  # e5
+    bp = chess.Piece(3,5,'P','black')  # f5 (assume just moved two steps)
+    chess.pieces.extend([wp, bp])
+    # Set EP target square (the intermediate square the pawn passed)
+    chess.en_passant_target = (2,5)  # f6 from white perspective (row 2)
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
+
+def debug_setup_promotion():
+    """Set a board where white pawn can promote next move."""
+    chess.pieces.clear()
+    wp = chess.Piece(1,0,'P','white')  # a7 -> a8 で昇格
+    chess.pieces.append(wp)
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
+
+def debug_reset_initial():
+    chess.pieces[:] = chess.create_pieces()
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
+
+
+def debug_setup_checkmate():
+    """簡単なチェックメイト検証用盤面（白を詰ませる）"""
+    chess.pieces.clear()
+    # 白キングを隅に追い詰める
+    wk = chess.Piece(7, 0, 'K', 'white')  # a1
+    # 黒のクイーンとルークで詰み
+    bq = chess.Piece(6, 1, 'Q', 'black')  # b2
+    br = chess.Piece(7, 1, 'R', 'black')  # b1
+    chess.pieces.extend([wk, bq, br])
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
+
+
+def restart_game():
+    """ゲームを初期状態にリセットして再戦する"""
+    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
+    global log_scroll_offset
+    
+    # チェス盤を初期配置に
+    chess.pieces[:] = chess.create_pieces()
+    chess.en_passant_target = None
+    chess.promotion_pending = None
+    
+    # ゲーム状態をリセット
+    game_over = False
+    game_over_winner = None
+    chess_current_turn = 'white'
+    selected_piece = None
+    highlight_squares = []
+    cpu_wait = False
+    
+    # カードゲーム部分もリセット
+    global game
+    game = new_game_with_rule_deck()
+    log_scroll_offset = 0
+    
+    game.log.append("=== ゲームを再開しました ===")
+    game.log.append("白のターンです。")
+
 def create_pieces():
-    p = []
-    # White on bottom (rows 6-7), black on top (rows 0-1)
-    # has_moved フラグを追加（キャスリング判定用）
-    p += [{'row':7, 'col':0, 'name':'R', 'color':'white', 'has_moved':False}, 
-          {'row':7, 'col':1, 'name':'N', 'color':'white', 'has_moved':False},
-          {'row':7, 'col':2, 'name':'B', 'color':'white', 'has_moved':False}, 
-          {'row':7, 'col':3, 'name':'Q', 'color':'white', 'has_moved':False},
-          {'row':7, 'col':4, 'name':'K', 'color':'white', 'has_moved':False}, 
-          {'row':7, 'col':5, 'name':'B', 'color':'white', 'has_moved':False},
-          {'row':7, 'col':6, 'name':'N', 'color':'white', 'has_moved':False}, 
-          {'row':7, 'col':7, 'name':'R', 'color':'white', 'has_moved':False}]
-    p += [{'row':6, 'col':i, 'name':'P', 'color':'white', 'has_moved':False} for i in range(8)]
-    p += [{'row':0, 'col':0, 'name':'R', 'color':'black', 'has_moved':False}, 
-          {'row':0, 'col':1, 'name':'N', 'color':'black', 'has_moved':False},
-          {'row':0, 'col':2, 'name':'B', 'color':'black', 'has_moved':False}, 
-          {'row':0, 'col':3, 'name':'Q', 'color':'black', 'has_moved':False},
-          {'row':0, 'col':4, 'name':'K', 'color':'black', 'has_moved':False}, 
-          {'row':0, 'col':5, 'name':'B', 'color':'black', 'has_moved':False},
-          {'row':0, 'col':6, 'name':'N', 'color':'black', 'has_moved':False}, 
-          {'row':0, 'col':7, 'name':'R', 'color':'black', 'has_moved':False}]
-    p += [{'row':1, 'col':i, 'name':'P', 'color':'black', 'has_moved':False} for i in range(8)]
-    return p
+    # 互換のためのエイリアス（将来的に削除予定）
+    return chess.create_pieces()
 
 
 def show_start_screen(screen):
@@ -372,217 +452,48 @@ def show_deck_modal(screen):
 
 
 def get_piece_at(row, col):
-    for pc in pieces:
-        if pc['row'] == row and pc['col'] == col:
-            return pc
-    return None
+    # 後方互換のための薄いラッパー
+    return chess.get_piece_at(row, col)
 
 def on_board(r,c):
     return 0 <= r < 8 and 0 <= c < 8
 
 def simulate_move(src_piece, to_r, to_c):
-    # return new pieces list after move (deep copy of dicts)
-    new = [dict(p) for p in pieces if not (p['row']==to_r and p['col']==to_c)]
-    moved = dict(src_piece)
-    # remove source from new
-    new = [p for p in new if not (p['row']==src_piece['row'] and p['col']==src_piece['col'] and p['name']==src_piece['name'] and p['color']==src_piece['color'])]
-    moved['row'] = to_r
-    moved['col'] = to_c
-    new.append(moved)
-    return new
+    return chess.simulate_move(src_piece, to_r, to_c)
 
 def is_in_check(pcs, color):
-    # find king
-    king = None
-    for p in pcs:
-        if p['name'] == 'K' and p['color'] == color:
-            king = p
-            break
-    if not king:
-        return False
-    kpos = (king['row'], king['col'])
-    # check opponent moves
-    for p in pcs:
-        if p['color'] == ('white' if color=='black' else 'black'):
-            for mv in get_valid_moves(p, pcs, ignore_check=True):
-                if mv == kpos:
-                    return True
-    return False
+    return chess.is_in_check(pcs, color)
 
 def get_valid_moves(piece, pcs=None, ignore_check=False):
-    # pcs: list of piece dicts; if None, use global pieces
+    # Wrapper that also filters out moves leaving own king in check
     if pcs is None:
-        pcs = pieces
-    moves = []
-    name = piece['name']
-    r,c = piece['row'], piece['col']
-    def occupied(rr,cc):
-        return get_piece_at(rr,cc) is not None
-    def occupied_by_color(rr,cc,color):
-        p = get_piece_at(rr,cc)
-        return p is not None and p['color']==color
-
-    if name == 'P':
-        dir = -1 if piece['color']=='white' else 1
-        # forward
-        if on_board(r+dir, c) and not occupied(r+dir,c):
-            moves.append((r+dir,c))
-            # double from starting rank
-            start_row = 6 if piece['color']=='white' else 1
-            if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c):
-                moves.append((r+2*dir,c))
-        # captures
-        for dc in (-1,1):
-            nr,nc = r+dir, c+dc
-            if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
-                moves.append((nr,nc))
-        # en passant
-        global en_passant_target
-        if en_passant_target is not None:
-            target_r, target_c = en_passant_target
-            # アンパサン可能条件: 自分のポーンが5段目（白）または4段目（黒）にいて、
-            # 隣の列に相手のポーンが2マス前進で横に来た場合
-            if piece['color'] == 'white' and r == 3:  # 白は5段目（インデックス3）
-                if abs(c - target_c) == 1 and target_r == 2:
-                    moves.append((target_r, target_c))
-            elif piece['color'] == 'black' and r == 4:  # 黒は4段目（インデックス4）
-                if abs(c - target_c) == 1 and target_r == 5:
-                    moves.append((target_r, target_c))
-    elif name == 'N':
-        for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
-            nr,nc = r+dr, c+dc
-            if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
-                moves.append((nr,nc))
-    elif name in ('B','R','Q'):
-        directions = []
-        if name in ('B','Q'):
-            directions += [(-1,-1),(-1,1),(1,-1),(1,1)]
-        if name in ('R','Q'):
-            directions += [(-1,0),(1,0),(0,-1),(0,1)]
-        for dr,dc in directions:
-            step = 1
-            while True:
-                nr,nc = r+dr*step, c+dc*step
-                if not on_board(nr,nc):
-                    break
-                if occupied(nr,nc):
-                    if not occupied_by_color(nr,nc,piece['color']):
-                        moves.append((nr,nc))
-                    break
-                moves.append((nr,nc))
-                step += 1
-    elif name == 'K':
-        for dr in (-1,0,1):
-            for dc in (-1,0,1):
-                if dr==0 and dc==0: continue
-                nr,nc = r+dr, c+dc
-                if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
-                    moves.append((nr,nc))
-        
-        # キャスリング
-        if not piece.get('has_moved', False) and not ignore_check:
-            # キング側キャスリング（ショートキャスリング）
-            if piece['color'] == 'white':
-                king_row = 7
-            else:
-                king_row = 0
-            
-            # キングサイドキャスリング（右側）
-            rook_kingside = get_piece_at(king_row, 7)
-            if (rook_kingside and rook_kingside['name'] == 'R' and 
-                rook_kingside['color'] == piece['color'] and 
-                not rook_kingside.get('has_moved', False)):
-                # キングとルークの間が空いているか確認
-                if not occupied(king_row, 5) and not occupied(king_row, 6):
-                    # キングが通過するマスが攻撃されていないか確認（チェックを避ける）
-                    # これはignore_check=Falseの時のフィルタリングで処理
-                    moves.append((king_row, 6))  # キャスリング後のキングの位置
-            
-            # クイーンサイドキャスリング（左側）
-            rook_queenside = get_piece_at(king_row, 0)
-            if (rook_queenside and rook_queenside['name'] == 'R' and 
-                rook_queenside['color'] == piece['color'] and 
-                not rook_queenside.get('has_moved', False)):
-                # キングとルークの間が空いているか確認
-                if not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3):
-                    moves.append((king_row, 2))  # キャスリング後のキングの位置
-
-    # filter moves that leave king in check
+        pcs = chess.pieces
+    # Piece-class API
+    moves = piece.get_valid_moves(pcs)
     if not ignore_check:
         legal = []
         for mv in moves:
-            newp = simulate_move(piece, mv[0], mv[1])
-            if not is_in_check(newp, piece['color']):
+            newp = chess.simulate_move(piece, mv[0], mv[1])
+            if not chess.is_in_check(newp, piece.color):
                 legal.append(mv)
         return legal
     return moves
 
 def has_legal_moves_for(color):
-    for p in pieces:
-        if p['color']==color and get_valid_moves(p):
-            return True
-    return False
+    return chess.has_legal_moves_for(color)
 
 def apply_move(piece, to_r, to_c):
-    global en_passant_target, chess_current_turn
-    from_r, from_c = piece['row'], piece['col']
-    
-    # アンパサン処理: 移動先にコマがないが、en_passant_targetの位置への移動の場合
-    target = get_piece_at(to_r, to_c)
-    if piece['name'] == 'P' and target is None and en_passant_target is not None:
-        if (to_r, to_c) == en_passant_target:
-            # アンパサンによる捕獲: 隣のポーンを削除
-            captured_row = to_r + (1 if piece['color'] == 'white' else -1)
-            captured_piece = get_piece_at(captured_row, to_c)
-            if captured_piece and captured_piece['name'] == 'P':
-                pieces.remove(captured_piece)
-    
-    # 通常の捕獲
-    if target:
-        pieces.remove(target)
-    
-    # キャスリング処理
-    if piece['name'] == 'K' and abs(to_c - from_c) == 2:
-        # キャスリングが実行された
-        if to_c == 6:  # キングサイド
-            rook = get_piece_at(to_r, 7)
-            if rook and rook['name'] == 'R':
-                rook['col'] = 5  # ルークをキングの隣に移動
-                rook['has_moved'] = True
-        elif to_c == 2:  # クイーンサイド
-            rook = get_piece_at(to_r, 0)
-            if rook and rook['name'] == 'R':
-                rook['col'] = 3  # ルークをキングの隣に移動
-                rook['has_moved'] = True
-    
-    # move piece
-    piece['row'] = to_r
-    piece['col'] = to_c
-    piece['has_moved'] = True  # 移動履歴を記録
-    
-    # en_passant_targetの更新: ポーンが2マス前進した場合のみ設定
-    if piece['name'] == 'P' and abs(to_r - from_r) == 2:
-        # 次のターンでアンパサン可能な位置を記録
-        en_passant_target = ((from_r + to_r) // 2, to_c)
-    else:
-        en_passant_target = None
-    
-    # pawn promotion: enqueue selection instead of auto-promote
-    global promotion_pending
-    if piece['name']=='P' and (piece['row']==0 or piece['row']==7):
-        # mark promotion pending; keep piece as pawn until selection
-        promotion_pending = {'piece': piece, 'color': piece['color']}
-    # turn change handled by caller
+    return chess.apply_move(piece, to_r, to_c)
 
 def ai_make_move():
     # AI difficulty-aware move selection (black)
     import random
     global CPU_DIFFICULTY
     candidates = []  # list of (piece, move)
-    for p in pieces:
-        if p['color'] != 'black':
+    for p in chess.pieces:
+        if p.color != 'black':
             continue
-        v = get_valid_moves(p)
+        v = p.get_valid_moves(chess.pieces)
         for mv in v:
             candidates.append((p, mv))
 
@@ -598,8 +509,8 @@ def ai_make_move():
     elif CPU_DIFFICULTY == 2:
         safe = []
         for p, mv in candidates:
-            newp = simulate_move(p, mv[0], mv[1])
-            if not is_in_check(newp, 'black'):
+            newp = chess.simulate_move(p, mv[0], mv[1])
+            if not chess.is_in_check(newp, 'black'):
                 safe.append((p, mv))
         sel = random.choice(safe) if safe else random.choice(candidates)
 
@@ -609,8 +520,8 @@ def ai_make_move():
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
         for p, mv in candidates:
-            tgt = get_piece_at(mv[0], mv[1])
-            score = values.get(tgt['name'],0) if tgt else 0
+            tgt = chess.get_piece_at(mv[0], mv[1])
+            score = values.get(tgt.name,0) if tgt else 0
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
@@ -624,11 +535,11 @@ def ai_make_move():
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
         for p, mv in candidates:
-            newp = simulate_move(p, mv[0], mv[1])
-            if is_in_check(newp, 'black'):
+            newp = chess.simulate_move(p, mv[0], mv[1])
+            if chess.is_in_check(newp, 'black'):
                 continue
-            tgt = get_piece_at(mv[0], mv[1])
-            score = values.get(tgt['name'],0) if tgt else 0
+            tgt = chess.get_piece_at(mv[0], mv[1])
+            score = values.get(tgt.name,0) if tgt else 0
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
@@ -638,10 +549,9 @@ def ai_make_move():
 
     p, mv = sel
     apply_move(p, mv[0], mv[1])
-    game.log.append(f"AI({CPU_DIFFICULTY}): {p['name']} を {mv} に移動")
+    game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
 
-# initialize pieces
-pieces = create_pieces()
+# initialize pieces (module already initializes on import)
 
 
 def get_card_image(name: str, size=(72, 96)):
@@ -702,7 +612,8 @@ HELP_LINES = [
 
 def draw_text(surf, text, x, y, color=(20, 20, 20)):
     img = FONT.render(text, True, color)
-    surf.blit(img, (x, y))
+    rect = surf.blit(img, (x, y))
+    return rect
 
 
 def wrap_text(text: str, max_width: int):
@@ -749,18 +660,14 @@ def draw_panel():
     
     # 墓地表示（クリック可能領域として矩形を保存）
     grave_text = f"墓地: {len(game.player.graveyard)}枚"
-    grave_surf = FONT.render(grave_text, True, (90,40,40))
     global grave_label_rect
-    grave_label_rect = pygame.Rect(info_x, info_y, grave_surf.get_width(), grave_surf.get_height())
-    draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40))
     info_y += line_height
     
     # 相手の手札表示（クリック可能領域として矩形を保存）
     opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
-    opponent_hand_surf = FONT.render(opponent_hand_text, True, (100,50,100))
     global opponent_hand_rect
-    opponent_hand_rect = pygame.Rect(info_x, info_y, opponent_hand_surf.get_width(), opponent_hand_surf.get_height())
-    draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
@@ -817,39 +724,134 @@ def draw_panel():
             pygame.draw.rect(screen, light if (rr+cc)%2==0 else dark, rrect)
 
     # 駒の描画（画像があれば画像で、なければフォールバックで丸と文字）
-    for p in pieces:
-        cell_x = board_left + p['col']*square_w
-        cell_y = board_top + p['row']*square_h
+    for p in chess.pieces:
+        cell_x = board_left + p.col*square_w
+        cell_y = board_top + p.row*square_h
         # leave small padding so piece images don't touch square edges
         padding = max(6, int(square_w * 0.08))
         img_w = square_w - padding*2
         img_h = square_h - padding*2
-        img = get_piece_image_surface(p['name'], p['color'], (img_w, img_h))
+        img = get_piece_image_surface(p.name, p.color, (img_w, img_h))
         if img is not None:
             screen.blit(img, (cell_x + padding, cell_y + padding))
         else:
             cx = cell_x + square_w//2
             cy = cell_y + square_h//2
             radius = min(square_w, square_h)//2 - padding
-            if p['color'] == 'white':
+            if p.color == 'white':
                 pygame.draw.circle(screen, (250,250,250), (cx,cy), radius)
-                label = SMALL.render(p['name'], True, (0,0,0))
+                label = SMALL.render(p.name, True, (0,0,0))
             else:
                 pygame.draw.circle(screen, (40,40,40), (cx,cy), radius)
-                label = SMALL.render(p['name'], True, (255,255,255))
+                label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
 
-    # ハイライト（選択可能な移動先）
-    for hr,hc in highlight_squares:
-        hrect = pygame.Rect(board_left + hc*square_w, board_top + hr*square_h, square_w, square_h)
-        s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
-        s.fill((255,255,0,80))
-        screen.blit(s, hrect.topleft)
+    # ハイライト（選択可能な移動先）- Chess Main準拠の色分け
+    if selected_piece:
+        for hr, hc in highlight_squares:
+            hrect = pygame.Rect(board_left + hc*square_w, board_top + hr*square_h, square_w, square_h)
+            
+            # 移動先の色分け判定
+            is_en_passant = False
+            is_castling = False
+            is_checkmate = False
+            
+            # アンパサン判定
+            if selected_piece.name == 'P' and chess.en_passant_target is not None:
+                if (hr, hc) == chess.en_passant_target:
+                    if ((selected_piece.color == 'white' and selected_piece.row == 3) or
+                        (selected_piece.color == 'black' and selected_piece.row == 4)):
+                        is_en_passant = True
+            
+            # キャスリング判定
+            if selected_piece.name == 'K' and abs(hc - selected_piece.col) == 2:
+                is_castling = True
+            
+            # チェックメイト/キング捕獲判定
+            target_piece = chess.get_piece_at(hr, hc)
+            if target_piece and target_piece.name == 'K' and target_piece.color != selected_piece.color:
+                is_checkmate = True
+            else:
+                # 相手を詰ませる手かどうかを判定
+                temp_pieces = chess.simulate_move(selected_piece, hr, hc)
+                next_turn = 'black' if selected_piece.color == 'white' else 'white'
+                # 詰み判定: 相手がチェックで、合法手なし
+                if any(p.name == 'K' and p.color == next_turn for p in temp_pieces):
+                    # has_legal_moves_forはグローバルpiecesを使うので、一時的に使えない
+                    # 代わりに手動で判定
+                    is_mate = chess.is_in_check(temp_pieces, next_turn)
+                    if is_mate:
+                        # 相手に合法手があるか簡易チェック
+                        has_moves = False
+                        for tp in temp_pieces:
+                            if tp.color == next_turn:
+                                moves = tp.get_valid_moves(temp_pieces)
+                                for mv in moves:
+                                    test = chess.simulate_move(tp, mv[0], mv[1])
+                                    if not chess.is_in_check(test, next_turn):
+                                        has_moves = True
+                                        break
+                            if has_moves:
+                                break
+                        if not has_moves:
+                            is_checkmate = True
+            
+            # 色決定（Chess Main準拠）
+            if is_checkmate:
+                highlight_color = (255, 0, 0, 100)  # 赤: チェックメイト/キング捕獲
+            elif is_en_passant:
+                highlight_color = (0, 0, 255, 100)  # 青: アンパサン
+            elif is_castling:
+                highlight_color = (255, 215, 0, 100)  # 金: キャスリング
+            else:
+                highlight_color = (0, 255, 0, 80)  # 緑: 通常移動
+            
+            s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+            s.fill(highlight_color)
+            screen.blit(s, hrect.topleft)
     # 盤面の左右に太めの黒線を描画して境界を明確に（元実装に近づける）
     left_x = board_left
     right_x = board_left + 8 * square_w
     pygame.draw.rect(screen, (20,20,20), (left_x-3, board_top, 6, 8 * square_h))
     pygame.draw.rect(screen, (20,20,20), (right_x-3, board_top, 6, 8 * square_h))
+    
+    # === チェック中の表示（Chess Main準拠）===
+    if not game_over:
+        check_colors = []
+        if chess.is_in_check(chess.pieces, 'white'):
+            check_colors.append('white')
+        if chess.is_in_check(chess.pieces, 'black'):
+            check_colors.append('black')
+        
+        if check_colors:
+            # チェック状態の変化を追跡
+            if not hasattr(draw_panel, "last_check_colors"):
+                draw_panel.last_check_colors = []
+            if check_colors != draw_panel.last_check_colors:
+                draw_panel.last_check_colors = check_colors.copy()
+            
+            # 左パネルの下部に表示（手札の上）
+            check_x = left_margin + 10
+            check_y = H - 270  # 手札の上に配置
+            
+            for idx, color in enumerate(draw_panel.last_check_colors):
+                msg = f"{'白' if color == 'white' else '黒'}チェック中"
+                check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+                check_text = check_font.render(msg, True, (255, 165, 0))
+                
+                text_w = check_text.get_width()
+                text_h = check_text.get_height()
+                
+                # 背景を半透明の黒で塗りつぶして視認性を向上
+                bg_rect = pygame.Rect(check_x - 5, check_y - 3 + idx * (text_h + 10), text_w + 10, text_h + 6)
+                try:
+                    tmp = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+                    tmp.fill((0, 0, 0, 160))
+                    screen.blit(tmp, (bg_rect.x, bg_rect.y))
+                except Exception:
+                    pygame.draw.rect(screen, (0, 0, 0), bg_rect)
+                pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)
+                screen.blit(check_text, (check_x, check_y + idx * (text_h + 10)))
 
     # === 右側エリア: ログ（切替式）===
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
@@ -1195,9 +1197,8 @@ def draw_panel():
             screen.blit(no_s, (confirm_no_rect.centerx - no_s.get_width()//2, confirm_no_rect.centery - no_s.get_height()//2))
 
     # === プロモーション選択オーバーレイ ===
-    global promotion_pending
-    if promotion_pending is not None:
-        promot = promotion_pending
+    if chess.promotion_pending is not None:
+        promot = chess.promotion_pending
         opts = ['Q','R','B','N']
         # サイズ・配置
         box_w = 460
@@ -1233,7 +1234,7 @@ def draw_panel():
 
     # AI 思考中オーバーレイ
     try:
-        if cpu_wait and THINKING_ENABLED:
+        if cpu_wait and THINKING_ENABLED and not game_over:
             import time
             # Restrict overlay to the board area so it stays within the chessboard
             bs = board_size
@@ -1258,10 +1259,70 @@ def draw_panel():
     except Exception:
         pass
 
+    # --- ゲーム終了画面（勝敗表示と再戦ボタン） ---
+    if game_over:
+        # 半透明オーバーレイを全画面に表示
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        screen.blit(overlay, (0, 0))
+        
+        # 勝敗メッセージ
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 48, bold=True)
+        if game_over_winner == 'white':
+            msg = "白の勝利！"
+            color = (255, 255, 100)
+        elif game_over_winner == 'black':
+            msg = "黒の勝利！"
+            color = (150, 150, 255)
+        else:  # draw
+            msg = "引き分け"
+            color = (200, 200, 200)
+        
+        title_surf = title_font.render(msg, True, color)
+        title_rect = title_surf.get_rect(center=(W//2, H//3))
+        screen.blit(title_surf, title_rect)
+        
+        # 再戦ボタン
+        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 32, bold=True)
+        restart_text = "再戦 (R)"
+        quit_text = "終了 (ESC)"
+        
+        restart_surf = btn_font.render(restart_text, True, (255, 255, 255))
+        quit_surf = btn_font.render(quit_text, True, (255, 255, 255))
+        
+        btn_w = max(restart_surf.get_width(), quit_surf.get_width()) + 40
+        btn_h = 60
+        
+        restart_rect = pygame.Rect(W//2 - btn_w//2, H//2, btn_w, btn_h)
+        quit_rect = pygame.Rect(W//2 - btn_w//2, H//2 + btn_h + 20, btn_w, btn_h)
+        
+        # ボタン描画
+        pygame.draw.rect(screen, (50, 150, 50), restart_rect)
+        pygame.draw.rect(screen, (150, 50, 50), quit_rect)
+        pygame.draw.rect(screen, (255, 255, 255), restart_rect, 3)
+        pygame.draw.rect(screen, (255, 255, 255), quit_rect, 3)
+        
+        screen.blit(restart_surf, restart_surf.get_rect(center=restart_rect.center))
+        screen.blit(quit_surf, quit_surf.get_rect(center=quit_rect.center))
+        
+        # ボタンの矩形を保存（クリック判定用）
+        draw_panel.restart_rect = restart_rect
+        draw_panel.quit_rect = quit_rect
+
 
 
 def handle_keydown(key):
     global log_scroll_offset, show_log, enlarged_card_index
+    
+    # ゲーム終了時のキー操作
+    if game_over:
+        if key == pygame.K_r:
+            restart_game()
+            return
+        if key == pygame.K_ESCAPE:
+            pygame.quit()
+            sys.exit(0)
+        return  # ゲーム終了時は他のキー操作を無効化
     
     if key == pygame.K_ESCAPE:
         pygame.quit()
@@ -1300,19 +1361,35 @@ def handle_keydown(key):
         global show_opponent_hand
         show_opponent_hand = not show_opponent_hand
         return
+
+    # --- DEBUG: 盤面セットショートカット ---
+    if key == pygame.K_F1:
+        debug_setup_castling()
+        return
+    if key == pygame.K_F2:
+        debug_setup_en_passant()
+        return
+    if key == pygame.K_F3:
+        debug_setup_promotion()
+        return
+    if key == pygame.K_F4:
+        debug_reset_initial()
+        return
+    if key == pygame.K_F5:
+        debug_setup_checkmate()
+        return
     
     # 1-9 キーでカード使用
     if pygame.K_1 <= key <= pygame.K_9:
         idx = key - pygame.K_1
         # プロモーション選択中ならカード使用を抑止して昇格選択に使う
-        global promotion_pending
-        if promotion_pending is not None and 0 <= idx <= 3:
+        if chess.promotion_pending is not None and 0 <= idx <= 3:
             opts = ['Q','R','B','N']
             sel = opts[idx]
-            piece = promotion_pending['piece']
-            piece['name'] = sel
+            piece = chess.promotion_pending['piece']
+            piece.name = sel
             game.log.append(f"昇格: ポーンを{sel}に昇格させました。")
-            promotion_pending = None
+            chess.promotion_pending = None
             return
         # pending中: discardのみ選択を許可し、それ以外は行動不可
         if getattr(game, 'pending', None) is not None:
@@ -1390,7 +1467,17 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, promotion_pending, chess_current_turn, show_grave, show_opponent_hand
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand
+    
+    # ゲーム終了画面のボタン処理
+    if game_over:
+        if hasattr(draw_panel, 'restart_rect') and draw_panel.restart_rect.collidepoint(pos):
+            restart_game()
+            return
+        if hasattr(draw_panel, 'quit_rect') and draw_panel.quit_rect.collidepoint(pos):
+            pygame.quit()
+            sys.exit(0)
+        return
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1471,16 +1558,15 @@ def handle_mouse_click(pos):
             return
 
     # --- プロモーション選択オーバーレイクリック対応 ---
-    global promotion_pending
-    if promotion_pending is not None and hasattr(draw_panel, 'promo_rects'):
+    if chess.promotion_pending is not None and hasattr(draw_panel, 'promo_rects'):
         for r, o in draw_panel.promo_rects:
             if r.collidepoint(pos):
                 # 選択された昇格駒で置き換え
-                piece = promotion_pending.get('piece')
+                piece = chess.promotion_pending.get('piece')
                 if piece is not None:
-                    piece['name'] = o
+                    piece.name = o
                     game.log.append(f"昇格: ポーンを{o}に昇格させました。")
-                promotion_pending = None
+                chess.promotion_pending = None
                 # clear selection/highlights just in case
                 selected_piece = None
                 highlight_squares = []
@@ -1507,24 +1593,24 @@ def handle_mouse_click(pos):
     board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
-    if board_rect.collidepoint(pos):
+    if board_rect.collidepoint(pos) and not game_over:  # ゲーム終了時は盤面操作を無効化
         col = (pos[0] - board_left) // square_w
         row = (pos[1] - board_top) // square_h
         # bounds safety
         col = int(max(0, min(7, col)))
         row = int(max(0, min(7, row)))
 
-        clicked = get_piece_at(row, col)
+        clicked = chess.get_piece_at(row, col)
         # 選択していない場合は自分の駒を選択
         if selected_piece is None:
-            if clicked and clicked['color'] == chess_current_turn:
+            if clicked and clicked.color == chess_current_turn:
                 selected_piece = clicked
                 highlight_squares = get_valid_moves(clicked)
         else:
             # 目的地に含まれていれば移動
             if (row, col) in highlight_squares:
                 apply_move(selected_piece, row, col)
-                game.log.append(f"{selected_piece['name']} を {(row,col)} へ移動")
+                game.log.append(f"{selected_piece.name} を {(row,col)} へ移動")
                 # ターン切替
                 chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
                 # クリア
@@ -1541,7 +1627,7 @@ def handle_mouse_click(pos):
                     # main_loop will flip turn back to player after AI completes
             else:
                 # 別の自駒を選択するかキャンセル
-                if clicked and clicked['color'] == chess_current_turn:
+                if clicked and clicked.color == chess_current_turn:
                     selected_piece = clicked
                     highlight_squares = get_valid_moves(clicked)
                 else:
@@ -1551,7 +1637,7 @@ def handle_mouse_click(pos):
 
 
 def main_loop():
-    global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn
+    global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn, game_over, game_over_winner
     # スクロール関連の初期化（ローカル扱いによるUnboundLocalErrorを防止）
     global dragging_scrollbar, drag_start_y, drag_start_offset, scrollbar_rect
     dragging_scrollbar = False
@@ -1619,11 +1705,39 @@ def main_loop():
                     elif event.y < 0:  # 下スクロール
                         log_scroll_offset = max(0, log_scroll_offset - 1)
 
+        # --- チェックメイト判定と勝利条件チェック ---
+        if not game_over:
+            # キングが盤面にいない場合は即座に勝敗を決定
+            white_king = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+            black_king = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+            if not white_king:
+                game_over = True
+                game_over_winner = 'black'
+                game.log.append("白のキングが捕獲されました！黒の勝利！")
+            elif not black_king:
+                game_over = True
+                game_over_winner = 'white'
+                game.log.append("黒のキングが捕獲されました！白の勝利！")
+            # どちらかが詰みの場合も勝利判定
+            elif not chess.has_legal_moves_for('white') and chess.is_in_check(chess.pieces, 'white'):
+                game_over = True
+                game_over_winner = 'black'
+                game.log.append("白がチェックメイト！黒の勝利！")
+            elif not chess.has_legal_moves_for('black') and chess.is_in_check(chess.pieces, 'black'):
+                game_over = True
+                game_over_winner = 'white'
+                game.log.append("黒がチェックメイト！白の勝利！")
+            # ステイルメイト（合法手がないがチェックでない）の判定
+            elif not chess.has_legal_moves_for(chess_current_turn) and not chess.is_in_check(chess.pieces, chess_current_turn):
+                game_over = True
+                game_over_winner = 'draw'
+                game.log.append("ステイルメイト（引き分け）")
+
         draw_panel()
         pygame.display.flip()
 
-        # Non-blocking AI wait handling
-        if cpu_wait and THINKING_ENABLED:
+        # Non-blocking AI wait handling (ゲーム終了時は無効化)
+        if cpu_wait and THINKING_ENABLED and not game_over:
             import time
             if time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move

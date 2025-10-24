@@ -87,6 +87,8 @@ UI側で持つ状態のみここに保持し、ルールや盤面状態（pieces
 selected_piece = None  # 選択中の駒（dict）
 highlight_squares = []  # ハイライトする移動先座標のリスト
 chess_current_turn = 'white'
+game_over = False      # ゲームが終わったかどうか
+game_over_winner = None # 勝者（まだ決まっていない）
 
 # AI thinking/display settings
 THINKING_ENABLED = True
@@ -146,6 +148,49 @@ def debug_reset_initial():
     globals()['highlight_squares'] = []
     globals()['chess_current_turn'] = 'white'
     game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
+
+
+def debug_setup_checkmate():
+    """簡単なチェックメイト検証用盤面（白を詰ませる）"""
+    chess.pieces.clear()
+    # 白キングを隅に追い詰める
+    wk = chess.Piece(7, 0, 'K', 'white')  # a1
+    # 黒のクイーンとルークで詰み
+    bq = chess.Piece(6, 1, 'Q', 'black')  # b2
+    br = chess.Piece(7, 1, 'R', 'black')  # b1
+    chess.pieces.extend([wk, bq, br])
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
+
+
+def restart_game():
+    """ゲームを初期状態にリセットして再戦する"""
+    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
+    global log_scroll_offset
+    
+    # チェス盤を初期配置に
+    chess.pieces[:] = chess.create_pieces()
+    chess.en_passant_target = None
+    chess.promotion_pending = None
+    
+    # ゲーム状態をリセット
+    game_over = False
+    game_over_winner = None
+    chess_current_turn = 'white'
+    selected_piece = None
+    highlight_squares = []
+    cpu_wait = False
+    
+    # カードゲーム部分もリセット
+    global game
+    game = new_game_with_rule_deck()
+    log_scroll_offset = 0
+    
+    game.log.append("=== ゲームを再開しました ===")
+    game.log.append("白のターンです。")
 
 def create_pieces():
     # 互換のためのエイリアス（将来的に削除予定）
@@ -1094,7 +1139,7 @@ def draw_panel():
 
     # AI 思考中オーバーレイ
     try:
-        if cpu_wait and THINKING_ENABLED:
+        if cpu_wait and THINKING_ENABLED and not game_over:
             import time
             # Restrict overlay to the board area so it stays within the chessboard
             bs = board_size
@@ -1119,10 +1164,70 @@ def draw_panel():
     except Exception:
         pass
 
+    # --- ゲーム終了画面（勝敗表示と再戦ボタン） ---
+    if game_over:
+        # 半透明オーバーレイを全画面に表示
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        screen.blit(overlay, (0, 0))
+        
+        # 勝敗メッセージ
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 48, bold=True)
+        if game_over_winner == 'white':
+            msg = "白の勝利！"
+            color = (255, 255, 100)
+        elif game_over_winner == 'black':
+            msg = "黒の勝利！"
+            color = (150, 150, 255)
+        else:  # draw
+            msg = "引き分け"
+            color = (200, 200, 200)
+        
+        title_surf = title_font.render(msg, True, color)
+        title_rect = title_surf.get_rect(center=(W//2, H//3))
+        screen.blit(title_surf, title_rect)
+        
+        # 再戦ボタン
+        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 32, bold=True)
+        restart_text = "再戦 (R)"
+        quit_text = "終了 (ESC)"
+        
+        restart_surf = btn_font.render(restart_text, True, (255, 255, 255))
+        quit_surf = btn_font.render(quit_text, True, (255, 255, 255))
+        
+        btn_w = max(restart_surf.get_width(), quit_surf.get_width()) + 40
+        btn_h = 60
+        
+        restart_rect = pygame.Rect(W//2 - btn_w//2, H//2, btn_w, btn_h)
+        quit_rect = pygame.Rect(W//2 - btn_w//2, H//2 + btn_h + 20, btn_w, btn_h)
+        
+        # ボタン描画
+        pygame.draw.rect(screen, (50, 150, 50), restart_rect)
+        pygame.draw.rect(screen, (150, 50, 50), quit_rect)
+        pygame.draw.rect(screen, (255, 255, 255), restart_rect, 3)
+        pygame.draw.rect(screen, (255, 255, 255), quit_rect, 3)
+        
+        screen.blit(restart_surf, restart_surf.get_rect(center=restart_rect.center))
+        screen.blit(quit_surf, quit_surf.get_rect(center=quit_rect.center))
+        
+        # ボタンの矩形を保存（クリック判定用）
+        draw_panel.restart_rect = restart_rect
+        draw_panel.quit_rect = quit_rect
+
 
 
 def handle_keydown(key):
     global log_scroll_offset, show_log, enlarged_card_index
+    
+    # ゲーム終了時のキー操作
+    if game_over:
+        if key == pygame.K_r:
+            restart_game()
+            return
+        if key == pygame.K_ESCAPE:
+            pygame.quit()
+            sys.exit(0)
+        return  # ゲーム終了時は他のキー操作を無効化
     
     if key == pygame.K_ESCAPE:
         pygame.quit()
@@ -1174,6 +1279,9 @@ def handle_keydown(key):
         return
     if key == pygame.K_F4:
         debug_reset_initial()
+        return
+    if key == pygame.K_F5:
+        debug_setup_checkmate()
         return
     
     # 1-9 キーでカード使用
@@ -1265,6 +1373,16 @@ def handle_keydown(key):
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
     global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand
+    
+    # ゲーム終了画面のボタン処理
+    if game_over:
+        if hasattr(draw_panel, 'restart_rect') and draw_panel.restart_rect.collidepoint(pos):
+            restart_game()
+            return
+        if hasattr(draw_panel, 'quit_rect') and draw_panel.quit_rect.collidepoint(pos):
+            pygame.quit()
+            sys.exit(0)
+        return
     
     # 拡大表示中ならどこクリックしても閉じる
     if enlarged_card_index is not None or enlarged_card_name is not None:
@@ -1380,7 +1498,7 @@ def handle_mouse_click(pos):
     board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
-    if board_rect.collidepoint(pos):
+    if board_rect.collidepoint(pos) and not game_over:  # ゲーム終了時は盤面操作を無効化
         col = (pos[0] - board_left) // square_w
         row = (pos[1] - board_top) // square_h
         # bounds safety
@@ -1424,7 +1542,7 @@ def handle_mouse_click(pos):
 
 
 def main_loop():
-    global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn
+    global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn, game_over, game_over_winner
     # スクロール関連の初期化（ローカル扱いによるUnboundLocalErrorを防止）
     global dragging_scrollbar, drag_start_y, drag_start_offset, scrollbar_rect
     dragging_scrollbar = False
@@ -1492,11 +1610,39 @@ def main_loop():
                     elif event.y < 0:  # 下スクロール
                         log_scroll_offset = max(0, log_scroll_offset - 1)
 
+        # --- チェックメイト判定と勝利条件チェック ---
+        if not game_over:
+            # キングが盤面にいない場合は即座に勝敗を決定
+            white_king = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+            black_king = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+            if not white_king:
+                game_over = True
+                game_over_winner = 'black'
+                game.log.append("白のキングが捕獲されました！黒の勝利！")
+            elif not black_king:
+                game_over = True
+                game_over_winner = 'white'
+                game.log.append("黒のキングが捕獲されました！白の勝利！")
+            # どちらかが詰みの場合も勝利判定
+            elif not chess.has_legal_moves_for('white') and chess.is_in_check(chess.pieces, 'white'):
+                game_over = True
+                game_over_winner = 'black'
+                game.log.append("白がチェックメイト！黒の勝利！")
+            elif not chess.has_legal_moves_for('black') and chess.is_in_check(chess.pieces, 'black'):
+                game_over = True
+                game_over_winner = 'white'
+                game.log.append("黒がチェックメイト！白の勝利！")
+            # ステイルメイト（合法手がないがチェックでない）の判定
+            elif not chess.has_legal_moves_for(chess_current_turn) and not chess.is_in_check(chess.pieces, chess_current_turn):
+                game_over = True
+                game_over_winner = 'draw'
+                game.log.append("ステイルメイト（引き分け）")
+
         draw_panel()
         pygame.display.flip()
 
-        # Non-blocking AI wait handling
-        if cpu_wait and THINKING_ENABLED:
+        # Non-blocking AI wait handling (ゲーム終了時は無効化)
+        if cpu_wait and THINKING_ENABLED and not game_over:
             import time
             if time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move

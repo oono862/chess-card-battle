@@ -476,13 +476,24 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         if id(piece) in game.frozen_pieces and game.frozen_pieces[id(piece)] > 0:
             return []
 
-    name = piece['name']
-    r,c = piece['row'], piece['col']
+    # small accessor to support both object-style Piece and dict-style pieces
+    def _pget(p, key, default=None):
+        if hasattr(p, key):
+            return getattr(p, key)
+        try:
+            return p[key]
+        except Exception:
+            return default
+
+    name = _pget(piece, 'name')
+    r, c = _pget(piece, 'row'), _pget(piece, 'col')
+    color = _pget(piece, 'color')
+
     def occupied(rr,cc):
         return get_piece_at(rr,cc) is not None
     def occupied_by_color(rr,cc,color):
         p = get_piece_at(rr,cc)
-        return p is not None and p['color']==color
+        return p is not None and _pget(p, 'color')==color
     def is_blocked_tile(rr, cc, color):
         # If a blocked tile applies to this color, disallow moving there
         try:
@@ -495,33 +506,33 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         return False
 
     if name == 'P':
-        dir = -1 if piece['color']=='white' else 1
+        dir = -1 if color == 'white' else 1
         # forward
-        if on_board(r+dir, c) and not occupied(r+dir,c) and not is_blocked_tile(r+dir, c, piece['color']):
+        if on_board(r+dir, c) and not occupied(r+dir,c) and not is_blocked_tile(r+dir, c, color):
             moves.append((r+dir,c))
             # double from starting rank
-            start_row = 6 if piece['color']=='white' else 1
-            if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c) and not is_blocked_tile(r+2*dir, c, piece['color']):
+            start_row = 6 if color == 'white' else 1
+            if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c) and not is_blocked_tile(r+2*dir, c, color):
                 moves.append((r+2*dir,c))
         # captures
         for dc in (-1,1):
             nr,nc = r+dir, c+dc
-            if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,piece['color']) and not is_blocked_tile(nr, nc, piece['color']):
+            if on_board(nr,nc) and occupied(nr,nc) and not occupied_by_color(nr,nc,color) and not is_blocked_tile(nr, nc, color):
                 moves.append((nr,nc))
         # en passant
         global en_passant_target
         if en_passant_target is not None:
             target_r, target_c = en_passant_target
-            if piece['color'] == 'white' and r == 3:
+            if color == 'white' and r == 3:
                 if abs(c - target_c) == 1 and target_r == 2 and not is_blocked_tile(target_r, target_c, piece['color']):
                     moves.append((target_r, target_c))
-            elif piece['color'] == 'black' and r == 4:
+            elif color == 'black' and r == 4:
                 if abs(c - target_c) == 1 and target_r == 5 and not is_blocked_tile(target_r, target_c, piece['color']):
                     moves.append((target_r, target_c))
     elif name == 'N':
         for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
             nr,nc = r+dr, c+dc
-            if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
+            if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
                 moves.append((nr,nc))
     elif name in ('B','R','Q'):
         directions = []
@@ -537,12 +548,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 if not on_board(nr,nc):
                     break
                 if occupied(nr,nc):
-                    if not occupied_by_color(nr,nc,piece['color']):
+                    if not occupied_by_color(nr,nc,color):
                         moves.append((nr,nc))
                     # If player's card granted a single jump ability, allow jumping over one piece     
                     can_jump = False
                     try:
-                        can_jump = (piece.get('color') == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+                        can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
@@ -560,27 +571,27 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             for dc in (-1,0,1):
                 if dr==0 and dc==0: continue
                 nr,nc = r+dr, c+dc
-                if on_board(nr,nc) and not occupied_by_color(nr,nc,piece['color']):
+                if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
                     moves.append((nr,nc))
 
         # キャスリング
-        if not piece.get('has_moved', False) and not ignore_check:
-            if piece['color'] == 'white':
+        if not _pget(piece, 'has_moved', False) and not ignore_check:
+            if color == 'white':
                 king_row = 7
             else:
                 king_row = 0
 
             rook_kingside = get_piece_at(king_row, 7)
-            if (rook_kingside and rook_kingside['name'] == 'R' and
-                rook_kingside['color'] == piece['color'] and
-                not rook_kingside.get('has_moved', False)):
+            if (rook_kingside and _pget(rook_kingside, 'name') == 'R' and
+                _pget(rook_kingside, 'color') == color and
+                not _pget(rook_kingside, 'has_moved', False)):
                 if not occupied(king_row, 5) and not occupied(king_row, 6):
                     moves.append((king_row, 6))  # キャスリング後のキングの位置
 
             rook_queenside = get_piece_at(king_row, 0)
-            if (rook_queenside and rook_queenside['name'] == 'R' and
-                rook_queenside['color'] == piece['color'] and
-                not rook_queenside.get('has_moved', False)):
+            if (rook_queenside and _pget(rook_queenside, 'name') == 'R' and
+                _pget(rook_queenside, 'color') == color and
+                not _pget(rook_queenside, 'has_moved', False)):
                 if not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3):
                     moves.append((king_row, 2))  # キャスリング後のキングの位置
 
@@ -589,7 +600,7 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         legal = []
         for mv in moves:
             newp = simulate_move(piece, mv[0], mv[1])
-            if not is_in_check(newp, piece['color']):
+            if not is_in_check(newp, color):
                 legal.append(mv)
         return legal
     return moves

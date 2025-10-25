@@ -121,6 +121,8 @@ class Game:
     frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
     # which color the blocked tile applies to (tile -> 'white'|'black')
     blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
+    # Whether the player has already moved a chess piece this card-game turn.
+    player_moved_this_turn: bool = False
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -155,23 +157,14 @@ class Game:
         """At the start of each turn: draw 1 and restore PP to max."""
         self.turn += 1 if self.turn > 0 else 1
         self.player.reset_pp()
-        # Decay board statuses (placeholder)
-        for k in list(self.blocked_tiles.keys()):
-            self.blocked_tiles[k] -= 1
-            if self.blocked_tiles[k] <= 0:
-                # remove owner mapping as well
-                try:
-                    del self.blocked_tiles_owner[k]
-                except Exception:
-                    pass
-                del self.blocked_tiles[k]
-        for k in list(self.frozen_pieces.keys()):
-            self.frozen_pieces[k] -= 1
-            if self.frozen_pieces[k] <= 0:
-                del self.frozen_pieces[k]
+        # Decay board statuses (done via helper so opponent-turn-only decay can be applied separately)
+        self.decay_statuses()
 
         self.player.extra_moves_this_turn = 0
         self.player.next_move_can_jump = False
+        # Reset per-turn movement flag so player can move once this new turn
+        self.player_moved_this_turn = False
+
         res = self.draw_to_hand(1)
         if not res or res[0][0] is None:
             self.log.append(f"ターン{self.turn}開始: 山札が空。PPを{self.player.pp_max}に回復。")
@@ -181,6 +174,42 @@ class Game:
                 self.log.append(f"ターン{self.turn}開始: 『{c.name}』を1枚ドロー。PPを{self.player.pp_max}に回復。")
             else:
                 self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
+
+    def decay_statuses(self) -> None:
+        """Decay time-limited statuses (blocked_tiles, frozen_pieces) by 1 turn.
+
+        This function is intended to be called once per opponent turn end so that
+        effects like 封鎖 (灼熱) which last N opponent turns are decremented.
+        It only decrements the counters and removes expired entries; it does not
+        perform start-of-turn actions like drawing cards or restoring PP.
+        """
+        # Decay blocked tiles
+        for k in list(self.blocked_tiles.keys()):
+            try:
+                self.blocked_tiles[k] -= 1
+            except Exception:
+                # If value is not numeric, ignore
+                continue
+            if self.blocked_tiles[k] <= 0:
+                try:
+                    del self.blocked_tiles_owner[k]
+                except Exception:
+                    pass
+                try:
+                    del self.blocked_tiles[k]
+                except Exception:
+                    pass
+        # Decay frozen pieces
+        for k in list(self.frozen_pieces.keys()):
+            try:
+                self.frozen_pieces[k] -= 1
+            except Exception:
+                continue
+            if self.frozen_pieces[k] <= 0:
+                try:
+                    del self.frozen_pieces[k]
+                except Exception:
+                    pass
 
     def play_card(self, hand_index: int) -> Tuple[bool, str]:
         """Attempt to play a card from hand; returns (success, message)."""

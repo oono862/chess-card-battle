@@ -559,7 +559,7 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                         # attempt to land on the next square beyond this occupied square
                         step2 = step + 1
                         nr2, nc2 = r+dr*step2, c+dc*step2
-                        if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, piece['color']):     
+                        if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, color):     
                             moves.append((nr2, nc2))
                         # only allow a single jump; stop after
                     break
@@ -777,6 +777,15 @@ def draw_panel():
     
     # PP
     draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
+    # 簡易エフェクト表示: 次の移動でジャンプ/追加行動がある場合に左パネルへ表示
+    if getattr(game.player, 'next_move_can_jump', False):
+        info_y += 6
+        draw_text(screen, "[効果] 次の移動でジャンプ可能", info_x, info_y, (10, 40, 180))
+        info_y += line_height - 6
+    if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
+        info_y += 6
+        draw_text(screen, f"[効果] 追加行動: {game.player.extra_moves_this_turn}", info_x, info_y, (10, 120, 10))
+        info_y += line_height - 6
     info_y += line_height
     
     # 山札
@@ -870,6 +879,40 @@ def draw_panel():
                 pygame.draw.circle(screen, (40,40,40), (cx,cy), radius)
                 label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
+
+    # --- カード効果の視覚化オーバーレイ ---
+    # 表示: 封鎖マス (赤の半透明)、凍結駒 (青の半透明に「凍」マーク)
+    try:
+        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+            bx = board_left + bc * square_w
+            by = board_top + br * square_h
+            s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+            s.fill((200, 30, 30, 120))
+            screen.blit(s, (bx, by))
+            # ターン数を小さく表示
+            ttxt = TINY.render(str(turns), True, (255,255,255))
+            screen.blit(ttxt, (bx + 4, by + 4))
+            # 所有者表示（白/黒の頭文字）
+            owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
+            if owner:
+                ot = TINY.render(owner[0].upper(), True, (255,255,255))
+                screen.blit(ot, (bx + 4, by + 18))
+    except Exception:
+        pass
+
+    try:
+        for p in chess.pieces:
+            if id(p) in getattr(game, 'frozen_pieces', {}):
+                fx = board_left + p.col * square_w
+                fy = board_top + p.row * square_h
+                s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                s.fill((30, 120, 200, 90))
+                screen.blit(s, (fx, fy))
+                # 凍結マーク
+                mark = SMALL.render('凍', True, (255,255,255))
+                screen.blit(mark, (fx + square_w - mark.get_width() - 4, fy + 4))
+    except Exception:
+        pass
 
     # ハイライト（選択可能な移動先）- Chess Main準拠の色分け
     if selected_piece:
@@ -1719,6 +1762,12 @@ def handle_mouse_click(pos):
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
     if board_rect.collidepoint(pos) and not game_over:
+        # Prevent any piece selection/movement until the card-game turn has started.
+        # The card system requires the player to press [T] to start the turn; until
+        # then chess pieces should not be movable.
+        if getattr(game, 'turn', 0) <= 0:
+            game.log.append("ターンが開始していません。[T]で開始してください。")
+            return
         col = (pos[0] - board_left) // square_w
         row = (pos[1] - board_top) // square_h
         # bounds safety
@@ -1745,7 +1794,7 @@ def handle_mouse_click(pos):
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
                     return
-            if game.pending.kind == 'target_piece':
+            elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece':
                 # must select an opponent piece
                 # assume player controls white
                 player_color = 'white'
@@ -1781,7 +1830,29 @@ def handle_mouse_click(pos):
                 highlight_squares = get_valid_moves(clicked)
         else:
             if (row, col) in highlight_squares:
+                # Enforce one chess move per card-game turn unless player has extra_moves_this_turn
+                try:
+                    moved_flag = getattr(game, 'player_moved_this_turn', False)
+                    extra = getattr(game.player, 'extra_moves_this_turn', 0)
+                except Exception:
+                    moved_flag = False
+                    extra = 0
+                if chess_current_turn == 'white' and getattr(game, 'turn', 0) > 0:
+                    if moved_flag and extra <= 0:
+                        game.log.append("このターンは既に駒を動かしました。次のターン開始まで待つか、カードで追加行動を付与してください。")
+                        return
+                # Apply the move
                 apply_move(selected_piece, row, col)
+                # If it was player's move, consume extra move or mark moved
+                if chess_current_turn == 'white' and getattr(game, 'turn', 0) > 0:
+                    try:
+                        if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
+                            game.player.extra_moves_this_turn -= 1
+                        else:
+                            game.player_moved_this_turn = True
+                    except Exception:
+                        # defensive: set flag
+                        game.player_moved_this_turn = True
                 # log safely for both object and dict styles
                 try:
                     name = selected_piece.name
@@ -1919,6 +1990,14 @@ def main_loop():
                 cpu_wait = False
                 # restore player turn
                 chess_current_turn = 'white'
+                # Apply decay for time-limited card effects now that the opponent's turn finished.
+                # Do NOT automatically start the player's card-game turn; the player must press [T]
+                # to start their own turn. This keeps chess movement locked until the player
+                # explicitly starts their turn.
+                try:
+                    game.decay_statuses()
+                except Exception:
+                    pass
 
         clock.tick(60)
 

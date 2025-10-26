@@ -1765,7 +1765,7 @@ def handle_mouse_click(pos):
         # Prevent any piece selection/movement until the card-game turn has started.
         # The card system requires the player to press [T] to start the turn; until
         # then chess pieces should not be movable.
-        if getattr(game, 'turn', 0) <= 0:
+        if not getattr(game, 'turn_active', False):
             game.log.append("ターンが開始していません。[T]で開始してください。")
             return
         col = (pos[0] - board_left) // square_w
@@ -1837,22 +1837,26 @@ def handle_mouse_click(pos):
                 except Exception:
                     moved_flag = False
                     extra = 0
-                if chess_current_turn == 'white' and getattr(game, 'turn', 0) > 0:
+                if chess_current_turn == 'white' and getattr(game, 'turn_active', False):
                     if moved_flag and extra <= 0:
                         game.log.append("このターンは既に駒を動かしました。次のターン開始まで待つか、カードで追加行動を付与してください。")
                         return
                 # Apply the move
                 apply_move(selected_piece, row, col)
                 # If it was player's move, consume extra move or mark moved
-                if chess_current_turn == 'white' and getattr(game, 'turn', 0) > 0:
+                if chess_current_turn == 'white' and getattr(game, 'turn_active', False):
                     try:
                         if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
                             game.player.extra_moves_this_turn -= 1
+                            # keep turn active while extra moves remain
                         else:
                             game.player_moved_this_turn = True
+                            # consume the active turn so player must press T next time
+                            game.turn_active = False
                     except Exception:
                         # defensive: set flag
                         game.player_moved_this_turn = True
+                        game.turn_active = False
                 # log safely for both object and dict styles
                 try:
                     name = selected_piece.name

@@ -123,6 +123,8 @@ class Game:
     blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
     # Whether the player has already moved a chess piece this card-game turn.
     player_moved_this_turn: bool = False
+    # Whether the player's card-game turn is currently active (started via start_turn)
+    turn_active: bool = False
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -156,6 +158,8 @@ class Game:
     def start_turn(self) -> None:
         """At the start of each turn: draw 1 and restore PP to max."""
         self.turn += 1 if self.turn > 0 else 1
+        # Mark the card-game turn as active; player must press start_turn to enable actions
+        self.turn_active = True
         self.player.reset_pp()
         # Decay board statuses (done via helper so opponent-turn-only decay can be applied separately)
         self.decay_statuses()
@@ -213,8 +217,8 @@ class Game:
 
     def play_card(self, hand_index: int) -> Tuple[bool, str]:
         """Attempt to play a card from hand; returns (success, message)."""
-        # Block play before the first turn officially starts
-        if self.turn <= 0:
+        # Block play unless the player's card-game turn is active
+        if not getattr(self, 'turn_active', False):
             return False, "ターンが開始していません。[T]で開始してください。"
         if self.pending is not None:
             return False, "操作待ち: 先に保留中の選択を完了してください。"

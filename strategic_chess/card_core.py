@@ -348,15 +348,13 @@ def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
 
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
-    """迅雷(1): 2回行動（このターン中の追加行動+1）。"""
-    # Grant two consecutive full chess turns to the player (this and the next),
-    # implemented by setting a counter on the Game that the UI/engine consumes.
+    """迅雷(1): このターンに1回だけ追加の全行動（合計で2ターン分）。"""
+    # Grant one extra full chess turn to the player (so player gets this turn + 1 more).
     try:
-        game.player_consecutive_turns = max(game.player_consecutive_turns, 2)
+        game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
     except Exception:
-        # defensive fallback: set attribute directly
-        setattr(game, 'player_consecutive_turns', 2)
-    return "プレイヤーは連続して2ターン分行動できます。"
+        setattr(game, 'player_consecutive_turns', 1)
+    return "このターンに追加で1ターン分行動できます（合計2ターン）。"
 
 
 def eff_draw2(game: Game, player: PlayerState) -> str:

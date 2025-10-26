@@ -1402,7 +1402,8 @@ def draw_panel():
 
     # AI 思考中オーバーレイ
     try:
-        if cpu_wait and THINKING_ENABLED and not game_over:
+        # Do not show AI thinking overlay while a promotion selection is pending.
+        if cpu_wait and THINKING_ENABLED and not game_over and getattr(chess, 'promotion_pending', None) is None:
             import time
             # Restrict overlay to the board area so it stays within the chessboard
             bs = board_size
@@ -1864,7 +1865,25 @@ def handle_mouse_click(pos):
                     name = selected_piece.get('name', str(selected_piece)) if isinstance(selected_piece, dict) else str(selected_piece)
                 chess_log.append(f"{name} を {(row,col)} へ移動")
                 # ターン切替
-                chess_current_turn = 'black' if chess_current_turn == 'white' else 'white'
+                if chess_current_turn == 'white':
+                    # If player has consecutive-turns remaining (from '迅雷'), consume one and keep the turn
+                    cct = getattr(game, 'player_consecutive_turns', 0)
+                    if cct and cct > 0:
+                        try:
+                            game.player_consecutive_turns -= 1
+                        except Exception:
+                            setattr(game, 'player_consecutive_turns', max(0, cct-1))
+                        # keep chess_current_turn as white so player moves again immediately
+                        chess_current_turn = 'white'
+                        # reset per-move flags so player can move again
+                        game.player_moved_this_turn = False
+                        # ensure turn_active remains True so card plays are allowed
+                        game.turn_active = True
+                        game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
+                    else:
+                        chess_current_turn = 'black'
+                else:
+                    chess_current_turn = 'white'
                 # クリア
                 selected_piece = None
                 highlight_squares = []
@@ -1988,7 +2007,13 @@ def main_loop():
         # Non-blocking AI wait handling (ゲーム終了時は無効化)
         if cpu_wait and THINKING_ENABLED and not game_over:
             import time
-            if time.time() - cpu_wait_start >= AI_THINK_DELAY:
+            # If a promotion selection is pending, postpone AI until the promotion is resolved by the player.
+            # This avoids the AI automatically playing while the UI is waiting for the player to choose
+            # the promotion piece.
+            if getattr(chess, 'promotion_pending', None) is not None:
+                # reset timer so AI wait restarts after promotion is handled
+                cpu_wait_start = time.time()
+            elif time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move
                 ai_make_move()
                 cpu_wait = False

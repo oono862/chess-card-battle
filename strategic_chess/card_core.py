@@ -125,6 +125,8 @@ class Game:
     player_moved_this_turn: bool = False
     # Whether the player's card-game turn is currently active (started via start_turn)
     turn_active: bool = False
+    # Number of consecutive extra full chess turns the player may take (skip opponent moves)
+    player_consecutive_turns: int = 0
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -347,8 +349,14 @@ def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
     """迅雷(1): 2回行動（このターン中の追加行動+1）。"""
-    player.extra_moves_this_turn += 1
-    return "このターンの追加行動+1。"
+    # Grant two consecutive full chess turns to the player (this and the next),
+    # implemented by setting a counter on the Game that the UI/engine consumes.
+    try:
+        game.player_consecutive_turns = max(game.player_consecutive_turns, 2)
+    except Exception:
+        # defensive fallback: set attribute directly
+        setattr(game, 'player_consecutive_turns', 2)
+    return "プレイヤーは連続して2ターン分行動できます。"
 
 
 def eff_draw2(game: Game, player: PlayerState) -> str:

@@ -26,6 +26,9 @@ pygame.init()
 THINKING_ENABLED = True
 # AIが指す前の待機時間（秒、プレイヤー操作後の遅延）
 AI_THINK_DELAY = 0.5
+# AIが指す前の待機時間（秒、プレイヤー操作後の遅延）
+# ユーザー要望によりデフォルトを2.0秒に延長
+AI_THINK_DELAY = 2.0
 # ドット進捗の切替周波数 (Hz)
 THINK_DOT_FREQ = 4.0
 # フェードを有効にする

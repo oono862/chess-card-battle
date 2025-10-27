@@ -124,6 +124,9 @@ cpu_wait_start = 0.0
 # ターン切替用テロップ（中央表示）
 turn_telop_msg = None
 turn_telop_until = 0.0
+# 短時間表示用の警告テキスト（ログ以外に画面表示するため）
+notice_msg = None
+notice_until = 0.0
 
 # --- Debug setup helpers (F1-F4) for quick rule testing ---
 def debug_setup_castling():
@@ -1078,6 +1081,29 @@ def draw_panel():
     except Exception:
         pass
 
+    # 短時間表示用の警告（ログに加えて画面にも0.5秒表示）
+    try:
+        if notice_msg and _ct_time.time() < notice_until:
+            # small semi-transparent box near top-center of board
+            box_w = min(500, board_size - 40)
+            notice_font_size = max(16, board_size // 24)
+            notice_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", notice_font_size, bold=True)
+            notice_surf = notice_font.render(notice_msg, True, (255, 230, 180))
+            shadow = notice_font.render(notice_msg, True, (0,0,0))
+            bx = board_left + (board_size - notice_surf.get_width()) // 2
+            by = board_top + 8
+            # background box
+            try:
+                tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
+                tmp.fill((0,0,0,160))
+                screen.blit(tmp, (bx-10, by-6))
+            except Exception:
+                pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+            screen.blit(shadow, (bx+2, by+2))
+            screen.blit(notice_surf, (bx, by))
+    except Exception:
+        pass
+
     try:
         for p in chess.pieces:
             if id(p) in getattr(game, 'frozen_pieces', {}):
@@ -1662,7 +1688,7 @@ def draw_panel():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index
+    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until
     
     # ゲーム終了時のキー操作
     if game_over:
@@ -1696,8 +1722,30 @@ def handle_keydown(key):
         if getattr(game, 'pending', None) is not None:
             game.log.append("操作待ち: 先に保留中の選択を完了してください。")
             return
+        # Prevent starting a new card-game turn if the previous chess/AI actions
+        # have not completed. Rules:
+        # - If the player's card-game turn is already active, do not start again.
+        # - If it's not currently white's chess turn (i.e., AI is to move), or AI is
+        #   still thinking (cpu_wait), disallow starting a new turn.
+        if getattr(game, 'turn_active', False):
+            game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
+            try:
+                notice_msg = "既にターンが開始されています。カードや駒の操作を行ってください。"
+                notice_until = _ct_time.time() + 1.0
+            except Exception:
+                pass
+            return
+        if chess_current_turn != 'white' or cpu_wait:
+            game.log.append("チェスの操作またはAIの処理が完了していないため、ターンを開始できません。")
+            try:
+                notice_msg = "チェスの操作またはAIの処理が完了していないため、ターンを開始できません。"
+                notice_until = _ct_time.time() + 1.0
+            except Exception:
+                pass
+            return
+
+        # All clear: start the player's card-game turn and show telop
         game.start_turn()
-        # ターン開始時に中央テロップを1秒表示する
         try:
             global turn_telop_msg, turn_telop_until
             turn_telop_msg = "YOUR TURN"
@@ -1824,7 +1872,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand, notice_msg, notice_until
     
     # ゲーム終了画面のボタン処理
     if game_over:
@@ -1907,6 +1955,16 @@ def handle_mouse_click(pos):
     # カードのクリック判定（優先）
     for rect, idx in card_rects:
         if rect.collidepoint(pos):
+            # If turn not started, block card interaction and show telop+log
+            if not getattr(game, 'turn_active', False):
+                msg = "ターンが開始されていませんTキーでターンを開始してください"
+                game.log.append(msg)
+                try:
+                    notice_msg = msg
+                    notice_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
+                return
             # toggle
             if enlarged_card_index == idx:
                 enlarged_card_index = None
@@ -1955,7 +2013,13 @@ def handle_mouse_click(pos):
         # The card system requires the player to press [T] to start the turn; until
         # then chess pieces should not be movable.
         if not getattr(game, 'turn_active', False):
-            game.log.append("ターンが開始していません。[T]で開始してください。")
+            msg = "ターンが開始されていませんTキーでターンを開始してください"
+            game.log.append(msg)
+            try:
+                notice_msg = msg
+                notice_until = _ct_time.time() + 1.0
+            except Exception:
+                pass
             return
         col = (pos[0] - board_left) // square_w
         row = (pos[1] - board_top) // square_h

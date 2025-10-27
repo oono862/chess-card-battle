@@ -2158,8 +2158,40 @@ def handle_mouse_click(pos):
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:
-                # select another own piece or cancel
-                if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
+                # select another own piece, toggle deselect if clicking the same piece, or cancel
+                def _same_piece(a, b):
+                    if a is None or b is None:
+                        return False
+                    try:
+                        if a is b:
+                            return True
+                    except Exception:
+                        pass
+                    # compare core attributes for object- or dict-style pieces
+                    try:
+                        ar = getattr(a, 'row', None); ac = getattr(a, 'col', None)
+                        an = getattr(a, 'name', None); acol = getattr(a, 'color', None)
+                    except Exception:
+                        ar = a.get('row') if isinstance(a, dict) else None
+                        ac = a.get('col') if isinstance(a, dict) else None
+                        an = a.get('name') if isinstance(a, dict) else None
+                        acol = a.get('color') if isinstance(a, dict) else None
+                    try:
+                        br = getattr(b, 'row', None); bc = getattr(b, 'col', None)
+                        bn = getattr(b, 'name', None); bcol = getattr(b, 'color', None)
+                    except Exception:
+                        br = b.get('row') if isinstance(b, dict) else None
+                        bc = b.get('col') if isinstance(b, dict) else None
+                        bn = b.get('name') if isinstance(b, dict) else None
+                        bcol = b.get('color') if isinstance(b, dict) else None
+                    return ar == br and ac == bc and an == bn and acol == bcol
+
+                if clicked and _same_piece(clicked, selected_piece):
+                    # clicking the already-selected piece -> deselect
+                    selected_piece = None
+                    highlight_squares = []
+                elif clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
+                    # select the newly clicked own piece
                     selected_piece = clicked
                     highlight_squares = get_valid_moves(clicked)
                 else:

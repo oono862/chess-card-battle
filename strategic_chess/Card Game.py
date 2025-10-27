@@ -8,7 +8,7 @@ try:
     from .card_core import new_game_with_sample_deck, new_game_with_rule_deck
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck
+    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
@@ -32,6 +32,18 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 # ゲーム状態
 # ルール表のカードを試したい場合は下を使う
 game = new_game_with_rule_deck()
+# --- AI 用のカードプレイヤー状態を作る ---
+ai_player = PlayerState(deck=make_rule_cards_deck())
+# 初期 PP と手札を配る（簡易）
+ai_player.reset_pp()
+for _ in range(4):
+    c = ai_player.deck.draw()
+    if c is not None:
+        ai_player.hand.add(c)
+# AI 用のギミックフラグ
+ai_next_move_can_jump = False
+ai_extra_moves_this_turn = 0
+ai_consecutive_turns = 0
 show_grave = False
 show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
@@ -88,17 +100,30 @@ UI側で持つ状態のみここに保持し、ルールや盤面状態（pieces
 selected_piece = None  # 選択中の駒（dict）
 highlight_squares = []  # ハイライトする移動先座標のリスト
 chess_current_turn = 'white'
+import time as _ct_time
+# 初期ターン表示
+try:
+    turn_telop_msg = "YOUR TURN"
+    turn_telop_until = _ct_time.time() + 1.0
+except Exception:
+    turn_telop_msg = None
+    turn_telop_until = 0.0
 game_over = False      # ゲームが終わったかどうか
 game_over_winner = None # 勝者（まだ決まっていない）
 
 # AI thinking/display settings
+# AI thinking/display settings
 THINKING_ENABLED = True
-AI_THINK_DELAY = 0.5
+# ユーザー要望によりデフォルトを2.0秒に延長
+AI_THINK_DELAY = 1.7
 THINK_DOT_FREQ = 4.0
 
 # CPU waiting state
 cpu_wait = False
 cpu_wait_start = 0.0
+# ターン切替用テロップ（中央表示）
+turn_telop_msg = None
+turn_telop_until = 0.0
 
 # --- Debug setup helpers (F1-F4) for quick rule testing ---
 def debug_setup_castling():
@@ -614,11 +639,139 @@ def ai_make_move():
     # AI difficulty-aware move selection (black)
     import random
     global CPU_DIFFICULTY
+    global ai_player, ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
+
+    # --- AI: consider playing a card before moving ---
+    def ai_consider_play_card():
+        # decide whether to attempt a card play based on difficulty
+        probs = {1: 0.08, 2: 0.18, 3: 0.45, 4: 0.7}
+        p_play = probs.get(CPU_DIFFICULTY, 0.18)
+        if not ai_player.hand.cards:
+            return False
+        if random.random() > p_play:
+            return False
+
+        # collect playable indices
+        playable = [i for i, c in enumerate(ai_player.hand.cards) if c.can_play(ai_player)]
+        if not playable:
+            return False
+
+        # heuristic: prefer disruptive cards
+        names = [ai_player.hand.cards[i].name for i in playable]
+        # ranking order
+        prefer = ['氷結', '灼熱', '暴風', '迅雷', '2ドロー', '錬成']
+        chosen_idx = None
+        for pref in prefer:
+            if pref in names:
+                chosen_idx = playable[names.index(pref)]
+                break
+        if chosen_idx is None:
+            chosen_idx = random.choice(playable)
+
+        card = ai_player.hand.remove_at(chosen_idx)
+        if not card:
+            return False
+        # pay PP
+        if not ai_player.spend_pp(card.cost):
+            # cannot pay, return card to hand
+            ai_player.hand.add(card)
+            return False
+
+        # apply simplified effects directly (auto-targeting)
+        nm = card.name
+        if nm == '灼熱':
+            # block a square near white's highest-value piece
+            target = None
+            best_val = -1
+            vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+            for wp in chess.pieces:
+                if getattr(wp, 'color', None) == 'white':
+                    v = vals.get(getattr(wp, 'name', ''), 0)
+                    if v > best_val:
+                        best_val = v
+                        target = wp
+            if target:
+                tr, tc = target.row, target.col
+                # choose a neighboring empty square if possible
+                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
+                    nr, nc = tr+dr, tc+dc
+                    if 0<=nr<8 and 0<=nc<8 and chess.get_piece_at(nr,nc) is None:
+                        game.blocked_tiles[(nr,nc)] = 2
+                        game.blocked_tiles_owner[(nr,nc)] = 'black'
+                        game.log.append(f"AI: 灼熱でマス {(nr,nc)} を封鎖しました。")
+                        break
+        elif nm == '氷結':
+            # freeze highest-value white piece for 1 turn
+            target = None
+            best_val = -1
+            vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+            for wp in chess.pieces:
+                if getattr(wp, 'color', None) == 'white':
+                    v = vals.get(getattr(wp,'name',''),0)
+                    if v > best_val and id(wp) not in game.frozen_pieces:
+                        best_val = v
+                        target = wp
+            if target:
+                game.frozen_pieces[id(target)] = 1
+                game.log.append(f"AI: 氷結で {target.name} を凍結しました。")
+        elif nm == '暴風':
+            ai_next_move_can_jump = True
+            game.log.append("AI: 暴風を使用、次の移動で1駒飛び越え可能。")
+        elif nm == '迅雷':
+            ai_consecutive_turns = max(ai_consecutive_turns, 1)
+            game.log.append("AI: 迅雷を使用、連続ターンを獲得しました。")
+        elif nm == '2ドロー':
+            for _ in range(2):
+                c = ai_player.deck.draw()
+                if c:
+                    ai_player.hand.add(c)
+            game.log.append("AI: 2ドローを使用しました。")
+        elif nm == '錬成':
+            # draw 1 and discard random if over hand limit
+            c = ai_player.deck.draw()
+            if c:
+                ai_player.hand.add(c)
+            if ai_player.hand.cards:
+                ai_player.hand.remove_at(random.randrange(len(ai_player.hand.cards)))
+            game.log.append("AI: 錬成を使用しました。")
+        else:
+            # fallback: do nothing special
+            game.log.append(f"AI: {nm} を使用しました（効果は簡略適用）。")
+
+        # move card to graveyard
+        ai_player.graveyard.append(card)
+        return True
+
+    # attempt to play a card (may mutate ai state)
+    try:
+        ai_consider_play_card()
+    except Exception:
+        pass
     candidates = []  # list of (piece, move)
     for p in chess.pieces:
         if p.color != 'black':
             continue
+        # skip frozen pieces
+        if id(p) in getattr(game, 'frozen_pieces', {}):
+            continue
         v = p.get_valid_moves(chess.pieces)
+        # if AI has jump ability this move, add jump destinations
+        if ai_next_move_can_jump:
+            extra_moves = []
+            for mv in v:
+                # normal move already present
+                extra_moves.append(mv)
+            # consider jump: for each direction, if adjacent occupied and next square empty, allow jump
+            dirs = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]
+            for dr, dc in dirs:
+                nr = p.row + dr
+                nc = p.col + dc
+                jr = p.row + dr*2
+                jc = p.col + dc*2
+                if 0<=nr<8 and 0<=nc<8 and 0<=jr<8 and 0<=jc<8:
+                    if chess.get_piece_at(nr,nc) is not None and chess.get_piece_at(jr,jc) is None:
+                        extra_moves.append((jr,jc))
+            v = extra_moves
         for mv in v:
             candidates.append((p, mv))
 
@@ -675,6 +828,13 @@ def ai_make_move():
     p, mv = sel
     apply_move(p, mv[0], mv[1])
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
+    # consume AI jump flag or extra moves
+    try:
+        if ai_next_move_can_jump:
+            # consumed for one move
+            ai_next_move_can_jump = False
+    except Exception:
+        pass
 
 # initialize pieces (module already initializes on import)
 
@@ -777,16 +937,15 @@ def draw_panel():
     
     # PP
     draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
-    # 簡易エフェクト表示: 次の移動でジャンプ/追加行動がある場合に左パネルへ表示
-    if getattr(game.player, 'next_move_can_jump', False):
-        info_y += 6
-        draw_text(screen, "[効果] 次の移動でジャンプ可能", info_x, info_y, (10, 40, 180))
-        info_y += line_height - 6
-    if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
-        info_y += 6
-        draw_text(screen, f"[効果] 追加行動: {game.player.extra_moves_this_turn}", info_x, info_y, (10, 120, 10))
-        info_y += line_height - 6
     info_y += line_height
+    # 簡易エフェクト表示: 次の移動でジャンプ/追加行動がある場合に左パネルへ表示
+    # Draw each effect on its own full line to avoid overlapping with other telops
+    if getattr(game.player, 'next_move_can_jump', False):
+        draw_text(screen, "[効果] 次の移動でジャンプ可能", info_x, info_y, (10, 40, 180))
+        info_y += line_height
+    if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
+        draw_text(screen, f"[効果] 追加行動: {game.player.extra_moves_this_turn}", info_x, info_y, (10, 120, 10))
+        info_y += line_height
     
     # 山札
     draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90))
@@ -900,6 +1059,25 @@ def draw_panel():
     except Exception:
         pass
 
+    # --- ターン表示テロップ（中央・1秒表示） ---
+    try:
+        if turn_telop_msg and _ct_time.time() < turn_telop_until:
+            # 中央に大きめのテキストを表示（ボード内に表示）
+            bs = board_size
+            bx = board_left
+            by = board_top
+            telop_font_size = max(28, bs // 8)
+            telop_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", telop_font_size, bold=True)
+            telop_surf = telop_font.render(turn_telop_msg, True, (255, 255, 255))
+            # drop shadow
+            shadow = telop_font.render(turn_telop_msg, True, (0, 0, 0))
+            tx = bx + (bs - telop_surf.get_width()) // 2
+            ty = by + (bs - telop_surf.get_height()) // 2
+            screen.blit(shadow, (tx + 2, ty + 2))
+            screen.blit(telop_surf, (tx, ty))
+    except Exception:
+        pass
+
     try:
         for p in chess.pieces:
             if id(p) in getattr(game, 'frozen_pieces', {}):
@@ -982,6 +1160,9 @@ def draw_panel():
     right_x = board_left + 8 * square_w
     pygame.draw.rect(screen, (20,20,20), (left_x-3, board_top, 6, 8 * square_h))
     pygame.draw.rect(screen, (20,20,20), (right_x-3, board_top, 6, 8 * square_h))
+    # 盤面の上下にも太めの黒線を描画（上端・下端）
+    pygame.draw.rect(screen, (20,20,20), (board_left, board_top-3, 8 * square_w, 6))
+    pygame.draw.rect(screen, (20,20,20), (board_left, board_top + 8 * square_h - 3, 8 * square_w, 6))
     
     # === チェック中の表示（Chess Main準拠）===
     if not game_over:
@@ -1516,6 +1697,13 @@ def handle_keydown(key):
             game.log.append("操作待ち: 先に保留中の選択を完了してください。")
             return
         game.start_turn()
+        # ターン開始時に中央テロップを1秒表示する
+        try:
+            global turn_telop_msg, turn_telop_until
+            turn_telop_msg = "YOUR TURN"
+            turn_telop_until = _ct_time.time() + 1.0
+        except Exception:
+            pass
         log_scroll_offset = 0  # 新しいターンで最新ログへ
         return
     
@@ -1882,8 +2070,20 @@ def handle_mouse_click(pos):
                         game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
                     else:
                         chess_current_turn = 'black'
+                        # AIターン開始テロップを1秒表示
+                        try:
+                            turn_telop_msg = "ENEMY TURN"
+                            turn_telop_until = _ct_time.time() + 1.0
+                        except Exception:
+                            pass
                 else:
                     chess_current_turn = 'white'
+                    # プレイヤーターン開始テロップを1秒表示
+                    try:
+                        turn_telop_msg = "YOUR TURN"
+                        turn_telop_until = _ct_time.time() + 1.0
+                    except Exception:
+                        pass
                 # クリア
                 selected_piece = None
                 highlight_squares = []
@@ -2019,6 +2219,12 @@ def main_loop():
                 cpu_wait = False
                 # restore player turn
                 chess_current_turn = 'white'
+                # プレイヤーターン開始テロップを1秒表示
+                try:
+                    turn_telop_msg = "YOUR TURN"
+                    turn_telop_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
                 # Apply decay for time-limited card effects now that the opponent's turn finished.
                 # Do NOT automatically start the player's card-game turn; the player must press [T]
                 # to start their own turn. This keeps chess movement locked until the player

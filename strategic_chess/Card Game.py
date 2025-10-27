@@ -1289,9 +1289,9 @@ def draw_panel():
         if game.pending.kind == 'discard':
             instruction_text = "手札から捨てるカードを選択: [1-7]で選択 → [D]で確定"
         elif game.pending.kind == 'target_tile':
-            instruction_text = "封鎖するマスを選択してください（未実装）"
+            instruction_text = "封鎖するマスを選択してください"
         elif game.pending.kind == 'target_piece':
-            instruction_text = "凍結する相手コマを選択してください（未実装）"
+            instruction_text = "凍結する相手コマを選択してください"
         else:
             instruction_text = "選択を完了してください"
         

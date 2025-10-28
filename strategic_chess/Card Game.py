@@ -490,8 +490,147 @@ def on_board(r,c):
 def simulate_move(src_piece, to_r, to_c):
     return chess.simulate_move(src_piece, to_r, to_c)
 
+def is_in_check_for_display(pcs, color):
+    """
+    表示用のチェック判定。
+    - 凍結は無視（表示は出す）
+    - ルールの合法手生成に依存せず、幾何学的な“攻撃”で判定する
+      （駒の種類ごとの攻撃方向・到達可能マスでキングが射程内かを見る）
+    """
+    # キング位置
+    king = None
+    for p in pcs:
+        try:
+            if p.name == 'K' and p.color == color:
+                king = p
+                break
+        except Exception:
+            if isinstance(p, dict) and p.get('name') == 'K' and p.get('color') == color:
+                king = p
+                break
+    if not king:
+        return False
+
+    # 安全な属性/辞書アクセス
+    def _pget(obj, key):
+        try:
+            return getattr(obj, key)
+        except Exception:
+            try:
+                return obj.get(key)
+            except Exception:
+                return None
+
+    kr = _pget(king, 'row')
+    kc = _pget(king, 'col')
+
+    opponent = 'black' if color == 'white' else 'white'
+
+    # 盤上の駒を取得する関数
+    def piece_at(r, c):
+        try:
+            return chess.get_piece_at(r, c)
+        except Exception:
+            # フォールバック（pcsを走査）
+            for q in pcs:
+                rr = _pget(q, 'row')
+                cc = _pget(q, 'col')
+                if rr == r and cc == c:
+                    return q
+            return None
+
+    # 1) ナイトの攻撃
+    for dr, dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
+        pr, pc = kr + dr, kc + dc
+        p = piece_at(pr, pc)
+        if p and _pget(p, 'color') == opponent and _pget(p, 'name') == 'N':
+            return True
+
+    # 2) ポーンの攻撃
+    pawn_dirs = [(-1, -1), (-1, 1)] if opponent == 'white' else [(1, -1), (1, 1)]
+    for dr, dc in pawn_dirs:
+        pr, pc = kr + dr, kc + dc
+        p = piece_at(pr, pc)
+        if p and _pget(p, 'color') == opponent and _pget(p, 'name') == 'P':
+            return True
+
+    # 3) キングの隣接攻撃
+    for dr in (-1,0,1):
+        for dc in (-1,0,1):
+            if dr == 0 and dc == 0:
+                continue
+            pr, pc = kr + dr, kc + dc
+            p = piece_at(pr, pc)
+            if p and _pget(p, 'color') == opponent and _pget(p, 'name') == 'K':
+                return True
+
+    # 4) 直線・斜めのレイ（R/B/Q）
+    ray_dirs = [
+        (-1,0),(1,0),(0,-1),(0,1),   # R, Q
+        (-1,-1),(-1,1),(1,-1),(1,1)  # B, Q
+    ]
+    for dr, dc in ray_dirs:
+        pr, pc = kr + dr, kc + dc
+        while 0 <= pr < 8 and 0 <= pc < 8:
+            p = piece_at(pr, pc)
+            if p is None:
+                pr += dr
+                pc += dc
+                continue
+            pcol = _pget(p, 'color')
+            pname = _pget(p, 'name')
+            if pcol != opponent:
+                break
+            # この方向に応じて当たり判定
+            if dr == 0 or dc == 0:  # 縦横
+                if pname in ('R', 'Q'):
+                    return True
+            if dr != 0 and dc != 0:  # 斜め
+                if pname in ('B', 'Q'):
+                    return True
+            break
+
+    return False
+
 def is_in_check(pcs, color):
-    return chess.is_in_check(pcs, color)
+    """
+    ゲームルール用のチェック判定。
+    凍結されている駒は動けないため、その駒からの攻撃は無視する。
+    """
+    # find king of color
+    king = None
+    for p in pcs:
+        if (hasattr(p, 'name') and p.name == 'K' and p.color == color) or \
+           (isinstance(p, dict) and p.get('name') == 'K' and p.get('color') == color):
+            king = p
+            break
+    if not king:
+        return False
+    
+    king_row = king.row if hasattr(king, 'row') else king.get('row')
+    king_col = king.col if hasattr(king, 'col') else king.get('col')
+    king_pos = (king_row, king_col)
+    opponent = 'black' if color == 'white' else 'white'
+    
+    frozen = getattr(game, 'frozen_pieces', {})
+    
+    for p in pcs:
+        p_color = p.color if hasattr(p, 'color') else p.get('color')
+        if p_color == opponent:
+            # 凍結されている駒は攻撃できないため、チェック判定から除外
+            if id(p) in frozen and frozen[id(p)] > 0:
+                continue
+            
+            # この駒の有効手を取得(ignore_castling=Trueで高速化)
+            if hasattr(p, 'get_valid_moves'):
+                m = p.get_valid_moves(pcs, ignore_castling=True)
+            else:
+                # dict形式の場合はスキップ(通常はPieceオブジェクト)
+                continue
+                
+            if king_pos in m:
+                return True
+    return False
 
 def get_valid_moves(piece, pcs=None, ignore_check=False):
     # pcs: list of piece dicts; if None, use global pieces
@@ -535,13 +674,28 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
 
     if name == 'P':
         dir = -1 if color == 'white' else 1
-        # forward
-        if on_board(r+dir, c) and not occupied(r+dir,c) and not is_blocked_tile(r+dir, c, color):
-            moves.append((r+dir,c))
-            # double from starting rank
-            start_row = 6 if color == 'white' else 1
-            if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c) and not is_blocked_tile(r+2*dir, c, color):
-                moves.append((r+2*dir,c))
+        # storm jump for pawn: if next_move_can_jump and front square is blocked, jump over it
+        try:
+            can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+        except Exception:
+            can_jump = False
+        
+        # Check if storm jump applies (front square occupied)
+        front_occupied = on_board(r+dir, c) and occupied(r+dir, c)
+        
+        if can_jump and front_occupied:
+            # Jump over the front piece to 2 squares ahead (can capture enemy there)
+            nr2 = r + 2*dir
+            if on_board(nr2, c) and not occupied_by_color(nr2, c, color) and not is_blocked_tile(nr2, c, color):
+                moves.append((nr2, c))
+        else:
+            # Normal forward movement (only if front is NOT occupied or storm not active)
+            if on_board(r+dir, c) and not occupied(r+dir,c) and not is_blocked_tile(r+dir, c, color):
+                moves.append((r+dir,c))
+                # double from starting rank
+                start_row = 6 if color == 'white' else 1
+                if r==start_row and on_board(r+2*dir,c) and not occupied(r+2*dir,c) and not is_blocked_tile(r+2*dir, c, color):
+                    moves.append((r+2*dir,c))
         # captures
         for dc in (-1,1):
             nr,nc = r+dir, c+dc
@@ -754,27 +908,8 @@ def ai_make_move():
     for p in chess.pieces:
         if p.color != 'black':
             continue
-        # skip frozen pieces
-        if id(p) in getattr(game, 'frozen_pieces', {}):
-            continue
-        v = p.get_valid_moves(chess.pieces)
-        # if AI has jump ability this move, add jump destinations
-        if ai_next_move_can_jump:
-            extra_moves = []
-            for mv in v:
-                # normal move already present
-                extra_moves.append(mv)
-            # consider jump: for each direction, if adjacent occupied and next square empty, allow jump
-            dirs = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]
-            for dr, dc in dirs:
-                nr = p.row + dr
-                nc = p.col + dc
-                jr = p.row + dr*2
-                jc = p.col + dc*2
-                if 0<=nr<8 and 0<=nc<8 and 0<=jr<8 and 0<=jc<8:
-                    if chess.get_piece_at(nr,nc) is not None and chess.get_piece_at(jr,jc) is None:
-                        extra_moves.append((jr,jc))
-            v = extra_moves
+        # Use wrapper to respect freeze/blocked tiles; ignore self-check here and handle per difficulty
+        v = get_valid_moves(p, ignore_check=True)
         for mv in v:
             candidates.append((p, mv))
 
@@ -790,8 +925,8 @@ def ai_make_move():
     elif CPU_DIFFICULTY == 2:
         safe = []
         for p, mv in candidates:
-            newp = chess.simulate_move(p, mv[0], mv[1])
-            if not chess.is_in_check(newp, 'black'):
+            newp = simulate_move(p, mv[0], mv[1])
+            if not is_in_check(newp, 'black'):
                 safe.append((p, mv))
         sel = random.choice(safe) if safe else random.choice(candidates)
 
@@ -816,8 +951,8 @@ def ai_make_move():
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
         for p, mv in candidates:
-            newp = chess.simulate_move(p, mv[0], mv[1])
-            if chess.is_in_check(newp, 'black'):
+            newp = simulate_move(p, mv[0], mv[1])
+            if is_in_check(newp, 'black'):
                 continue
             tgt = chess.get_piece_at(mv[0], mv[1])
             score = values.get(tgt.name,0) if tgt else 0
@@ -945,10 +1080,14 @@ def draw_panel():
     # Draw each effect on its own full line to avoid overlapping with other telops
     if getattr(game.player, 'next_move_can_jump', False):
         draw_text(screen, "[効果] 次の移動でジャンプ可能", info_x, info_y, (10, 40, 180))
-        info_y += line_height
-    if getattr(game.player, 'extra_moves_this_turn', 0) > 0:
-        draw_text(screen, f"[効果] 追加行動: {game.player.extra_moves_this_turn}", info_x, info_y, (10, 120, 10))
-        info_y += line_height
+        info_y += line_height - 6
+    # 迅雷効果の表示（player_consecutive_turnsを使用）
+    consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
+    if consecutive_turns > 0:
+        info_y += 6
+        draw_text(screen, f"[効果] 追加行動: {consecutive_turns}", info_x, info_y, (10, 120, 10))
+        info_y += line_height - 6
+    info_y += line_height
     
     # 山札
     draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90))
@@ -1151,7 +1290,7 @@ def draw_panel():
                 if any(p.name == 'K' and p.color == next_turn for p in temp_pieces):
                     # has_legal_moves_forはグローバルpiecesを使うので、一時的に使えない
                     # 代わりに手動で判定
-                    is_mate = chess.is_in_check(temp_pieces, next_turn)
+                    is_mate = is_in_check(temp_pieces, next_turn)
                     if is_mate:
                         # 相手に合法手があるか簡易チェック
                         has_moves = False
@@ -1159,8 +1298,8 @@ def draw_panel():
                             if tp.color == next_turn:
                                 moves = tp.get_valid_moves(temp_pieces)
                                 for mv in moves:
-                                    test = chess.simulate_move(tp, mv[0], mv[1])
-                                    if not chess.is_in_check(test, next_turn):
+                                    test = simulate_move(tp, mv[0], mv[1])
+                                    if not is_in_check(test, next_turn):
                                         has_moves = True
                                         break
                             if has_moves:
@@ -1193,9 +1332,10 @@ def draw_panel():
     # === チェック中の表示（Chess Main準拠）===
     if not game_over:
         check_colors = []
-        if chess.is_in_check(chess.pieces, 'white'):
+        # 表示用には凍結駒も含めた全ての脅威を表示
+        if is_in_check_for_display(chess.pieces, 'white'):
             check_colors.append('white')
-        if chess.is_in_check(chess.pieces, 'black'):
+        if is_in_check_for_display(chess.pieces, 'black'):
             check_colors.append('black')
         
         if check_colors:
@@ -1255,7 +1395,9 @@ def draw_panel():
 
         # スクロールオフセットの範囲制限
         global log_scroll_offset
-        max_lines_visible = (log_panel_height - 50) // 22
+        # 下部に余白を設けて見やすくする（最後の行が枠にくっつかないように）
+        bottom_padding_px = 28  # ここを調整すると余白サイズを変更できます
+        max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // 22)
         max_scroll = max(0, len(wrapped_lines) - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
 
@@ -1270,7 +1412,7 @@ def draw_panel():
         # ログ描画開始位置（見出しとヒントの下）
         log_y = log_panel_top + 56
         for wline in visible_lines:
-            if log_y < log_panel_top + log_panel_height - 10:
+            if log_y < log_panel_top + log_panel_height - bottom_padding_px:
                 draw_text(screen, wline, log_panel_left + 10, log_y, (60, 60, 60))
                 log_y += 22
 
@@ -1364,7 +1506,9 @@ def draw_panel():
     state_y += 20
     draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))
     state_y += 20
-    draw_text(screen, f"追加行動: {game.player.extra_moves_this_turn}", state_x, state_y, (80, 80, 80))
+    # 迅雷効果の表示（player_consecutive_turnsを使用）
+    consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
+    draw_text(screen, f"追加行動: {consecutive_turns}", state_x, state_y, (80, 80, 80))
     state_y += 20
     if game.player.next_move_can_jump:
         draw_text(screen, "次: 飛越可", state_x, state_y, (0, 120, 0))
@@ -1826,6 +1970,44 @@ def handle_keydown(key):
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。墓地が空のため効果なし。PPは{game.player.pp_current}/{game.player.pp_max}。")
                 else:
                     game.log.append("確認: はい → 効果なし（墓地が空）")
+            elif confirm_id == 'confirm_second_lightning_overwrite':
+                # 迅雷2回目使用の確認「はい」→通常通り効果を適用してカード消費
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    # PP消費、手札から削除
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    # 効果適用（上書きだが明示的に実行）
+                    try:
+                        msg = card.effect(game, game.player)
+                    except Exception:
+                        msg = "効果の適用に失敗しました。"
+                    # 墓地へ
+                    game.player.graveyard.append(card)
+                    # ログ
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい")
+            elif confirm_id == 'confirm_second_storm_overwrite':
+                # 暴風2回目使用の確認「はい」→通常通り効果を適用してカード消費
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    # PP消費、手札から削除
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    # 効果適用（上書きだが明示的に実行）
+                    try:
+                        msg = card.effect(game, game.player)
+                    except Exception:
+                        msg = "効果の適用に失敗しました。"
+                    # 墓地へ
+                    game.player.graveyard.append(card)
+                    # ログ
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい")
             else:
                 # その他の確認（通常の墓地ルーレット実行など）
                 game.log.append("確認: はい")
@@ -1904,6 +2086,44 @@ def handle_mouse_click(pos):
                     game.player.hand.remove_at(hand_idx)
                     game.player.graveyard.append(card)
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。墓地が空のため効果なし。PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい")
+            elif confirm_id == 'confirm_second_lightning_overwrite':
+                # 迅雷2回目使用の確認「はい」→通常通り効果を適用してカード消費
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    # PP消費、手札から削除
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    # 効果適用（上書きだが明示的に実行）
+                    try:
+                        msg = card.effect(game, game.player)
+                    except Exception:
+                        msg = "効果の適用に失敗しました。"
+                    # 墓地へ
+                    game.player.graveyard.append(card)
+                    # ログ
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい")
+            elif confirm_id == 'confirm_second_storm_overwrite':
+                # 暴風2回目使用の確認「はい」→通常通り効果を適用してカード消費
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    # PP消費、手札から削除
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    # 効果適用（上書きだが明示的に実行）
+                    try:
+                        msg = card.effect(game, game.player)
+                    except Exception:
+                        msg = "効果の適用に失敗しました。"
+                    # 墓地へ
+                    game.player.graveyard.append(card)
+                    # ログ
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
                 else:
                     game.log.append("確認: はい")
             else:
@@ -2096,6 +2316,13 @@ def handle_mouse_click(pos):
                         return
                 # Apply the move
                 apply_move(selected_piece, row, col)
+                # Consume storm jump effect after the player's next move (whether used or not)
+                try:
+                    if getattr(game.player, 'next_move_can_jump', False):
+                        game.player.next_move_can_jump = False
+                        game.log.append("暴風効果: 次の移動でのジャンプ可能を消費しました。")
+                except Exception:
+                    pass
                 # If it was player's move, consume extra move or mark moved
                 if chess_current_turn == 'white' and getattr(game, 'turn_active', False):
                     try:
@@ -2134,18 +2361,18 @@ def handle_mouse_click(pos):
                         game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
                     else:
                         chess_current_turn = 'black'
-                        # AIターン開始テロップを1秒表示
+                        # 白の手番終了後、黒キングがチェック状態か確認（表示用なので凍結駒も含む）
                         try:
-                            turn_telop_msg = "ENEMY TURN"
-                            turn_telop_until = _ct_time.time() + 1.0
+                            if is_in_check_for_display(chess.pieces, 'black'):
+                                game.log.append("⚠ 黒キングがチェック状態です！")
                         except Exception:
                             pass
                 else:
                     chess_current_turn = 'white'
-                    # プレイヤーターン開始テロップを1秒表示
+                    # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
                     try:
-                        turn_telop_msg = "YOUR TURN"
-                        turn_telop_until = _ct_time.time() + 1.0
+                        if is_in_check_for_display(chess.pieces, 'white'):
+                            game.log.append("⚠ 白キングがチェック状態です！")
                     except Exception:
                         pass
                 # クリア
@@ -2283,16 +2510,16 @@ def main_loop():
                 game_over_winner = 'white'
                 game.log.append("黒のキングが捕獲されました！白の勝利！")
             # どちらかが詰みの場合も勝利判定
-            elif not chess.has_legal_moves_for('white') and chess.is_in_check(chess.pieces, 'white'):
+            elif not chess.has_legal_moves_for('white') and is_in_check(chess.pieces, 'white'):
                 game_over = True
                 game_over_winner = 'black'
                 game.log.append("白がチェックメイト！黒の勝利！")
-            elif not chess.has_legal_moves_for('black') and chess.is_in_check(chess.pieces, 'black'):
+            elif not chess.has_legal_moves_for('black') and is_in_check(chess.pieces, 'black'):
                 game_over = True
                 game_over_winner = 'white'
                 game.log.append("黒がチェックメイト！白の勝利！")
             # ステイルメイト（合法手がないがチェックでない）の判定
-            elif not chess.has_legal_moves_for(chess_current_turn) and not chess.is_in_check(chess.pieces, chess_current_turn):
+            elif not chess.has_legal_moves_for(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
                 game_over = True
                 game_over_winner = 'draw'
                 game.log.append("ステイルメイト（引き分け）")

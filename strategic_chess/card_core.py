@@ -243,6 +243,34 @@ class Game:
                 },
             )
             return True, "確認待ち"
+
+        # 迅雷: 2回目以降の使用は上書きで追加ターン数が増えないため、警告を出す（カード未消費）
+        if card.name == "迅雷" and getattr(self, 'player_consecutive_turns', 0) >= 1:
+            self.pending = PendingAction(
+                kind="confirm",
+                info={
+                    "id": "confirm_second_lightning_overwrite",
+                    "message": "すでに『迅雷』は使用しています。\n再度使用しても何も起きません。\nそれでも使用しますか？",
+                    "yes_label": "はい(Y)",
+                    "no_label": "いいえ(N)",
+                    "hand_index": hand_index,
+                },
+            )
+            return True, "確認待ち"
+
+        # 暴風: 2回目以降の使用は上書きで効果が増えないため、警告を出す（カード未消費）
+        if card.name == "暴風" and getattr(self.player, 'next_move_can_jump', False):
+            self.pending = PendingAction(
+                kind="confirm",
+                info={
+                    "id": "confirm_second_storm_overwrite",
+                    "message": "すでに『暴風』の効果が有効です。\n再度使用しても効果を上書きするだけです。\nそれでも使用しますか？",
+                    "yes_label": "はい(Y)",
+                    "no_label": "いいえ(N)",
+                    "hand_index": hand_index,
+                },
+            )
+            return True, "確認待ち"
         
         # Optional precheck (e.g., cannot play if graveyard empty)
         if card.precheck is not None:

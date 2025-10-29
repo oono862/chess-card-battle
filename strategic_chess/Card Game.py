@@ -230,12 +230,12 @@ def create_pieces():
     return chess.create_pieces()
 
 
-def show_start_screen(screen):
+def show_start_screen():
     """起動時に難易度を選択する簡易メニュー。
     1-4 のキーか、画面上のボタンで選択可能。選択はグローバル CPU_DIFFICULTY に保存される。
     """
     # 選択結果をグローバルに反映
-    global CPU_DIFFICULTY
+    global CPU_DIFFICULTY, W, H, screen
     # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
     user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"
@@ -254,24 +254,41 @@ def show_start_screen(screen):
 
     # normalize names and prepare UI metrics/fonts used below
     bg = bg_surf
-    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
-    btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
-    options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
-    # ボタン幅を広げてテキストが見切れないようにする
-    btn_w = 240
-    btn_h = 80
-    # use larger horizontal spacing between buttons to match screenshot
-    spacing = 20
-    total_h = len(options) * btn_h + (len(options) - 1) * spacing
-    # place title near top and move buttons further down to create generous whitespace like reference
-    title_y = int(H * 0.08)
-    # create a larger vertical gap between title and buttons per user request
-    start_y = title_y + title_font.get_height() + 240
+    # keep the original loaded image (if any) for rescaling on resize
+    bg_img = locals().get('img', None)
 
     while True:
+        # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
+        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
+        options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
+        # ボタン幅を広げてテキストが見切れないようにする
+        btn_w = 240
+        btn_h = 80
+        # use larger horizontal spacing between buttons to match screenshot
+        spacing = 20
+        total_h = len(options) * btn_h + (len(options) - 1) * spacing
+        # place title near top and move buttons further down to create generous whitespace like reference
+        title_y = int(H * 0.08)
+        # create a larger vertical gap between title and buttons per user request
+        start_y = title_y + title_font.get_height() + 240
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
+            if event.type == pygame.VIDEORESIZE:
+                # update global window size and recreate screen surface
+                try:
+                    W, H = max(200, event.w), max(200, event.h)
+                    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                    # rescale background image if we have the original loaded image
+                    if bg_img is not None:
+                        try:
+                            bg = pygame.transform.smoothscale(bg_img, (W, H)).convert()
+                        except Exception:
+                            bg = bg_surf
+                except Exception:
+                    pass
             # keyboard selection (1-4)
             if event.type == pygame.KEYDOWN:
                 if pygame.K_1 <= event.key <= pygame.K_4:
@@ -802,6 +819,19 @@ def ai_make_move():
     global CPU_DIFFICULTY
     global ai_player, ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
 
+    # Begin AI turn: restore PP and draw 1 card (simple turn-start behavior for AI)
+    try:
+        ai_player.reset_pp()
+        # draw 1 card if available and hand limit not exceeded
+        if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
+            c = ai_player.deck.draw()
+            if c:
+                ai_player.hand.add(c)
+                game.log.append("AI: ターン開始で1枚ドローしました。")
+    except Exception:
+        # defensive: ignore if ai_player not properly initialized
+        pass
+
     # --- AI: consider playing a card before moving ---
     def ai_consider_play_card():
         # decide whether to attempt a card play based on difficulty
@@ -1060,14 +1090,65 @@ def wrap_text(text: str, max_width: int):
     return lines
 
 
+def compute_layout(win_w: int, win_h: int):
+        """Compute common layout metrics used by draw_panel and input handling.
+        Returns a dict with keys:
+            left_margin, left_panel_width, right_panel_width, right_panel_x,
+            board_left, board_top, board_size, board_area_top, board_area_height,
+            card_area_top
+        """
+        left_margin = max(12, int(win_w * 0.02))
+        # left and right side panels share similar proportional widths
+        left_panel_width = max(140, min(360, int(win_w * 0.18)))
+        right_panel_width = max(160, min(380, int(win_w * 0.18)))
+
+        board_area_top = max(12, int(win_h * 0.02))
+        inner_gap = 20
+
+        central_left = left_margin + left_panel_width + inner_gap
+        central_right = win_w - left_margin - right_panel_width - inner_gap
+        central_width = max(0, central_right - central_left)
+
+        # reserve bottom area for hand display
+        card_h = max(120, int(win_h * 0.18))
+        reserved_bottom = card_h + 80
+        avail_height = win_h - board_area_top - reserved_bottom
+
+        board_size = max(64, min(central_width, avail_height))
+        # center board within central region
+        board_left = central_left + max(0, (central_width - board_size) // 2)
+        board_top = board_area_top
+
+        right_panel_x = win_w - left_margin - right_panel_width
+
+        card_area_top = board_top + board_size + 20
+
+        return {
+                'left_margin': left_margin,
+                'left_panel_width': left_panel_width,
+                'right_panel_width': right_panel_width,
+                'right_panel_x': right_panel_x,
+                'board_left': board_left,
+                'board_top': board_top,
+                'board_size': board_size,
+                'board_area_top': board_area_top,
+                'board_area_height': board_size,
+                'card_area_top': card_area_top,
+                'central_left': central_left,
+                'central_right': central_right,
+        }
+
+
 def draw_panel():
     screen.fill((240, 240, 245))
 
     # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
-    left_panel_width = 180  # 左側の基本情報パネルの幅
-    left_margin = 20
-    top_margin = 20
-    
+    # Use shared responsive layout so left/right panels and board stay balanced
+    layout = compute_layout(W, H)
+    left_panel_width = layout['left_panel_width']
+    left_margin = layout['left_margin']
+    top_margin = layout['board_area_top']
+
     # 基本情報の配置（左側）
     info_x = left_margin
     info_y = top_margin
@@ -1119,9 +1200,9 @@ def draw_panel():
         info_y += 20
         draw_text(screen, label, info_x, info_y, (180, 60, 0))
 
-    # 右上: ヘルプ（簡潔に）
-    help_x = W - 250
-    help_y = 20
+    # 右パネル: ヘルプ（簡潔に） - use right panel x so help stays grouped
+    help_x = layout['right_panel_x'] + 12
+    help_y = layout['board_top']
     draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
     help_y += 24
     for hl in HELP_LINES:  # 全ての操作を表示
@@ -1129,24 +1210,16 @@ def draw_panel():
         help_y += 20
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
-    board_area_left = left_margin + left_panel_width + 20  # 左パネル + 余白
-    board_area_top = top_margin  # 画面上部から開始
-    # 手札エリアとの干渉を避けるため、下部の予約領域を計算
-    card_h = 140
-    reserved_bottom = card_h + 80  # hand area + margin
-    avail_height = H - board_area_top - reserved_bottom
-    # 盤面を正方形にするため、利用可能な幅と高さの小さい方を使用
-    avail_width = W - board_area_left - 20  # 右端までの余白を考慮
-    board_size = min(avail_width, avail_height)
-    # 他の箇所で参照されるため、board_area_width と board_area_height を定義
+    board_area_left = layout['central_left']
+    board_area_top = layout['board_top']
+    # board_size and position computed by compute_layout
+    board_size = layout['board_size']
     board_area_width = board_size
     board_area_height = board_size
-    
-    # チェス盤の描画（8x8）- 画面上部から直接配置（センタリングなし）
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left
-    board_top = board_area_top
+    board_left = layout['board_left']
+    board_top = layout['board_top']
     # use pale greenish theme similar to original design
     light = (235, 248, 240)
     dark = (200, 220, 200)
@@ -1444,17 +1517,21 @@ def draw_panel():
         else:
             scrollbar_rect = None
     else:
-        # ログ非表示時のヒント
-        draw_text(screen, "[L] ログ表示", W - 240, board_area_top + board_area_height - 30, (100, 100, 120))
+        # ログ非表示時のヒント (右パネルに寄せる)
+        draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
     # === 下部エリア: 手札（横並び最大7枚） ===
-    card_area_top = board_area_top + board_area_height + 20
-    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", 24, card_area_top, (40, 40, 40))
+    card_area_top = layout['card_area_top']
+    # hand header aligned to board's left
+    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
     
     card_w = 100
     card_h = 140
     card_spacing = 8
-    card_start_x = 30
+    # center up to 7 cards under the board
+    visible = min(7, len(game.player.hand.cards))
+    total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
+    card_start_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
     card_y = card_area_top + 30
     
     # カード描画とクリック判定用の矩形保存
@@ -1504,7 +1581,7 @@ def draw_panel():
 
 
     # === 状態表示（右下）===
-    state_x = W - 240
+    state_x = layout['right_panel_x'] + 12
     state_y = card_area_top + 40
     draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
     state_y += 20
@@ -2070,13 +2147,31 @@ def handle_keydown(key):
             if removed:
                 game.player.graveyard.append(removed)
                 game.log.append(f"『{removed.name}』を捨てました。")
+                # If there's an execute_after_discard instruction, perform it now
+                ex = game.pending.info.get('execute_after_discard')
+                if ex:
+                    draw_n = int(ex.get('draw', 0)) if ex.get('draw', 0) else 0
+                    if draw_n > 0:
+                        res = game.draw_to_hand(draw_n)
+                        items = []
+                        for c, added in res:
+                            if c is None:
+                                continue
+                            items.append(c.name if added else f"{c.name}(墓地)")
+                        if items:
+                            game.log.append("ドロー: " + ", ".join(items))
+                # 保留をクリア
+                game.pending = None
+                log_scroll_offset = 0  # 保留解決後は最新ログへ
+                return
             else:
                 game.log.append("捨てるカードを選択してください。")
+                # don't clear pending so player can choose again
+                return
         else:
             game.log.append("捨てるカードが選択されていません。")
-        game.pending = None
-        log_scroll_offset = 0  # 保留解決後は最新ログへ
-        return
+            # keep pending active so player can choose a card and press D
+            return
 
 
 def handle_mouse_click(pos):
@@ -2247,24 +2342,13 @@ def handle_mouse_click(pos):
                 return
 
     # 盤面クリック判定 (draw_panel と同じ配置計算を行う)
-    # レイアウト: 左側に基本情報パネル、その右にチェス盤
-    left_panel_width = 180
-    left_margin = 20
-    top_margin = 20
-    
-    board_area_left = left_margin + left_panel_width + 20
-    board_area_top = top_margin
-    card_h = 140
-    reserved_bottom = card_h + 80
-    avail_height = H - board_area_top - reserved_bottom
-    avail_width = W - board_area_left - 20
-    board_size = min(avail_width, avail_height)
-
-    # 盤面は画面上部から直接配置（センタリングなし）
+    # Use the same compute_layout helper as draw_panel so click mapping matches rendering
+    layout = compute_layout(W, H)
+    board_left = layout['board_left']
+    board_top = layout['board_top']
+    board_size = layout['board_size']
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left
-    board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
     if board_rect.collidepoint(pos) and not game_over:
@@ -2673,5 +2757,5 @@ def main_loop():
 
 if __name__ == "__main__":
     # show start screen to choose AI difficulty before starting
-    show_start_screen(screen)
+    show_start_screen()
     main_loop()

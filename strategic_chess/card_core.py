@@ -414,14 +414,15 @@ def eff_draw2(game: Game, player: PlayerState) -> str:
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:
     """錬成(0): 山札から1枚引き、その後手札から1枚選んで捨てる（保留アクション）。"""
-    res = game.draw_to_hand(1)
-    if not res or res[0][0] is None:
-        drew = "山札が空。 "
-    else:
-        c, added = res[0]
-        drew = (f"『{c.name}』をドロー。 " if added else f"手札上限のため『{c.name}』は墓地へ。 ")
-    game.pending = PendingAction(kind="discard", info={"count": 1})
-    return drew + "手札から1枚を選んで捨ててください。"
+    # New behavior: require the player to discard first; ONLY after discard is confirmed
+    # the effect draws 1 card. We capture this as an execute_after_discard instruction
+    # so the UI can perform the draw after the discard completes.
+    game.pending = PendingAction(kind="discard", info={
+        "count": 1,
+        "execute_after_discard": {"draw": 1},
+        "note": "錬成: 先に手札から1枚捨てると、その後1枚ドローします。",
+    })
+    return "錬成: まず手札から1枚を捨ててください。捨てると1枚ドローします。"
 
 
 def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:

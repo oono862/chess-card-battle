@@ -1591,10 +1591,23 @@ def draw_panel():
     # bump baseline multipliers so cards are more prominent in upscaled/fullscreen
     card_w = max(48, int(130 * scale))
     card_h = max(72, int(175 * scale))
-    card_spacing = 8
+    # increase spacing with scale so cards don't visually crowd in fullscreen
+    card_spacing = max(8, int(12 * scale))
     # center up to 7 cards under the board
     visible = min(7, len(game.player.hand.cards))
     total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
+    # If total width exceeds central content area, shrink card width (not height)
+    central_left = layout.get('central_left', layout['board_left'])
+    central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
+    avail_w = max(0, central_right - central_left - 16)
+    if total_w > avail_w and visible > 0:
+        shrink_ratio = avail_w / total_w
+        # Only shrink down to a minimum card width to avoid unreadable thumbnails
+        new_card_w = max(40, int(card_w * shrink_ratio))
+        # recompute total_w with new_card_w
+        total_w = visible * new_card_w + (visible - 1) * card_spacing
+        # use new width for layout and rendering
+        card_w = new_card_w
     # Prefer centering under the board, but clamp to the central content area so cards
     # never overlap the left/right side panels (where telops and helper text live).
     central_left = layout.get('central_left', layout['board_left'])

@@ -758,9 +758,15 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 nr,nc = r+dr*step, c+dc*step
                 if not on_board(nr,nc):
                     break
+                # If this tile is blocked for this piece's color, movement cannot pass or land here
+                if is_blocked_tile(nr, nc, color):
+                    break
+
                 if occupied(nr,nc):
                     if not occupied_by_color(nr,nc,color):
-                        moves.append((nr,nc))
+                        # Only allow capture if the tile itself is not blocked for this color
+                        if not is_blocked_tile(nr, nc, color):
+                            moves.append((nr,nc))
                     # If a card granted a single jump ability, allow jumping over one piece
                     try:
                         if color == 'white':
@@ -773,10 +779,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                         # attempt to land on the next square beyond this occupied square
                         step2 = step + 1
                         nr2, nc2 = r+dr*step2, c+dc*step2
-                        if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, color):     
+                        if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, color) and not is_blocked_tile(nr2, nc2, color):
                             moves.append((nr2, nc2))
                         # only allow a single jump; stop after
                     break
+
+                # empty and not blocked -> can move here
                 moves.append((nr,nc))
                 step += 1
     elif name == 'K':
@@ -1587,8 +1595,16 @@ def draw_panel():
     # center up to 7 cards under the board
     visible = min(7, len(game.player.hand.cards))
     total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
-    card_start_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
-    card_y = card_area_top + 30
+    # Prefer centering under the board, but clamp to the central content area so cards
+    # never overlap the left/right side panels (where telops and helper text live).
+    central_left = layout.get('central_left', layout['board_left'])
+    central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
+    preferred_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
+    min_x = central_left + 8
+    max_x = max(central_left + 8, central_right - total_w - 8)
+    card_start_x = max(min_x, min(preferred_x, max_x))
+    # vertical offset scaled so larger UI keeps cards clear of other overlays
+    card_y = card_area_top + max(20, int(30 * layout.get('scale', 1.0)))
     
     # カード描画とクリック判定用の矩形保存
     global card_rects

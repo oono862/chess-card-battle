@@ -1475,9 +1475,9 @@ def draw_panel():
             if check_colors != draw_panel.last_check_colors:
                 draw_panel.last_check_colors = check_colors.copy()
             
-            # 左パネルの下部に表示（手札の上）
+            # 左パネルの中央付近に表示（手札と被らない位置）
             check_x = left_margin + 10
-            check_y = H - 270  # 手札の上に配置
+            check_y = H // 2 - 50
             
             for idx, color in enumerate(draw_panel.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
@@ -1574,21 +1574,19 @@ def draw_panel():
         # ログ非表示時のヒント (右パネルに寄せる)
         draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
-    # === 下部エリア: 手札（横並び最大7枚） ===
+    # === 下部エリア: 手札（左から横並び最大7枚） ===
+    # ボードの下に左詰めで横並びで表示
     card_area_top = layout['card_area_top']
-    # hand header aligned to board's left
-    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
-    # card sizes scale with UI scale to keep magnification consistent
-    scale = layout.get('scale', 1.0)
-    # bump baseline multipliers so cards are more prominent in upscaled/fullscreen
-    card_w = max(48, int(130 * scale))
-    card_h = max(72, int(175 * scale))
+    hand_title_x = layout['left_margin']  # 左マージンから開始
+    hand_title_y = card_area_top
+    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", hand_title_x, hand_title_y, (40, 40, 40))
+    
+    # カードサイズ
+    card_w = 100
+    card_h = 135
     card_spacing = 8
-    # center up to 7 cards under the board
-    visible = min(7, len(game.player.hand.cards))
-    total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
-    card_start_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
-    card_y = card_area_top + 30
+    card_start_x = hand_title_x  # 左マージンから開始
+    card_y = hand_title_y + 30
     
     # カード描画とクリック判定用の矩形保存
     global card_rects
@@ -1612,7 +1610,7 @@ def draw_panel():
             # 外側にもう一層、少し濃い金色
             pygame.draw.rect(screen, (218, 165, 32), rect.inflate(4, 4), 3)
         
-        # カード下部にボタン番号を大きく表示
+        # カード下部にボタン番号を表示
         button_number = f"[{i+1}]"
         # 背景ボックス
         button_bg_width = 35
@@ -1638,7 +1636,7 @@ def draw_panel():
 
     # === 状態表示（右下）===
     state_x = layout['right_panel_x'] + 12
-    state_y = card_area_top + 40
+    state_y = layout['card_area_top'] + 40
     draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
     state_y += 20
     draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))

@@ -1948,6 +1948,16 @@ def handle_keydown(key):
             else:
                 game.log.append("操作待ち: 先に保留中の選択を完了してください。")
             return
+        # ターン開始前はカード使用不可（既存のメッセージを表示）
+        if not getattr(game, 'turn_active', False):
+            msg = "ターンが開始されていませんTキーでターンを開始してください"
+            game.log.append(msg)
+            try:
+                notice_msg = msg
+                notice_until = _ct_time.time() + 1.0
+            except Exception:
+                pass
+            return
         ok, msg = game.play_card(idx)
         if not ok:
             game.log.append(msg)
@@ -2175,17 +2185,7 @@ def handle_mouse_click(pos):
     # カードのクリック判定（優先）
     for rect, idx in card_rects:
         if rect.collidepoint(pos):
-            # If turn not started, block card interaction and show telop+log
-            if not getattr(game, 'turn_active', False):
-                msg = "ターンが開始されていませんTキーでターンを開始してください"
-                game.log.append(msg)
-                try:
-                    notice_msg = msg
-                    notice_until = _ct_time.time() + 1.0
-                except Exception:
-                    pass
-                return
-            # toggle
+            # 閲覧（拡大表示）はターン開始前でも許可する
             if enlarged_card_index == idx:
                 enlarged_card_index = None
             else:

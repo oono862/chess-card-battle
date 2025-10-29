@@ -2027,7 +2027,7 @@ def attempt_start_turn():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until
+    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until, show_grave, show_opponent_hand
     
     # ゲーム終了時のキー操作
     if game_over:
@@ -2062,15 +2062,21 @@ def handle_keydown(key):
         return
     
     if key == pygame.K_g:
-        # 保留中でも閲覧だけは可能にする
-        global show_grave
+        # 墓地表示切替（保留中でも閲覧だけは可能）
+        prev = show_grave
         show_grave = not show_grave
+        # 開くときは相手手札を閉じる（クリック時と同じ排他制御）
+        if not prev and show_grave:
+            show_opponent_hand = False
         return
     
     if key == pygame.K_h:
-        # 相手の手札表示切替
-        global show_opponent_hand
+        # 相手の手札表示切替（クリック時と同じ排他制御を反映）
+        prev = show_opponent_hand
         show_opponent_hand = not show_opponent_hand
+        # 開くときは墓地を閉じる
+        if not prev and show_opponent_hand:
+            show_grave = False
         return
 
     # --- DEBUG: 盤面セットショートカット ---

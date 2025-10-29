@@ -554,6 +554,53 @@ def attack_facing_enemy(moved_piece, pieces):
             if target.hp <= 0:
                 pieces.remove(target)
 
+# 黒AIの補助関数: CPU の手を取得して実行する (main ループから呼び出す)
+def cpu_make_move(
+    pieces,
+    get_piece_at_fn,
+    attack_facing_enemy_fn,
+    is_in_check_fn,
+    has_legal_moves_fn,
+    show_promotion_menu_with_images_fn,
+    global_vars,
+    get_valid_moves_func
+):
+    """
+    黒AIの手番で呼ばれる。AIの指し手を取得し、盤面を更新する。
+    """
+    ai_result = ai_move(pieces)
+    if ai_result:
+        from_row = ai_result['from_row']
+        from_col = ai_result['from_col']
+        to_row = ai_result['to_row']
+        to_col = ai_result['to_col']
+        piece = get_piece_at(from_row, from_col, pieces)
+        if piece:
+            # 移動先に駒がいれば取る
+            target = get_piece_at(to_row, to_col, pieces)
+            if target:
+                pieces.remove(target)
+            piece.row, piece.col = to_row, to_col
+            piece.has_moved = True
+
+            # 攻撃処理
+            attack_facing_enemy(piece, pieces)
+
+            # ポーンのプロモーション (自動でクイーンにする)
+            if piece.name == 'P' and ((piece.color == 'white' and piece.row == 0) or (piece.color == 'black' and piece.row == 7)):
+                old_max_hp = piece.max_hp
+                piece.name = 'Q'
+                hp_table =  {'P': 20, 'N': 30, 'B': 25, 'R': 35, 'Q': 40, 'K': 50}
+                piece.max_hp = hp_table[piece.name]
+                piece.hp = min(piece.hp + (piece.max_hp - old_max_hp), piece.max_hp)
+                attack_table = {'P': 5, 'N': 16, 'B': 10, 'R': 15, 'Q': 8, 'K': 9}
+                piece.attack = attack_table[piece.name]
+
+            # ターン切り替え
+            global_vars['current_turn'] = 'white'
+            pygame.time.set_timer(global_vars['TURN_CHANGE_EVENT'], 50, loops=1)
+
+
 cpu_wait = False
 cpu_wait_start = 0
 
@@ -840,52 +887,5 @@ while running:
                     # ターン切り替え時にイベントを発火（50ms後に処理）
                     pygame.time.set_timer(TURN_CHANGE_EVENT, 50, loops=1)
             continue
-
 pygame.quit()
 sys.exit()
-
-def cpu_make_move(
-    pieces,
-    get_piece_at,
-    attack_facing_enemy,
-    is_in_check,
-    has_legal_moves,
-    show_promotion_menu_with_images,
-    global_vars,
-    get_valid_moves_func
-):
-    """
-    黒AIの手番で0.5秒後に呼ばれる。AIの指し手を取得し、盤面を更新する。
-    """
-    ai_result = ai_move(pieces)
-    if ai_result:
-        from_row = ai_result['from_row']
-        from_col = ai_result['from_col']
-        to_row = ai_result['to_row']
-        to_col = ai_result['to_col']
-        piece = get_piece_at(from_row, from_col, pieces)
-        if piece:
-            # 移動先に駒がいれば取る
-            target = get_piece_at(to_row, to_col, pieces)
-            if target:
-                pieces.remove(target)
-            piece.row, piece.col = to_row, to_col
-            piece.has_moved = True
-
-            # 攻撃処理
-            attack_facing_enemy(piece, pieces)
-
-            # ポーンのプロモーション
-            if piece.name == 'P' and piece.row == 7:
-                # プロモーションUIを使わず自動でクイーンに昇格
-                old_max_hp = piece.max_hp
-                piece.name = 'Q'
-                hp_table =  {'P': 20, 'N': 30, 'B': 25, 'R': 35, 'Q': 40, 'K': 50}
-                piece.max_hp = hp_table[piece.name]
-                piece.hp = min(piece.hp + (piece.max_hp - old_max_hp), piece.max_hp)
-                attack_table = {'P': 5, 'N': 16, 'B': 10, 'R': 15, 'Q': 8, 'K': 9}
-                piece.attack = attack_table[piece.name]
-
-            # ターン切り替え
-            global_vars['current_turn'] = 'white'
-            pygame.time.set_timer(global_vars['TURN_CHANGE_EVENT'], 50, loops=1)

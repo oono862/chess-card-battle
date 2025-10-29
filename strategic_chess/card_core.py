@@ -33,11 +33,21 @@ PrecheckFn = Callable[["Game", "PlayerState"], Optional[str]]  # None: OK, str: 
 class PendingAction:
     """Represents a UI-required follow-up action (e.g., choose a card to discard).
 
-    This demo only supports 'discard' selection from hand. Other target types
-    like board tiles or enemy pieces are declared for future integration with
-    the chess part, and are logged as TODO when triggered.
+    Extended to include several target kinds used by the UI:
+    - 'heat_choice': ask the player to choose between unfreezing one own piece or blocking tiles
+    - 'target_tiles_multi': collect multiple tile targets (e.g. up to 3)
+    - 'target_piece_unfreeze': select one own frozen piece to unfreeze
+    - legacy kinds: 'discard', 'target_tile', 'target_piece', 'confirm'
     """
-    kind: Literal["discard", "target_tile", "target_piece", "confirm"]
+    kind: Literal[
+        "discard",
+        "target_tile",
+        "target_piece",
+        "confirm",
+        "heat_choice",
+        "target_tiles_multi",
+        "target_piece_unfreeze",
+    ]
     info: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -350,11 +360,17 @@ def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
     Demo: declare a pending target. Real board integration should apply
     'blocked_tiles[tile] = turns'.
     """
+    # If the player has any frozen own pieces, offer the choice to unfreeze
+    # one of them instead of blocking tiles. The UI will present the choice.
     game.pending = PendingAction(
-        kind="target_tile",
-        info={"turns": 2, "note": "Block chosen tile for 2 turns (opponent)."},
+        kind="heat_choice",
+        info={
+            "turns": 2,
+            "max_tiles": 3,
+            "note": "Choose: unfreeze one own frozen piece OR block 1-3 tiles for opponent.",
+        },
     )
-    return "封鎖するマスを選択してください（2ターン・デモでは選択のみ）。"
+    return "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
 
 
 def eff_freeze_piece(game: Game, player: PlayerState) -> str:
@@ -398,14 +414,15 @@ def eff_draw2(game: Game, player: PlayerState) -> str:
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:
     """錬成(0): 山札から1枚引き、その後手札から1枚選んで捨てる（保留アクション）。"""
-    res = game.draw_to_hand(1)
-    if not res or res[0][0] is None:
-        drew = "山札が空。 "
-    else:
-        c, added = res[0]
-        drew = (f"『{c.name}』をドロー。 " if added else f"手札上限のため『{c.name}』は墓地へ。 ")
-    game.pending = PendingAction(kind="discard", info={"count": 1})
-    return drew + "手札から1枚を選んで捨ててください。"
+    # New behavior: require the player to discard first; ONLY after discard is confirmed
+    # the effect draws 1 card. We capture this as an execute_after_discard instruction
+    # so the UI can perform the draw after the discard completes.
+    game.pending = PendingAction(kind="discard", info={
+        "count": 1,
+        "execute_after_discard": {"draw": 1},
+        "note": "錬成: 先に手札から1枚捨てると、その後1枚ドローします。",
+    })
+    return "錬成: まず手札から1枚を捨ててください。捨てると1枚ドローします。"
 
 
 def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:

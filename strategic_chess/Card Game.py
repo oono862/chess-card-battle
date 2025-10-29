@@ -5,10 +5,10 @@ import sys
 import os
 
 try:
-    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck
+    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck
+    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
@@ -21,9 +21,14 @@ pygame.init()
 
 # 画面設定
 W, H = 1200, 800
-screen = pygame.display.set_mode((W, H))
+# Allow the user to resize/minimize/maximize the game window
+screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
 pygame.display.set_caption("カードゲーム デモ")
 clock = pygame.time.Clock()
+
+# Base UI resolution used for consistent scaling between windowed and fullscreen
+BASE_UI_W = 1200
+BASE_UI_H = 800
 
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
@@ -72,8 +77,9 @@ scrollbar_rect = None
 dragging_scrollbar = False
 drag_start_y = 0
 drag_start_offset = 0
-start_turn_rect = None  # マウスでターン開始ボタンを押すための矩形
-log_toggle_rect = None  # ログ表示/非表示のクリックトグル用
+# Heat choice button rects (灼熱の二択ボタン)
+heat_choice_unfreeze_rect = None
+heat_choice_block_rect = None
 
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
@@ -228,12 +234,12 @@ def create_pieces():
     return chess.create_pieces()
 
 
-def show_start_screen(screen):
+def show_start_screen():
     """起動時に難易度を選択する簡易メニュー。
     1-4 のキーか、画面上のボタンで選択可能。選択はグローバル CPU_DIFFICULTY に保存される。
     """
     # 選択結果をグローバルに反映
-    global CPU_DIFFICULTY
+    global CPU_DIFFICULTY, W, H, screen
     # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
     user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"
@@ -252,24 +258,41 @@ def show_start_screen(screen):
 
     # normalize names and prepare UI metrics/fonts used below
     bg = bg_surf
-    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
-    btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
-    options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
-    # ボタン幅を広げてテキストが見切れないようにする
-    btn_w = 240
-    btn_h = 80
-    # use larger horizontal spacing between buttons to match screenshot
-    spacing = 20
-    total_h = len(options) * btn_h + (len(options) - 1) * spacing
-    # place title near top and move buttons further down to create generous whitespace like reference
-    title_y = int(H * 0.08)
-    # create a larger vertical gap between title and buttons per user request
-    start_y = title_y + title_font.get_height() + 240
+    # keep the original loaded image (if any) for rescaling on resize
+    bg_img = locals().get('img', None)
 
     while True:
+        # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
+        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
+        options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
+        # ボタン幅を広げてテキストが見切れないようにする
+        btn_w = 240
+        btn_h = 80
+        # use larger horizontal spacing between buttons to match screenshot
+        spacing = 20
+        total_h = len(options) * btn_h + (len(options) - 1) * spacing
+        # place title near top and move buttons further down to create generous whitespace like reference
+        title_y = int(H * 0.08)
+        # create a larger vertical gap between title and buttons per user request
+        start_y = title_y + title_font.get_height() + 240
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
+            if event.type == pygame.VIDEORESIZE:
+                # update global window size and recreate screen surface
+                try:
+                    W, H = max(200, event.w), max(200, event.h)
+                    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                    # rescale background image if we have the original loaded image
+                    if bg_img is not None:
+                        try:
+                            bg = pygame.transform.smoothscale(bg_img, (W, H)).convert()
+                        except Exception:
+                            bg = bg_surf
+                except Exception:
+                    pass
             # keyboard selection (1-4)
             if event.type == pygame.KEYDOWN:
                 if pygame.K_1 <= event.key <= pygame.K_4:
@@ -678,7 +701,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         dir = -1 if color == 'white' else 1
         # storm jump for pawn: if next_move_can_jump and front square is blocked, jump over it
         try:
-            can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+            # support jump flag for both players: white uses game.player.next_move_can_jump,
+            # black (AI) uses module-level ai_next_move_can_jump
+            if color == 'white':
+                can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
+            else:
+                can_jump = globals().get('ai_next_move_can_jump', False)
         except Exception:
             can_jump = False
         
@@ -733,10 +761,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 if occupied(nr,nc):
                     if not occupied_by_color(nr,nc,color):
                         moves.append((nr,nc))
-                    # If player's card granted a single jump ability, allow jumping over one piece     
-                    can_jump = False
+                    # If a card granted a single jump ability, allow jumping over one piece
                     try:
-                        can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+                        if color == 'white':
+                            can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
+                        else:
+                            can_jump = globals().get('ai_next_move_can_jump', False)
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
@@ -800,8 +830,23 @@ def ai_make_move():
     global CPU_DIFFICULTY
     global ai_player, ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
 
+    # Begin AI turn: restore PP and draw 1 card (simple turn-start behavior for AI)
+    try:
+        ai_player.reset_pp()
+        # draw 1 card if available and hand limit not exceeded
+        if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
+            c = ai_player.deck.draw()
+            if c:
+                ai_player.hand.add(c)
+                game.log.append("AI: ターン開始で1枚ドローしました。")
+    except Exception:
+        # defensive: ignore if ai_player not properly initialized
+        pass
+
     # --- AI: consider playing a card before moving ---
     def ai_consider_play_card():
+        # Ensure assignments to module-level AI flags affect globals (nested function)
+        global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
         # decide whether to attempt a card play based on difficulty
         probs = {1: 0.08, 2: 0.18, 3: 0.45, 4: 0.7}
         p_play = probs.get(CPU_DIFFICULTY, 0.18)
@@ -874,9 +919,11 @@ def ai_make_move():
                 game.frozen_pieces[id(target)] = 1
                 game.log.append(f"AI: 氷結で {target.name} を凍結しました。")
         elif nm == '暴風':
+            # set module-level AI jump flag so get_valid_moves can consult it for black
             ai_next_move_can_jump = True
             game.log.append("AI: 暴風を使用、次の移動で1駒飛び越え可能。")
         elif nm == '迅雷':
+            # grant AI an extra/continuous-turn marker (consumed elsewhere if implemented)
             ai_consecutive_turns = max(ai_consecutive_turns, 1)
             game.log.append("AI: 迅雷を使用、連続ターンを獲得しました。")
         elif nm == '2ドロー':
@@ -1058,15 +1105,89 @@ def wrap_text(text: str, max_width: int):
     return lines
 
 
+def compute_layout(win_w: int, win_h: int):
+    """Compute common layout metrics used by draw_panel and input handling.
+    Returns a dict with keys:
+        left_margin, left_panel_width, right_panel_width, right_panel_x,
+        board_left, board_top, board_size, board_area_top, board_area_height,
+        card_area_top, scale
+    """
+    # Compute a uniform scale relative to a base UI resolution so that
+    # fullscreen and windowed modes scale UI elements consistently.
+    try:
+        scale_w = float(win_w) / float(BASE_UI_W)
+        scale_h = float(win_h) / float(BASE_UI_H)
+        scale = min(scale_w, scale_h)
+    except Exception:
+        scale = 1.0
+
+    # Base measurements (from BASE_UI_W / BASE_UI_H) then scaled
+    base_left_margin = max(12, int(BASE_UI_W * 0.02))
+    base_left_panel_width = max(140, min(360, int(BASE_UI_W * 0.18)))
+    base_right_panel_width = max(160, min(380, int(BASE_UI_W * 0.18)))
+    base_board_area_top = max(12, int(BASE_UI_H * 0.02))
+    inner_gap = int(20 * scale)
+
+    left_margin = max(12, int(base_left_margin * scale))
+    left_panel_width = max(12, int(base_left_panel_width * scale))
+    right_panel_width = max(12, int(base_right_panel_width * scale))
+
+    board_area_top = max(8, int(base_board_area_top * scale))
+
+    central_left = left_margin + left_panel_width + inner_gap
+    central_right = win_w - left_margin - right_panel_width - inner_gap
+    central_width = max(0, central_right - central_left)
+
+    # reserve bottom area for hand display (card height scaled)
+    base_card_h = max(120, int(BASE_UI_H * 0.18))
+    card_h = max(48, int(base_card_h * scale))
+    reserved_bottom = card_h + int(80 * scale)
+    avail_height = win_h - board_area_top - reserved_bottom
+
+    board_size = max(64, min(central_width, avail_height))
+    # If the UI is being upscaled (fullscreen), prefer to keep the board
+    # slightly smaller so card art and UI elements have room and appear larger.
+    try:
+        if scale > 1.0:
+            board_size = max(64, int(board_size * 0.9))
+    except Exception:
+        pass
+    # center board within central region
+    board_left = central_left + max(0, (central_width - board_size) // 2)
+    board_top = board_area_top
+
+    right_panel_x = win_w - left_margin - right_panel_width
+
+    card_area_top = board_top + board_size + int(20 * scale)
+
+    return {
+        'left_margin': left_margin,
+        'left_panel_width': left_panel_width,
+        'right_panel_width': right_panel_width,
+        'right_panel_x': right_panel_x,
+        'board_left': board_left,
+        'board_top': board_top,
+        'board_size': board_size,
+        'board_area_top': board_area_top,
+        'board_area_height': board_size,
+        'card_area_top': card_area_top,
+        'central_left': central_left,
+        'central_right': central_right,
+        'scale': scale,
+    }
+
+
 def draw_panel():
     screen.fill((240, 240, 245))
     global log_toggle_rect
 
     # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
-    left_panel_width = 180  # 左側の基本情報パネルの幅
-    left_margin = 20
-    top_margin = 20
-    
+    # Use shared responsive layout so left/right panels and board stay balanced
+    layout = compute_layout(W, H)
+    left_panel_width = layout['left_panel_width']
+    left_margin = layout['left_margin']
+    top_margin = layout['board_area_top']
+
     # 基本情報の配置（左側）
     info_x = left_margin
     info_y = top_margin
@@ -1132,9 +1253,9 @@ def draw_panel():
         info_y += 20
         draw_text(screen, label, info_x, info_y, (180, 60, 0))
 
-    # 右上: ヘルプ（簡潔に）
-    help_x = W - 250
-    help_y = 20
+    # 右パネル: ヘルプ（簡潔に） - use right panel x so help stays grouped
+    help_x = layout['right_panel_x'] + 12
+    help_y = layout['board_top']
     draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
     help_y += 24
     for hl in HELP_LINES:  # 全ての操作を表示
@@ -1142,24 +1263,16 @@ def draw_panel():
         help_y += 20
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
-    board_area_left = left_margin + left_panel_width + 20  # 左パネル + 余白
-    board_area_top = top_margin  # 画面上部から開始
-    # 手札エリアとの干渉を避けるため、下部の予約領域を計算
-    card_h = 140
-    reserved_bottom = card_h + 80  # hand area + margin
-    avail_height = H - board_area_top - reserved_bottom
-    # 盤面を正方形にするため、利用可能な幅と高さの小さい方を使用
-    avail_width = W - board_area_left - 20  # 右端までの余白を考慮
-    board_size = min(avail_width, avail_height)
-    # 他の箇所で参照されるため、board_area_width と board_area_height を定義
+    board_area_left = layout['central_left']
+    board_area_top = layout['board_top']
+    # board_size and position computed by compute_layout
+    board_size = layout['board_size']
     board_area_width = board_size
     board_area_height = board_size
-    
-    # チェス盤の描画（8x8）- 画面上部から直接配置（センタリングなし）
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left
-    board_top = board_area_top
+    board_left = layout['board_left']
+    board_top = layout['board_top']
     # use pale greenish theme similar to original design
     light = (235, 248, 240)
     dark = (200, 220, 200)
@@ -1458,17 +1571,23 @@ def draw_panel():
         else:
             scrollbar_rect = None
     else:
-        # ログ非表示時のヒント（クリックで開く）
-        log_toggle_rect = draw_text(screen, "[L] ログ表示", W - 240, board_area_top + board_area_height - 30, (100, 100, 120))
+        # ログ非表示時のヒント (右パネルに寄せる)
+        draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
     # === 下部エリア: 手札（横並び最大7枚） ===
-    card_area_top = board_area_top + board_area_height + 20
-    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", 24, card_area_top, (40, 40, 40))
-    
-    card_w = 100
-    card_h = 140
+    card_area_top = layout['card_area_top']
+    # hand header aligned to board's left
+    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
+    # card sizes scale with UI scale to keep magnification consistent
+    scale = layout.get('scale', 1.0)
+    # bump baseline multipliers so cards are more prominent in upscaled/fullscreen
+    card_w = max(48, int(130 * scale))
+    card_h = max(72, int(175 * scale))
     card_spacing = 8
-    card_start_x = 30
+    # center up to 7 cards under the board
+    visible = min(7, len(game.player.hand.cards))
+    total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
+    card_start_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
     card_y = card_area_top + 30
     
     # カード描画とクリック判定用の矩形保存
@@ -1518,7 +1637,7 @@ def draw_panel():
 
 
     # === 状態表示（右下）===
-    state_x = W - 240
+    state_x = layout['right_panel_x'] + 12
     state_y = card_area_top + 40
     draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
     state_y += 20
@@ -1661,6 +1780,8 @@ def draw_panel():
             instruction_text = "封鎖するマスを選択してください"
         elif game.pending.kind == 'target_piece':
             instruction_text = "凍結する相手コマを選択してください"
+        elif game.pending.kind == 'heat_choice':
+            instruction_text = "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
         else:
             instruction_text = "選択を完了してください"
         
@@ -1709,6 +1830,27 @@ def draw_panel():
                 line_y += 22  # 行間
         else:
             draw_text(screen, instruction_text, box_x + box_padding, box_y + 45, (60, 60, 60))
+
+        # 灼熱選択用の二択ボタン（保留が heat_choice のとき）
+        global heat_choice_unfreeze_rect, heat_choice_block_rect
+        heat_choice_unfreeze_rect = None
+        heat_choice_block_rect = None
+        if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
+            btn_w, btn_h = 260, 40
+            gap = 20
+            btn_y = box_y + box_height + 12
+            total_w = btn_w * 2 + gap
+            start_x = (W - total_w) // 2
+            heat_choice_unfreeze_rect = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+            heat_choice_block_rect = pygame.Rect(start_x + btn_w + gap, btn_y, btn_w, btn_h)
+            pygame.draw.rect(screen, (70, 130, 180), heat_choice_unfreeze_rect)
+            pygame.draw.rect(screen, (180, 100, 60), heat_choice_block_rect)
+            pygame.draw.rect(screen, (255,255,255), heat_choice_unfreeze_rect, 2)
+            pygame.draw.rect(screen, (255,255,255), heat_choice_block_rect, 2)
+            t1 = FONT.render('自分の凍結駒を解除', True, (255,255,255))
+            t2 = FONT.render('1～3マスを封鎖する', True, (255,255,255))
+            screen.blit(t1, (heat_choice_unfreeze_rect.centerx - t1.get_width()//2, heat_choice_unfreeze_rect.centery - t1.get_height()//2))
+            screen.blit(t2, (heat_choice_block_rect.centerx - t2.get_width()//2, heat_choice_block_rect.centery - t2.get_height()//2))
 
         # 確認ダイアログのボタン（はい/いいえ）
         global confirm_yes_rect, confirm_no_rect
@@ -2073,13 +2215,31 @@ def handle_keydown(key):
             if removed:
                 game.player.graveyard.append(removed)
                 game.log.append(f"『{removed.name}』を捨てました。")
+                # If there's an execute_after_discard instruction, perform it now
+                ex = game.pending.info.get('execute_after_discard')
+                if ex:
+                    draw_n = int(ex.get('draw', 0)) if ex.get('draw', 0) else 0
+                    if draw_n > 0:
+                        res = game.draw_to_hand(draw_n)
+                        items = []
+                        for c, added in res:
+                            if c is None:
+                                continue
+                            items.append(c.name if added else f"{c.name}(墓地)")
+                        if items:
+                            game.log.append("ドロー: " + ", ".join(items))
+                # 保留をクリア
+                game.pending = None
+                log_scroll_offset = 0  # 保留解決後は最新ログへ
+                return
             else:
                 game.log.append("捨てるカードを選択してください。")
+                # don't clear pending so player can choose again
+                return
         else:
             game.log.append("捨てるカードが選択されていません。")
-        game.pending = None
-        log_scroll_offset = 0  # 保留解決後は最新ログへ
-        return
+            # keep pending active so player can choose a card and press D
+            return
 
 
 def handle_mouse_click(pos):
@@ -2230,11 +2390,17 @@ def handle_mouse_click(pos):
             game.pending = None
             return
 
-    # ログ開閉トグル（クリック）
-    if log_toggle_rect and log_toggle_rect.collidepoint(pos):
-        global show_log
-        show_log = not show_log
-        return
+    # 灼熱の二択ボタンのクリック処理（保留が heat_choice のとき）
+    if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
+        if heat_choice_unfreeze_rect and heat_choice_unfreeze_rect.collidepoint(pos):
+            # 選択: 自分の凍結駒を解除 -> target_piece_unfreeze 保留へ
+            game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
+            return
+        if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
+            # 選択: 複数マス封鎖へ（max_tiles まで選択）
+            info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
+            game.pending = PendingAction(kind='target_tiles_multi', info=info)
+            return
         if confirm_no_rect and confirm_no_rect.collidepoint(pos):
             confirm_id = game.pending.info.get('id')
             if confirm_id == 'confirm_grave_roulette_empty':
@@ -2270,24 +2436,13 @@ def handle_mouse_click(pos):
                 return
 
     # 盤面クリック判定 (draw_panel と同じ配置計算を行う)
-    # レイアウト: 左側に基本情報パネル、その右にチェス盤
-    left_panel_width = 180
-    left_margin = 20
-    top_margin = 20
-    
-    board_area_left = left_margin + left_panel_width + 20
-    board_area_top = top_margin
-    card_h = 140
-    reserved_bottom = card_h + 80
-    avail_height = H - board_area_top - reserved_bottom
-    avail_width = W - board_area_left - 20
-    board_size = min(avail_width, avail_height)
-
-    # 盤面は画面上部から直接配置（センタリングなし）
+    # Use the same compute_layout helper as draw_panel so click mapping matches rendering
+    layout = compute_layout(W, H)
+    board_left = layout['board_left']
+    board_top = layout['board_top']
+    board_size = layout['board_size']
     square_w = board_size // 8
     square_h = square_w
-    board_left = board_area_left
-    board_top = board_area_top
 
     board_rect = pygame.Rect(board_left, board_top, board_size, board_size)
     if board_rect.collidepoint(pos) and not game_over:
@@ -2329,6 +2484,69 @@ def handle_mouse_click(pos):
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
                     return
+            elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
+                # allow selecting up to max_tiles empty tiles; when reached, apply blocking
+                if clicked is None:
+                    sel = game.pending.info.get('selected', [])
+                    tmax = game.pending.info.get('max_tiles', 3)
+                    if (row, col) in sel:
+                        game.log.append("そのマスは既に選択されています。")
+                        return
+                    sel.append((row, col))
+                    game.pending.info['selected'] = sel
+                    game.log.append(f"封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
+                    if len(sel) >= tmax:
+                        turns = game.pending.info.get('turns', 2)
+                        applies_to = game.pending.info.get('for_color', 'black')
+                        for (r, c) in sel:
+                            try:
+                                game.blocked_tiles[(r, c)] = turns
+                                game.blocked_tiles_owner[(r, c)] = applies_to
+                            except Exception:
+                                game.blocked_tiles[(r, c)] = turns
+                        game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                        game.pending = None
+                    return
+                else:
+                    game.log.append("そのマスは空ではありません。別のマスを選んでください。")
+                    return
+            elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece_unfreeze':
+                # must select one own frozen piece to unfreeze
+                # assume player controls white pieces
+                player_color = 'white'
+                clicked_color = None
+                try:
+                    clicked_color = clicked.color
+                except Exception:
+                    try:
+                        clicked_color = clicked.get('color') if clicked is not None else None
+                    except Exception:
+                        clicked_color = None
+                if clicked is not None and clicked_color is not None and clicked_color == player_color:
+                    pid = None
+                    try:
+                        pid = id(clicked)
+                    except Exception:
+                        try:
+                            pid = clicked.get('id')
+                        except Exception:
+                            pid = None
+                    if pid is not None and pid in game.frozen_pieces:
+                        try:
+                            del game.frozen_pieces[pid]
+                        except Exception:
+                            pass
+                        try:
+                            name = clicked.name
+                        except Exception:
+                            name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                        game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                        game.pending = None
+                    else:
+                        game.log.append("その駒は凍結されていません。自分の凍結駒を選択してください。")
+                else:
+                    game.log.append("自分の駒を選択してください。")
+                return
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece':
                 # must select an opponent piece
                 # assume player controls white
@@ -2506,6 +2724,15 @@ def main_loop():
                 sys.exit(0)
             elif event.type == pygame.KEYDOWN:
                 handle_keydown(event.key)
+            elif event.type == pygame.VIDEORESIZE:
+                # Window was resized (including maximize). Update globals and recreate screen surface.
+                try:
+                    global W, H, screen
+                    W, H = max(200, event.w), max(200, event.h)
+                    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                except Exception:
+                    # If resizing fails for any reason, ignore and continue with previous size
+                    pass
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
                     # スクロールバーつまみのドラッグ開始判定
@@ -2624,5 +2851,5 @@ def main_loop():
 
 if __name__ == "__main__":
     # show start screen to choose AI difficulty before starting
-    show_start_screen(screen)
+    show_start_screen()
     main_loop()

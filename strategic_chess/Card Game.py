@@ -2095,8 +2095,60 @@ def handle_mouse_click(pos):
             pygame.quit()
             sys.exit(0)
         return
+
+    # 墓地ラベルのクリックで墓地表示切替（最優先）
+    if grave_label_rect and grave_label_rect.collidepoint(pos):
+        show_grave = not show_grave
+        # 墓地を開くときは相手手札を閉じる
+        if show_grave:
+            show_opponent_hand = False
+        return
     
-    # 拡大表示中ならどこクリックしても閉じる
+    # 相手の手札ラベルのクリックで表示切替（最優先）
+    if opponent_hand_rect and opponent_hand_rect.collidepoint(pos):
+        show_opponent_hand = not show_opponent_hand
+        # 相手手札を開くときは墓地を閉じる
+        if show_opponent_hand:
+            show_grave = False
+        return
+    
+    # 墓地オーバーレイ表示中→領域外クリックで閉じる（カード拡大より先に判定）
+    if show_grave:
+        overlay_w = 600
+        overlay_h = 500
+        overlay_x = (W - overlay_w) // 2
+        overlay_y = (H - overlay_h) // 2
+        overlay_rect = pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h)
+        if not overlay_rect.collidepoint(pos):
+            show_grave = False
+            return
+        # オーバーレイ内のカードクリックで拡大表示
+        if grave_card_rects:
+            for rect, card_name in grave_card_rects:
+                if rect.collidepoint(pos):
+                    # toggle enlarged display
+                    if enlarged_card_name == card_name:
+                        enlarged_card_name = None
+                    else:
+                        enlarged_card_name = card_name
+                    return
+        # その他のオーバーレイ内クリックは何もしない
+        return
+
+    # 相手手札オーバーレイ表示中→領域外クリックで閉じる
+    if show_opponent_hand:
+        overlay_w = 600
+        overlay_h = 400
+        overlay_x = (W - overlay_w) // 2
+        overlay_y = (H - overlay_h) // 2
+        overlay_rect = pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h)
+        if not overlay_rect.collidepoint(pos):
+            show_opponent_hand = False
+            return
+        # オーバーレイ内クリックは何もしない
+        return
+    
+    # 拡大表示中→領域外クリックで閉じる（拡大画像自体のクリックでも閉じる）
     if enlarged_card_index is not None or enlarged_card_name is not None:
         enlarged_card_index = None
         enlarged_card_name = None
@@ -2191,27 +2243,6 @@ def handle_mouse_click(pos):
                 game.log.append("確認: いいえ → キャンセル（効果なし）")
             game.pending = None
             return
-    
-    # 墓地ラベルのクリックで墓地表示切替
-    if grave_label_rect and grave_label_rect.collidepoint(pos):
-        show_grave = not show_grave
-        return
-    
-    # 相手の手札ラベルのクリックで表示切替
-    if opponent_hand_rect and opponent_hand_rect.collidepoint(pos):
-        show_opponent_hand = not show_opponent_hand
-        return
-    
-    # 墓地オーバーレイ内のカードクリックで拡大表示
-    if show_grave and grave_card_rects:
-        for rect, card_name in grave_card_rects:
-            if rect.collidepoint(pos):
-                # toggle enlarged display
-                if enlarged_card_name == card_name:
-                    enlarged_card_name = None
-                else:
-                    enlarged_card_name = card_name
-                return
     
     # カードのクリック判定（優先）
     for rect, idx in card_rects:

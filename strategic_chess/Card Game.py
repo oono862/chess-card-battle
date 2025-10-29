@@ -81,6 +81,140 @@ drag_start_offset = 0
 heat_choice_unfreeze_rect = None
 heat_choice_block_rect = None
 
+# GIF animation cache / player for heat effect (Image_F.gif)
+heat_gif_frames_cache = None  # list of pygame.Surface frames or single-surface fallback
+heat_gif_durations = None  # list of per-frame durations (ms)
+heat_gif_anim = {
+    'playing': False,
+    'start_time': 0.0,
+    'total_duration': 0.0,
+    'frames': None,
+    'durations': None,
+    'pos': None,  # (row, col)
+}
+
+# MG GIF (blocked-tile persistent effect) cache
+mg_gif_frames_cache = None
+mg_gif_durations = None
+mg_gif_total_duration = 0.0
+mg_gif_load_attempted = False
+mg_gif_load_success = False
+
+def _load_gif_frames(path: str):
+    """Try to load GIF frames using Pillow if available, fallback to single surface.
+
+    Returns (frames_list, durations_list). frames_list is a list of pygame.Surface.
+    durations_list is list of durations in milliseconds.
+    If Pillow is not available or loading fails, returns ([surface], [1000]).
+    """
+    global heat_gif_frames_cache, heat_gif_durations
+    try:
+        from PIL import Image
+    except Exception:
+        # Pillow not available: fallback to loading the GIF as a single image
+        try:
+            surf = pygame.image.load(path).convert_alpha()
+            return [surf], [1000]
+        except Exception:
+            return None, None
+
+    try:
+        img = Image.open(path)
+    except Exception:
+        try:
+            surf = pygame.image.load(path).convert_alpha()
+            return [surf], [1000]
+        except Exception:
+            return None, None
+
+    frames = []
+    durations = []
+    try:
+        for frame_index in range(0, getattr(img, 'n_frames', 1)):
+            img.seek(frame_index)
+            frame = img.convert('RGBA')
+            mode = frame.mode
+            size = frame.size
+            data = frame.tobytes()
+            surf = pygame.image.fromstring(data, size, mode).convert_alpha()
+            frames.append(surf)
+            dur = img.info.get('duration', 100)  # milliseconds
+            durations.append(dur)
+    except EOFError:
+        pass
+    if not frames:
+        try:
+            surf = pygame.image.load(path).convert_alpha()
+            return [surf], [1000]
+        except Exception:
+            return None, None
+    return frames, durations
+
+def _ensure_mg_gif_loaded():
+    """Lazily load Image_MG.gif frames into mg_gif_* globals."""
+    global mg_gif_frames_cache, mg_gif_durations, mg_gif_total_duration
+    global mg_gif_load_attempted, mg_gif_load_success
+    if mg_gif_frames_cache is not None and mg_gif_durations is not None:
+        return
+    if mg_gif_load_attempted:
+        return
+    mg_gif_load_attempted = True
+    gif_path = os.path.join(IMG_DIR, 'Image_MG.gif')
+    frames, durations = _load_gif_frames(gif_path)
+    if not frames:
+        mg_gif_frames_cache = None
+        mg_gif_durations = None
+        mg_gif_total_duration = 0.0
+        mg_gif_load_success = False
+        try:
+            game.log.append(f"Image_MG.gif を読み込めませんでした: {gif_path}")
+        except Exception:
+            pass
+        # fallback: try pygame.image.load as a single-surface fallback
+        try:
+            surf = pygame.image.load(gif_path).convert_alpha()
+            mg_gif_frames_cache = [surf]
+            mg_gif_durations = [1000]
+            mg_gif_total_duration = 1.0
+            mg_gif_load_success = True
+            try:
+                game.log.append(f"Image_MG.gif を pygame.image.load で単一フレームとして読み込みました")
+            except Exception:
+                pass
+            return
+        except Exception:
+            return
+    mg_gif_frames_cache = frames
+    mg_gif_durations = durations
+    try:
+        mg_gif_total_duration = sum(durations) / 1000.0
+    except Exception:
+        mg_gif_total_duration = len(durations) * 0.1 if durations else 0.0
+    mg_gif_load_success = True
+    try:
+        game.log.append(f"Image_MG.gif を読み込みました: {len(frames)} フレーム")
+    except Exception:
+        pass
+
+def play_heat_gif_at(row: int, col: int):
+    """Start playing the heat GIF animation centered at board square (row,col)."""
+    global heat_gif_frames_cache, heat_gif_durations, heat_gif_anim
+    gif_path = os.path.join(IMG_DIR, 'Image_F.gif')
+    if heat_gif_frames_cache is None or heat_gif_durations is None:
+        frames, durations = _load_gif_frames(gif_path)
+        heat_gif_frames_cache = frames
+        heat_gif_durations = durations
+    frames = heat_gif_frames_cache
+    durations = heat_gif_durations
+    if not frames:
+        return
+    heat_gif_anim['frames'] = frames
+    heat_gif_anim['durations'] = durations
+    heat_gif_anim['playing'] = True
+    heat_gif_anim['start_time'] = _ct_time.time()
+    heat_gif_anim['total_duration'] = sum(durations) / 1000.0
+    heat_gif_anim['pos'] = (row, col)
+
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
     Cache scaled images by (name,color,size). If file not found, return None to indicate fallback.
@@ -100,6 +234,37 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
         surf = None
     _piece_image_cache[key] = surf
     return surf
+
+
+def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2):
+    """Draw a dashed rectangle on surf. rect is pygame.Rect."""
+    x, y, w, h = rect.x, rect.y, rect.w, rect.h
+    # top
+    sx = x
+    while sx < x + w:
+        ex = min(sx + dash, x + w)
+        pygame.draw.line(surf, color, (sx, y), (ex, y), width)
+        sx += dash + gap
+    # bottom
+    sx = x
+    by = y + h
+    while sx < x + w:
+        ex = min(sx + dash, x + w)
+        pygame.draw.line(surf, color, (sx, by), (ex, by), width)
+        sx += dash + gap
+    # left
+    sy = y
+    while sy < y + h:
+        ey = min(sy + dash, y + h)
+        pygame.draw.line(surf, color, (x, sy), (x, ey), width)
+        sy += dash + gap
+    # right
+    sy = y
+    rx = x + w
+    while sy < y + h:
+        ey = min(sy + dash, y + h)
+        pygame.draw.line(surf, color, (rx, sy), (rx, ey), width)
+        sy += dash + gap
 
 """
 ------------------ Chess integration (via external module) ------------------
@@ -961,6 +1126,46 @@ def ai_make_move():
         ai_consider_play_card()
     except Exception:
         pass
+
+    # --- 封鎖タイル向けの継続アニメーション (Image_MG.gif) ---
+    try:
+        _ensure_mg_gif_loaded()
+        if mg_gif_frames_cache and mg_gif_durations:
+            # compute global loop time in ms
+            try:
+                total_ms = int(sum(mg_gif_durations))
+            except Exception:
+                total_ms = max(1, int(mg_gif_total_duration * 1000))
+            now_ms = int(_ct_time.time() * 1000) if total_ms > 0 else 0
+            for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+                # only show while turns > 0
+                if not turns:
+                    continue
+                bx = board_left + bc * square_w
+                by = board_top + br * square_h
+                # frame index by modulo looping
+                if total_ms > 0:
+                    tmod = now_ms % total_ms
+                    acc = 0
+                    idx = 0
+                    for i, d in enumerate(mg_gif_durations):
+                        acc += d
+                        if tmod < acc:
+                            idx = i
+                            break
+                else:
+                    idx = 0
+                frame = mg_gif_frames_cache[idx]
+                try:
+                    f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
+                except Exception:
+                    f_surf = frame
+                # draw on tile top-left so it covers the tile area
+                screen.blit(f_surf, (bx, by))
+    except Exception:
+        pass
+
+    # (animation rendering moved to draw_panel where board metrics are available)
     candidates = []  # list of (piece, move)
     for p in chess.pieces:
         if p.color != 'black':
@@ -1339,6 +1544,65 @@ def draw_panel():
     except Exception:
         pass
 
+    # 仮決定中の選択表示 (点線): target_tiles_multi の selected を赤い点線で描画
+    try:
+        if getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
+            sel = game.pending.info.get('selected', [])
+            tmax = game.pending.info.get('max_tiles', 3)
+            for idx, (br, bc) in enumerate(sel):
+                bx = board_left + bc * square_w
+                by = board_top + br * square_h
+                rrect = pygame.Rect(bx, by, square_w, square_h)
+                draw_dashed_rect(screen, (200, 30, 30), rrect, dash=6, gap=4, width=3)
+                # small tentative label at bottom-right
+                try:
+                    ttxt = TINY.render(f"仮{idx+1}/{tmax}", True, (200,30,30))
+                    screen.blit(ttxt, (bx + square_w - ttxt.get_width() - 4, by + square_h - ttxt.get_height() - 4))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Play heat GIF animation if active (centered on selected board square)
+    try:
+        if heat_gif_anim.get('playing') and heat_gif_anim.get('frames'):
+            elapsed = _ct_time.time() - heat_gif_anim.get('start_time', 0.0)
+            total = heat_gif_anim.get('total_duration', 0.0)
+            frames = heat_gif_anim.get('frames')
+            durations = heat_gif_anim.get('durations') or [1000]
+            if elapsed >= total:
+                # stop animation
+                heat_gif_anim['playing'] = False
+            else:
+                # determine current frame by elapsed ms
+                acc = 0.0
+                elapsed_ms = elapsed * 1000.0
+                idx = 0
+                for i, d in enumerate(durations):
+                    acc += d
+                    if elapsed_ms < acc:
+                        idx = i
+                        break
+                frame = frames[idx]
+                # compute position centered on target square
+                pos = heat_gif_anim.get('pos')
+                if pos is not None:
+                    r, c = pos
+                    fx = board_left + c * square_w
+                    fy = board_top + r * square_h
+                    # scale animation to exactly the square size so it fits the tile
+                    try:
+                        fw = int(square_w)
+                        fh = int(square_h)
+                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
+                    except Exception:
+                        f_surf = frame
+                    # draw aligned to the tile's top-left so it occupies the tile area
+                    screen.blit(f_surf, (fx, fy))
+    except Exception:
+        # Don't let animation errors break UI
+        pass
+
     # --- ターン表示テロップ（中央・1秒表示） ---
     try:
         if turn_telop_msg and _ct_time.time() < turn_telop_until:
@@ -1596,28 +1860,59 @@ def draw_panel():
     # center up to 7 cards under the board
     visible = min(7, len(game.player.hand.cards))
     total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
-    # If total width exceeds central content area, shrink card width (not height)
+    # If total width exceeds central content area, DO NOT shrink card images.
+    # Instead, reduce spacing to a sensible minimum so thumbnails remain readable.
     central_left = layout.get('central_left', layout['board_left'])
     central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
     avail_w = max(0, central_right - central_left - 16)
     if total_w > avail_w and visible > 0:
-        shrink_ratio = avail_w / total_w
-        # Only shrink down to a minimum card width to avoid unreadable thumbnails
-        new_card_w = max(40, int(card_w * shrink_ratio))
-        # recompute total_w with new_card_w
-        total_w = visible * new_card_w + (visible - 1) * card_spacing
-        # use new width for layout and rendering
-        card_w = new_card_w
+        # compute the maximum spacing that fits while keeping card size fixed
+        min_spacing = 4
+        # available width for spacing after placing fixed-size cards
+        remaining = avail_w - visible * card_w
+        if visible > 1:
+            if remaining >= (visible - 1) * min_spacing:
+                card_spacing = max(min_spacing, remaining // (visible - 1))
+            else:
+                # not enough room even with minimal spacing: use minimal spacing and left-align
+                card_spacing = min_spacing
+        else:
+            card_spacing = min_spacing
+        total_w = visible * card_w + (visible - 1) * card_spacing
     # Prefer centering under the board, but clamp to the central content area so cards
     # never overlap the left/right side panels (where telops and helper text live).
     central_left = layout.get('central_left', layout['board_left'])
     central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
-    preferred_x = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
-    min_x = central_left + 8
-    max_x = max(central_left + 8, central_right - total_w - 8)
-    card_start_x = max(min_x, min(preferred_x, max_x))
+    # Place the hand centered under the board, but ensure it never intrudes
+    # into the right panel. This replaces the previous multi-step shifting
+    # which caused right-bias in some window sizes.
+    center_start = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
+    # available horizontal region for the hand (inside central area and left of right panel)
+    available_left = central_left + 8
+    right_panel_left = layout.get('right_panel_x', layout.get('board_left', 0) + layout.get('board_size', 0) + 20)
+    available_right = right_panel_left - 12
+    available_width = max(0, available_right - available_left)
+
+    if total_w <= available_width:
+        # Plenty of room: center under the board but don't cross available bounds
+        card_start_x = max(available_left, min(center_start, available_right - total_w))
+    else:
+        # Not enough room: compute overflow and shift left proportionally, clamped to available_left
+        overflow = total_w - available_width
+        # shift at most the distance from center_start to available_left
+        max_shift = max(0, center_start - available_left)
+        shift = min(max_shift, overflow)
+        card_start_x = max(available_left, center_start - shift)
     # vertical offset scaled so larger UI keeps cards clear of other overlays
     card_y = card_area_top + max(20, int(30 * layout.get('scale', 1.0)))
+    # Ensure the hand is placed below the board (so telops/notice within board don't overlap)
+    min_card_y = layout['board_top'] + layout['board_size'] + max(8, int(8 * layout.get('scale', 1.0)))
+    # Also ensure we leave a bottom margin so side/bottom UI (チェック表示等) is not overlapped
+    bottom_margin = max(80, int(80 * layout.get('scale', 1.0)))
+    max_card_y = max(card_y, H - bottom_margin - card_h)
+    # clamp within safe vertical range
+    card_y = max(card_y, min_card_y)
+    card_y = min(card_y, max_card_y)
     
     # カード描画とクリック判定用の矩形保存
     global card_rects
@@ -2508,34 +2803,52 @@ def handle_mouse_click(pos):
                     except Exception:
                         # Fallback to simple int-only mapping
                         game.blocked_tiles[(row, col)] = turns
+                    try:
+                        play_heat_gif_at(row, col)
+                    except Exception:
+                        pass
                     game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
                     game.pending = None
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
                     return
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
-                # allow selecting up to max_tiles empty tiles; when reached, apply blocking
+                # allow selecting up to max_tiles empty tiles; selection toggles and BLOCKING
+                # only happens when player has selected max_tiles tiles.
                 if clicked is None:
                     sel = game.pending.info.get('selected', [])
                     tmax = game.pending.info.get('max_tiles', 3)
                     if (row, col) in sel:
-                        game.log.append("そのマスは既に選択されています。")
+                        # toggle off
+                        sel.remove((row, col))
+                        game.pending.info['selected'] = sel
+                        game.log.append(f"封鎖候補から {(row,col)} を解除 ({len(sel)}/{tmax})")
                         return
-                    sel.append((row, col))
-                    game.pending.info['selected'] = sel
-                    game.log.append(f"封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
-                    if len(sel) >= tmax:
-                        turns = game.pending.info.get('turns', 2)
-                        applies_to = game.pending.info.get('for_color', 'black')
-                        for (r, c) in sel:
-                            try:
-                                game.blocked_tiles[(r, c)] = turns
-                                game.blocked_tiles_owner[(r, c)] = applies_to
-                            except Exception:
-                                game.blocked_tiles[(r, c)] = turns
-                        game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
-                        game.pending = None
-                    return
+                    else:
+                        # add if room
+                        if len(sel) >= tmax:
+                            game.log.append(f"選択は最大 {tmax} マスまでです。不要な選択を先に解除してください。")
+                            return
+                        sel.append((row, col))
+                        try:
+                            play_heat_gif_at(row, col)
+                        except Exception:
+                            pass
+                        game.pending.info['selected'] = sel
+                        game.log.append(f"封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
+                        # APPLY only when reached required count
+                        if len(sel) >= tmax:
+                            turns = game.pending.info.get('turns', 2)
+                            applies_to = game.pending.info.get('for_color', 'black')
+                            for (r, c) in sel:
+                                try:
+                                    game.blocked_tiles[(r, c)] = turns
+                                    game.blocked_tiles_owner[(r, c)] = applies_to
+                                except Exception:
+                                    game.blocked_tiles[(r, c)] = turns
+                            game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            game.pending = None
+                        return
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
                     return

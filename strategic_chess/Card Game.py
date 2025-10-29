@@ -5,10 +5,10 @@ import sys
 import os
 
 try:
-    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck
+    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck
+    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
@@ -21,7 +21,8 @@ pygame.init()
 
 # 画面設定
 W, H = 1200, 800
-screen = pygame.display.set_mode((W, H))
+# Allow the user to resize/minimize/maximize the game window
+screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
 pygame.display.set_caption("カードゲーム デモ")
 clock = pygame.time.Clock()
 
@@ -72,6 +73,9 @@ scrollbar_rect = None
 dragging_scrollbar = False
 drag_start_y = 0
 drag_start_offset = 0
+# Heat choice button rects (灼熱の二択ボタン)
+heat_choice_unfreeze_rect = None
+heat_choice_block_rect = None
 
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
@@ -1643,6 +1647,8 @@ def draw_panel():
             instruction_text = "封鎖するマスを選択してください"
         elif game.pending.kind == 'target_piece':
             instruction_text = "凍結する相手コマを選択してください"
+        elif game.pending.kind == 'heat_choice':
+            instruction_text = "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
         else:
             instruction_text = "選択を完了してください"
         
@@ -1691,6 +1697,27 @@ def draw_panel():
                 line_y += 22  # 行間
         else:
             draw_text(screen, instruction_text, box_x + box_padding, box_y + 45, (60, 60, 60))
+
+        # 灼熱選択用の二択ボタン（保留が heat_choice のとき）
+        global heat_choice_unfreeze_rect, heat_choice_block_rect
+        heat_choice_unfreeze_rect = None
+        heat_choice_block_rect = None
+        if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
+            btn_w, btn_h = 260, 40
+            gap = 20
+            btn_y = box_y + box_height + 12
+            total_w = btn_w * 2 + gap
+            start_x = (W - total_w) // 2
+            heat_choice_unfreeze_rect = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+            heat_choice_block_rect = pygame.Rect(start_x + btn_w + gap, btn_y, btn_w, btn_h)
+            pygame.draw.rect(screen, (70, 130, 180), heat_choice_unfreeze_rect)
+            pygame.draw.rect(screen, (180, 100, 60), heat_choice_block_rect)
+            pygame.draw.rect(screen, (255,255,255), heat_choice_unfreeze_rect, 2)
+            pygame.draw.rect(screen, (255,255,255), heat_choice_block_rect, 2)
+            t1 = FONT.render('自分の凍結駒を解除', True, (255,255,255))
+            t2 = FONT.render('1～3マスを封鎖する', True, (255,255,255))
+            screen.blit(t1, (heat_choice_unfreeze_rect.centerx - t1.get_width()//2, heat_choice_unfreeze_rect.centery - t1.get_height()//2))
+            screen.blit(t2, (heat_choice_block_rect.centerx - t2.get_width()//2, heat_choice_block_rect.centery - t2.get_height()//2))
 
         # 確認ダイアログのボタン（はい/いいえ）
         global confirm_yes_rect, confirm_no_rect
@@ -2142,6 +2169,18 @@ def handle_mouse_click(pos):
                             game.log.append(f"墓地から『{recovered.name}』を回収。")
             game.pending = None
             return
+
+    # 灼熱の二択ボタンのクリック処理（保留が heat_choice のとき）
+    if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
+        if heat_choice_unfreeze_rect and heat_choice_unfreeze_rect.collidepoint(pos):
+            # 選択: 自分の凍結駒を解除 -> target_piece_unfreeze 保留へ
+            game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
+            return
+        if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
+            # 選択: 複数マス封鎖へ（max_tiles まで選択）
+            info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
+            game.pending = PendingAction(kind='target_tiles_multi', info=info)
+            return
         if confirm_no_rect and confirm_no_rect.collidepoint(pos):
             confirm_id = game.pending.info.get('id')
             if confirm_id == 'confirm_grave_roulette_empty':
@@ -2267,6 +2306,69 @@ def handle_mouse_click(pos):
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
                     return
+            elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
+                # allow selecting up to max_tiles empty tiles; when reached, apply blocking
+                if clicked is None:
+                    sel = game.pending.info.get('selected', [])
+                    tmax = game.pending.info.get('max_tiles', 3)
+                    if (row, col) in sel:
+                        game.log.append("そのマスは既に選択されています。")
+                        return
+                    sel.append((row, col))
+                    game.pending.info['selected'] = sel
+                    game.log.append(f"封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
+                    if len(sel) >= tmax:
+                        turns = game.pending.info.get('turns', 2)
+                        applies_to = game.pending.info.get('for_color', 'black')
+                        for (r, c) in sel:
+                            try:
+                                game.blocked_tiles[(r, c)] = turns
+                                game.blocked_tiles_owner[(r, c)] = applies_to
+                            except Exception:
+                                game.blocked_tiles[(r, c)] = turns
+                        game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                        game.pending = None
+                    return
+                else:
+                    game.log.append("そのマスは空ではありません。別のマスを選んでください。")
+                    return
+            elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece_unfreeze':
+                # must select one own frozen piece to unfreeze
+                # assume player controls white pieces
+                player_color = 'white'
+                clicked_color = None
+                try:
+                    clicked_color = clicked.color
+                except Exception:
+                    try:
+                        clicked_color = clicked.get('color') if clicked is not None else None
+                    except Exception:
+                        clicked_color = None
+                if clicked is not None and clicked_color is not None and clicked_color == player_color:
+                    pid = None
+                    try:
+                        pid = id(clicked)
+                    except Exception:
+                        try:
+                            pid = clicked.get('id')
+                        except Exception:
+                            pid = None
+                    if pid is not None and pid in game.frozen_pieces:
+                        try:
+                            del game.frozen_pieces[pid]
+                        except Exception:
+                            pass
+                        try:
+                            name = clicked.name
+                        except Exception:
+                            name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                        game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                        game.pending = None
+                    else:
+                        game.log.append("その駒は凍結されていません。自分の凍結駒を選択してください。")
+                else:
+                    game.log.append("自分の駒を選択してください。")
+                return
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece':
                 # must select an opponent piece
                 # assume player controls white
@@ -2444,6 +2546,15 @@ def main_loop():
                 sys.exit(0)
             elif event.type == pygame.KEYDOWN:
                 handle_keydown(event.key)
+            elif event.type == pygame.VIDEORESIZE:
+                # Window was resized (including maximize). Update globals and recreate screen surface.
+                try:
+                    global W, H, screen
+                    W, H = max(200, event.w), max(200, event.h)
+                    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                except Exception:
+                    # If resizing fails for any reason, ignore and continue with previous size
+                    pass
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
                     # スクロールバーつまみのドラッグ開始判定

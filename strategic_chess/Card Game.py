@@ -1179,6 +1179,7 @@ def compute_layout(win_w: int, win_h: int):
 
 def draw_panel():
     screen.fill((240, 240, 245))
+    global log_toggle_rect
 
     # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
     # Use shared responsive layout so left/right panels and board stay balanced
@@ -1226,6 +1227,20 @@ def draw_panel():
     opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    info_y += line_height
+
+    # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
+    global start_turn_rect
+    btn_w, btn_h = 160, 36
+    start_turn_rect = pygame.Rect(info_x, info_y, btn_w, btn_h)
+    # 押下可否に応じて色分け
+    can_start = (getattr(game, 'pending', None) is None) and (not getattr(game, 'turn_active', False)) and (chess_current_turn == 'white') and (not cpu_wait) and (not game_over)
+    bg_col = (60, 140, 220) if can_start else (140, 140, 140)
+    pygame.draw.rect(screen, bg_col, start_turn_rect)
+    pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
+    lab = FONT.render("ターン開始 (T)", True, (255,255,255))
+    screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+    info_y += line_height
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
@@ -1497,7 +1512,8 @@ def draw_panel():
         pygame.draw.rect(screen, (100, 100, 120),
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
-        draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
+        # タイトル（クリックで閉じる）
+        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
         # 見出しのすぐ下にスクロールのヒントを表示
         draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30, (100, 100, 120))
 
@@ -1975,6 +1991,41 @@ def draw_panel():
 
 
 
+def attempt_start_turn():
+    """[T]と同等のターン開始処理をUIやマウスからも呼べるように関数化。"""
+    global notice_msg, notice_until, turn_telop_msg, turn_telop_until, log_scroll_offset
+    if getattr(game, 'pending', None) is not None:
+        game.log.append("操作待ち: 先に保留中の選択を完了してください。")
+        return
+    # 既に開始済み
+    if getattr(game, 'turn_active', False):
+        game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
+        try:
+            notice_msg = "既にターンが開始されています。カードや駒の操作を行ってください。"
+            notice_until = _ct_time.time() + 1.0
+        except Exception:
+            pass
+        return
+    # チェス手番/AI待ち中は開始不可
+    global chess_current_turn, cpu_wait
+    if chess_current_turn != 'white' or cpu_wait:
+        game.log.append("チェスの操作またはAIの処理が完了していないため、ターンを開始できません。")
+        try:
+            notice_msg = "チェスの操作またはAIの処理が完了していないため、ターンを開始できません。"
+            notice_until = _ct_time.time() + 1.0
+        except Exception:
+            pass
+        return
+    # 開始
+    game.start_turn()
+    try:
+        turn_telop_msg = "YOUR TURN"
+        turn_telop_until = _ct_time.time() + 1.0
+    except Exception:
+        pass
+    log_scroll_offset = 0
+
+
 def handle_keydown(key):
     global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until
     
@@ -2007,40 +2058,7 @@ def handle_keydown(key):
             return
     
     if key == pygame.K_t:
-        if getattr(game, 'pending', None) is not None:
-            game.log.append("操作待ち: 先に保留中の選択を完了してください。")
-            return
-        # Prevent starting a new card-game turn if the previous chess/AI actions
-        # have not completed. Rules:
-        # - If the player's card-game turn is already active, do not start again.
-        # - If it's not currently white's chess turn (i.e., AI is to move), or AI is
-        #   still thinking (cpu_wait), disallow starting a new turn.
-        if getattr(game, 'turn_active', False):
-            game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
-            try:
-                notice_msg = "既にターンが開始されています。カードや駒の操作を行ってください。"
-                notice_until = _ct_time.time() + 1.0
-            except Exception:
-                pass
-            return
-        if chess_current_turn != 'white' or cpu_wait:
-            game.log.append("チェスの操作またはAIの処理が完了していないため、ターンを開始できません。")
-            try:
-                notice_msg = "チェスの操作またはAIの処理が完了していないため、ターンを開始できません。"
-                notice_until = _ct_time.time() + 1.0
-            except Exception:
-                pass
-            return
-
-        # All clear: start the player's card-game turn and show telop
-        game.start_turn()
-        try:
-            global turn_telop_msg, turn_telop_until
-            turn_telop_msg = "YOUR TURN"
-            turn_telop_until = _ct_time.time() + 1.0
-        except Exception:
-            pass
-        log_scroll_offset = 0  # 新しいターンで最新ログへ
+        attempt_start_turn()
         return
     
     if key == pygame.K_g:
@@ -2091,6 +2109,16 @@ def handle_keydown(key):
                 game.log.append(f"捨てるカードとして手札{idx+1}番を選択。[D]で確定")
             else:
                 game.log.append("操作待ち: 先に保留中の選択を完了してください。")
+            return
+        # ターン開始前はカード使用不可（既存のメッセージを表示）
+        if not getattr(game, 'turn_active', False):
+            msg = "ターンが開始されていませんTキーでターンを開始してください"
+            game.log.append(msg)
+            try:
+                notice_msg = msg
+                notice_until = _ct_time.time() + 1.0
+            except Exception:
+                pass
             return
         ok, msg = game.play_card(idx)
         if not ok:
@@ -2227,11 +2255,68 @@ def handle_mouse_click(pos):
             pygame.quit()
             sys.exit(0)
         return
+
+    # 墓地ラベルのクリックで墓地表示切替（最優先）
+    if grave_label_rect and grave_label_rect.collidepoint(pos):
+        show_grave = not show_grave
+        # 墓地を開くときは相手手札を閉じる
+        if show_grave:
+            show_opponent_hand = False
+        return
     
-    # 拡大表示中ならどこクリックしても閉じる
+    # 相手の手札ラベルのクリックで表示切替（最優先）
+    if opponent_hand_rect and opponent_hand_rect.collidepoint(pos):
+        show_opponent_hand = not show_opponent_hand
+        # 相手手札を開くときは墓地を閉じる
+        if show_opponent_hand:
+            show_grave = False
+        return
+    
+    # 墓地オーバーレイ表示中→領域外クリックで閉じる（カード拡大より先に判定）
+    if show_grave:
+        overlay_w = 600
+        overlay_h = 500
+        overlay_x = (W - overlay_w) // 2
+        overlay_y = (H - overlay_h) // 2
+        overlay_rect = pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h)
+        if not overlay_rect.collidepoint(pos):
+            show_grave = False
+            return
+        # オーバーレイ内のカードクリックで拡大表示
+        if grave_card_rects:
+            for rect, card_name in grave_card_rects:
+                if rect.collidepoint(pos):
+                    # toggle enlarged display
+                    if enlarged_card_name == card_name:
+                        enlarged_card_name = None
+                    else:
+                        enlarged_card_name = card_name
+                    return
+        # その他のオーバーレイ内クリックは何もしない
+        return
+
+    # 相手手札オーバーレイ表示中→領域外クリックで閉じる
+    if show_opponent_hand:
+        overlay_w = 600
+        overlay_h = 400
+        overlay_x = (W - overlay_w) // 2
+        overlay_y = (H - overlay_h) // 2
+        overlay_rect = pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h)
+        if not overlay_rect.collidepoint(pos):
+            show_opponent_hand = False
+            return
+        # オーバーレイ内クリックは何もしない
+        return
+    
+    # 拡大表示中→領域外クリックで閉じる（拡大画像自体のクリックでも閉じる）
     if enlarged_card_index is not None or enlarged_card_name is not None:
         enlarged_card_index = None
         enlarged_card_name = None
+        return
+
+    # 左パネルの『ターン開始』ボタン
+    if start_turn_rect and start_turn_rect.collidepoint(pos):
+        attempt_start_turn()
         return
     
     # 保留中の確認（ボタン）
@@ -2325,41 +2410,10 @@ def handle_mouse_click(pos):
             game.pending = None
             return
     
-    # 墓地ラベルのクリックで墓地表示切替
-    if grave_label_rect and grave_label_rect.collidepoint(pos):
-        show_grave = not show_grave
-        return
-    
-    # 相手の手札ラベルのクリックで表示切替
-    if opponent_hand_rect and opponent_hand_rect.collidepoint(pos):
-        show_opponent_hand = not show_opponent_hand
-        return
-    
-    # 墓地オーバーレイ内のカードクリックで拡大表示
-    if show_grave and grave_card_rects:
-        for rect, card_name in grave_card_rects:
-            if rect.collidepoint(pos):
-                # toggle enlarged display
-                if enlarged_card_name == card_name:
-                    enlarged_card_name = None
-                else:
-                    enlarged_card_name = card_name
-                return
-    
     # カードのクリック判定（優先）
     for rect, idx in card_rects:
         if rect.collidepoint(pos):
-            # If turn not started, block card interaction and show telop+log
-            if not getattr(game, 'turn_active', False):
-                msg = "ターンが開始されていませんTキーでターンを開始してください"
-                game.log.append(msg)
-                try:
-                    notice_msg = msg
-                    notice_until = _ct_time.time() + 1.0
-                except Exception:
-                    pass
-                return
-            # toggle
+            # 閲覧（拡大表示）はターン開始前でも許可する
             if enlarged_card_index == idx:
                 enlarged_card_index = None
             else:

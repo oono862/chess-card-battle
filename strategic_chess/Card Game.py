@@ -26,6 +26,10 @@ screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
 pygame.display.set_caption("カードゲーム デモ")
 clock = pygame.time.Clock()
 
+# Base UI resolution used for consistent scaling between windowed and fullscreen
+BASE_UI_W = 1200
+BASE_UI_H = 800
+
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
@@ -697,7 +701,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         dir = -1 if color == 'white' else 1
         # storm jump for pawn: if next_move_can_jump and front square is blocked, jump over it
         try:
-            can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+            # support jump flag for both players: white uses game.player.next_move_can_jump,
+            # black (AI) uses module-level ai_next_move_can_jump
+            if color == 'white':
+                can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
+            else:
+                can_jump = globals().get('ai_next_move_can_jump', False)
         except Exception:
             can_jump = False
         
@@ -752,10 +761,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                 if occupied(nr,nc):
                     if not occupied_by_color(nr,nc,color):
                         moves.append((nr,nc))
-                    # If player's card granted a single jump ability, allow jumping over one piece     
-                    can_jump = False
+                    # If a card granted a single jump ability, allow jumping over one piece
                     try:
-                        can_jump = (color == 'white' and getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False))
+                        if color == 'white':
+                            can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
+                        else:
+                            can_jump = globals().get('ai_next_move_can_jump', False)
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
@@ -834,6 +845,8 @@ def ai_make_move():
 
     # --- AI: consider playing a card before moving ---
     def ai_consider_play_card():
+        # Ensure assignments to module-level AI flags affect globals (nested function)
+        global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
         # decide whether to attempt a card play based on difficulty
         probs = {1: 0.08, 2: 0.18, 3: 0.45, 4: 0.7}
         p_play = probs.get(CPU_DIFFICULTY, 0.18)
@@ -906,9 +919,11 @@ def ai_make_move():
                 game.frozen_pieces[id(target)] = 1
                 game.log.append(f"AI: 氷結で {target.name} を凍結しました。")
         elif nm == '暴風':
+            # set module-level AI jump flag so get_valid_moves can consult it for black
             ai_next_move_can_jump = True
             game.log.append("AI: 暴風を使用、次の移動で1駒飛び越え可能。")
         elif nm == '迅雷':
+            # grant AI an extra/continuous-turn marker (consumed elsewhere if implemented)
             ai_consecutive_turns = max(ai_consecutive_turns, 1)
             game.log.append("AI: 迅雷を使用、連続ターンを獲得しました。")
         elif nm == '2ドロー':
@@ -1091,52 +1106,75 @@ def wrap_text(text: str, max_width: int):
 
 
 def compute_layout(win_w: int, win_h: int):
-        """Compute common layout metrics used by draw_panel and input handling.
-        Returns a dict with keys:
-            left_margin, left_panel_width, right_panel_width, right_panel_x,
-            board_left, board_top, board_size, board_area_top, board_area_height,
-            card_area_top
-        """
-        left_margin = max(12, int(win_w * 0.02))
-        # left and right side panels share similar proportional widths
-        left_panel_width = max(140, min(360, int(win_w * 0.18)))
-        right_panel_width = max(160, min(380, int(win_w * 0.18)))
+    """Compute common layout metrics used by draw_panel and input handling.
+    Returns a dict with keys:
+        left_margin, left_panel_width, right_panel_width, right_panel_x,
+        board_left, board_top, board_size, board_area_top, board_area_height,
+        card_area_top, scale
+    """
+    # Compute a uniform scale relative to a base UI resolution so that
+    # fullscreen and windowed modes scale UI elements consistently.
+    try:
+        scale_w = float(win_w) / float(BASE_UI_W)
+        scale_h = float(win_h) / float(BASE_UI_H)
+        scale = min(scale_w, scale_h)
+    except Exception:
+        scale = 1.0
 
-        board_area_top = max(12, int(win_h * 0.02))
-        inner_gap = 20
+    # Base measurements (from BASE_UI_W / BASE_UI_H) then scaled
+    base_left_margin = max(12, int(BASE_UI_W * 0.02))
+    base_left_panel_width = max(140, min(360, int(BASE_UI_W * 0.18)))
+    base_right_panel_width = max(160, min(380, int(BASE_UI_W * 0.18)))
+    base_board_area_top = max(12, int(BASE_UI_H * 0.02))
+    inner_gap = int(20 * scale)
 
-        central_left = left_margin + left_panel_width + inner_gap
-        central_right = win_w - left_margin - right_panel_width - inner_gap
-        central_width = max(0, central_right - central_left)
+    left_margin = max(12, int(base_left_margin * scale))
+    left_panel_width = max(12, int(base_left_panel_width * scale))
+    right_panel_width = max(12, int(base_right_panel_width * scale))
 
-        # reserve bottom area for hand display
-        card_h = max(120, int(win_h * 0.18))
-        reserved_bottom = card_h + 80
-        avail_height = win_h - board_area_top - reserved_bottom
+    board_area_top = max(8, int(base_board_area_top * scale))
 
-        board_size = max(64, min(central_width, avail_height))
-        # center board within central region
-        board_left = central_left + max(0, (central_width - board_size) // 2)
-        board_top = board_area_top
+    central_left = left_margin + left_panel_width + inner_gap
+    central_right = win_w - left_margin - right_panel_width - inner_gap
+    central_width = max(0, central_right - central_left)
 
-        right_panel_x = win_w - left_margin - right_panel_width
+    # reserve bottom area for hand display (card height scaled)
+    base_card_h = max(120, int(BASE_UI_H * 0.18))
+    card_h = max(48, int(base_card_h * scale))
+    reserved_bottom = card_h + int(80 * scale)
+    avail_height = win_h - board_area_top - reserved_bottom
 
-        card_area_top = board_top + board_size + 20
+    board_size = max(64, min(central_width, avail_height))
+    # If the UI is being upscaled (fullscreen), prefer to keep the board
+    # slightly smaller so card art and UI elements have room and appear larger.
+    try:
+        if scale > 1.0:
+            board_size = max(64, int(board_size * 0.9))
+    except Exception:
+        pass
+    # center board within central region
+    board_left = central_left + max(0, (central_width - board_size) // 2)
+    board_top = board_area_top
 
-        return {
-                'left_margin': left_margin,
-                'left_panel_width': left_panel_width,
-                'right_panel_width': right_panel_width,
-                'right_panel_x': right_panel_x,
-                'board_left': board_left,
-                'board_top': board_top,
-                'board_size': board_size,
-                'board_area_top': board_area_top,
-                'board_area_height': board_size,
-                'card_area_top': card_area_top,
-                'central_left': central_left,
-                'central_right': central_right,
-        }
+    right_panel_x = win_w - left_margin - right_panel_width
+
+    card_area_top = board_top + board_size + int(20 * scale)
+
+    return {
+        'left_margin': left_margin,
+        'left_panel_width': left_panel_width,
+        'right_panel_width': right_panel_width,
+        'right_panel_x': right_panel_x,
+        'board_left': board_left,
+        'board_top': board_top,
+        'board_size': board_size,
+        'board_area_top': board_area_top,
+        'board_area_height': board_size,
+        'card_area_top': card_area_top,
+        'central_left': central_left,
+        'central_right': central_right,
+        'scale': scale,
+    }
 
 
 def draw_panel():
@@ -1524,9 +1562,11 @@ def draw_panel():
     card_area_top = layout['card_area_top']
     # hand header aligned to board's left
     draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
-    
-    card_w = 100
-    card_h = 140
+    # card sizes scale with UI scale to keep magnification consistent
+    scale = layout.get('scale', 1.0)
+    # bump baseline multipliers so cards are more prominent in upscaled/fullscreen
+    card_w = max(48, int(130 * scale))
+    card_h = max(72, int(175 * scale))
     card_spacing = 8
     # center up to 7 cards under the board
     visible = min(7, len(game.player.hand.cards))

@@ -72,6 +72,8 @@ scrollbar_rect = None
 dragging_scrollbar = False
 drag_start_y = 0
 drag_start_offset = 0
+start_turn_rect = None  # マウスでターン開始ボタンを押すための矩形
+log_toggle_rect = None  # ログ表示/非表示のクリックトグル用
 
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
@@ -1058,6 +1060,7 @@ def wrap_text(text: str, max_width: int):
 
 def draw_panel():
     screen.fill((240, 240, 245))
+    global log_toggle_rect
 
     # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
     left_panel_width = 180  # 左側の基本情報パネルの幅
@@ -1103,6 +1106,20 @@ def draw_panel():
     opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    info_y += line_height
+
+    # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
+    global start_turn_rect
+    btn_w, btn_h = 160, 36
+    start_turn_rect = pygame.Rect(info_x, info_y, btn_w, btn_h)
+    # 押下可否に応じて色分け
+    can_start = (getattr(game, 'pending', None) is None) and (not getattr(game, 'turn_active', False)) and (chess_current_turn == 'white') and (not cpu_wait) and (not game_over)
+    bg_col = (60, 140, 220) if can_start else (140, 140, 140)
+    pygame.draw.rect(screen, bg_col, start_turn_rect)
+    pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
+    lab = FONT.render("ターン開始 (T)", True, (255,255,255))
+    screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+    info_y += line_height
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
@@ -1382,7 +1399,8 @@ def draw_panel():
         pygame.draw.rect(screen, (100, 100, 120),
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
-        draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
+        # タイトル（クリックで閉じる）
+        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
         # 見出しのすぐ下にスクロールのヒントを表示
         draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30, (100, 100, 120))
 
@@ -1440,8 +1458,8 @@ def draw_panel():
         else:
             scrollbar_rect = None
     else:
-        # ログ非表示時のヒント
-        draw_text(screen, "[L] ログ表示", W - 240, board_area_top + board_area_height - 30, (100, 100, 120))
+        # ログ非表示時のヒント（クリックで開く）
+        log_toggle_rect = draw_text(screen, "[L] ログ表示", W - 240, board_area_top + board_area_height - 30, (100, 100, 120))
 
     # === 下部エリア: 手札（横並び最大7枚） ===
     card_area_top = board_area_top + board_area_height + 20
@@ -1831,6 +1849,41 @@ def draw_panel():
 
 
 
+def attempt_start_turn():
+    """[T]と同等のターン開始処理をUIやマウスからも呼べるように関数化。"""
+    global notice_msg, notice_until, turn_telop_msg, turn_telop_until, log_scroll_offset
+    if getattr(game, 'pending', None) is not None:
+        game.log.append("操作待ち: 先に保留中の選択を完了してください。")
+        return
+    # 既に開始済み
+    if getattr(game, 'turn_active', False):
+        game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
+        try:
+            notice_msg = "既にターンが開始されています。カードや駒の操作を行ってください。"
+            notice_until = _ct_time.time() + 1.0
+        except Exception:
+            pass
+        return
+    # チェス手番/AI待ち中は開始不可
+    global chess_current_turn, cpu_wait
+    if chess_current_turn != 'white' or cpu_wait:
+        game.log.append("チェスの操作またはAIの処理が完了していないため、ターンを開始できません。")
+        try:
+            notice_msg = "チェスの操作またはAIの処理が完了していないため、ターンを開始できません。"
+            notice_until = _ct_time.time() + 1.0
+        except Exception:
+            pass
+        return
+    # 開始
+    game.start_turn()
+    try:
+        turn_telop_msg = "YOUR TURN"
+        turn_telop_until = _ct_time.time() + 1.0
+    except Exception:
+        pass
+    log_scroll_offset = 0
+
+
 def handle_keydown(key):
     global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until
     
@@ -1863,40 +1916,7 @@ def handle_keydown(key):
             return
     
     if key == pygame.K_t:
-        if getattr(game, 'pending', None) is not None:
-            game.log.append("操作待ち: 先に保留中の選択を完了してください。")
-            return
-        # Prevent starting a new card-game turn if the previous chess/AI actions
-        # have not completed. Rules:
-        # - If the player's card-game turn is already active, do not start again.
-        # - If it's not currently white's chess turn (i.e., AI is to move), or AI is
-        #   still thinking (cpu_wait), disallow starting a new turn.
-        if getattr(game, 'turn_active', False):
-            game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
-            try:
-                notice_msg = "既にターンが開始されています。カードや駒の操作を行ってください。"
-                notice_until = _ct_time.time() + 1.0
-            except Exception:
-                pass
-            return
-        if chess_current_turn != 'white' or cpu_wait:
-            game.log.append("チェスの操作またはAIの処理が完了していないため、ターンを開始できません。")
-            try:
-                notice_msg = "チェスの操作またはAIの処理が完了していないため、ターンを開始できません。"
-                notice_until = _ct_time.time() + 1.0
-            except Exception:
-                pass
-            return
-
-        # All clear: start the player's card-game turn and show telop
-        game.start_turn()
-        try:
-            global turn_telop_msg, turn_telop_until
-            turn_telop_msg = "YOUR TURN"
-            turn_telop_until = _ct_time.time() + 1.0
-        except Exception:
-            pass
-        log_scroll_offset = 0  # 新しいターンで最新ログへ
+        attempt_start_turn()
         return
     
     if key == pygame.K_g:
@@ -2081,6 +2101,11 @@ def handle_mouse_click(pos):
         enlarged_card_index = None
         enlarged_card_name = None
         return
+
+    # 左パネルの『ターン開始』ボタン
+    if start_turn_rect and start_turn_rect.collidepoint(pos):
+        attempt_start_turn()
+        return
     
     # 保留中の確認（ボタン）
     if getattr(game, 'pending', None) is not None and game.pending.kind == 'confirm':
@@ -2152,6 +2177,12 @@ def handle_mouse_click(pos):
                             game.log.append(f"墓地から『{recovered.name}』を回収。")
             game.pending = None
             return
+
+    # ログ開閉トグル（クリック）
+    if log_toggle_rect and log_toggle_rect.collidepoint(pos):
+        global show_log
+        show_log = not show_log
+        return
         if confirm_no_rect and confirm_no_rect.collidepoint(pos):
             confirm_id = game.pending.info.get('id')
             if confirm_id == 'confirm_grave_roulette_empty':

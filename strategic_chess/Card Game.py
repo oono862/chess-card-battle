@@ -1335,9 +1335,9 @@ def compute_layout(win_w: int, win_h: int):
         scale = 1.0
 
     # Base measurements (from BASE_UI_W / BASE_UI_H) then scaled
-    base_left_margin = max(12, int(BASE_UI_W * 0.02))
-    base_left_panel_width = max(140, min(360, int(BASE_UI_W * 0.18)))
-    base_right_panel_width = max(160, min(380, int(BASE_UI_W * 0.18)))
+    base_left_margin = max(8, int(BASE_UI_W * 0.018))
+    base_left_panel_width = max(120, min(420, int(BASE_UI_W * 0.16)))
+    base_right_panel_width = max(160, min(420, int(BASE_UI_W * 0.16)))
     base_board_area_top = max(12, int(BASE_UI_H * 0.02))
     inner_gap = int(20 * scale)
 
@@ -1353,11 +1353,11 @@ def compute_layout(win_w: int, win_h: int):
 
     # reserve bottom area for hand display (card height scaled)
     # On large screens, prefer larger card thumbnails so cards can be "big" as requested.
-    base_card_h = max(120, int(BASE_UI_H * 0.18))
-    # make cards substantially larger on big displays so artwork is prominent
-    if scale > 1.05:
-        # scale factor grows with UI scale, capped to avoid excessive sizes
-        extra = min(2.0, 1.0 + (scale - 1.0) * 1.0)
+    # Increase base card size slightly and make the upscaling more aggressive on large displays.
+    base_card_h = max(140, int(BASE_UI_H * 0.22))
+    if scale > 1.02:
+        # more aggressive growth so cards become prominently larger on fullscreen
+        extra = min(2.6, 1.0 + (scale - 1.0) * 1.4)
         base_card_h = int(base_card_h * extra)
     card_h = max(48, int(base_card_h * scale))
     reserved_bottom = card_h + int(80 * scale)
@@ -1376,7 +1376,8 @@ def compute_layout(win_w: int, win_h: int):
     center_dx = max(0, (central_width - board_size) // 2)
     # horizontal bias: on larger scales, shift the board left by a larger fraction of available space
     try:
-        horiz_bias = int(max(0, (scale - 1.0) * central_width * 0.12))
+        # stronger left shift so board moves noticeably left on large displays
+        horiz_bias = int(max(0, (scale - 1.0) * central_width * 0.28))
     except Exception:
         horiz_bias = 0
     board_left = central_left + max(0, center_dx - horiz_bias)
@@ -1384,9 +1385,10 @@ def compute_layout(win_w: int, win_h: int):
     # vertical bias: if there is extra vertical slack, push the board upward to minimize top whitespace
     slack = avail_height - board_size
     if slack > 0:
-        # remove most of the top slack so the board moves up; keep a small safe margin
-        move_up = int(slack * 0.9)
-        board_top = max(8, board_area_top - move_up)
+        # remove almost all of the top slack so the board moves up; keep a tiny safe margin
+        move_up = int(slack * 0.98)
+        # allow board to go very near the top (but not negative)
+        board_top = max(4, board_area_top - move_up)
     else:
         board_top = board_area_top
 
@@ -1395,7 +1397,27 @@ def compute_layout(win_w: int, win_h: int):
     card_area_top = board_top + board_size + int(20 * scale)
 
     # expose computed card height so draw_panel can size card thumbnails consistently
+    # start from the scaled base size
     card_h = max(48, int(base_card_h * scale))
+
+    # If there is extra vertical space below the board, use it to enlarge card artwork
+    # while keeping sensible caps so cards don't become absurdly large.
+    try:
+        space_below = win_h - (board_top + board_size) - int(20 * scale)
+        # leave a small padding; effective available for the card itself
+        avail_for_card = max(0, space_below - int(24 * scale))
+        if avail_for_card > card_h:
+            # allow card to grow up to a fraction of board_size or a capped multiplier
+            # allow cards to grow more aggressively into the freed vertical space
+            # increase cap: allow up to 75% of board height or a larger multiple of base
+            max_by_board = int(board_size * 0.75)
+            max_by_base = int(base_card_h * scale * 3.5)
+            target_h = min(avail_for_card, max_by_board, max_by_base)
+            # smoothly increase (don't shrink if target smaller)
+            if target_h > card_h:
+                card_h = target_h
+    except Exception:
+        pass
 
     return {
         'left_margin': left_margin,
@@ -1835,20 +1857,149 @@ def draw_panel():
     # === 右側エリア: ログ（切替式）===
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
     if show_log:
-        log_panel_left = board_area_left + board_area_width + 20
-        log_panel_top = board_area_top
-        # compute panel size but clamp to a reasonable maximum so full-screen doesn't make it huge
-        log_panel_width = W - log_panel_left - 24
-        log_panel_height = board_area_height
+        # Preferred log panel sits to the right of the board when enough room exists.
+        # Make the preferred width a bit larger so normal windows get a readable panel.
+        preferred_w = max(360, min(520, layout.get('right_panel_width', 360)))
+        # If this is a scaled / fullscreen (拡大画面) UI, allow a wider preferred width
+        ui_scale = layout.get('scale', 1.0)
+        if ui_scale > 1.15:
+            # only increase preferred_w for expanded screens; keep standard screens unchanged
+            # grow the log to use at least ~75% of the right-side available area (without overlapping the board)
+            gap_exp = int(28 * ui_scale)
+            right_margin_exp = 12
+            max_right_space = max(0, W - (board_right + gap_exp) - right_margin_exp)
+            # safety subtract to avoid 1px overlaps
+            safety = 8
+            if max_right_space > 200:
+                # target to occupy ~75% of the available right-side space, clamped so it never exceeds the space
+                target75 = int(max_right_space * 0.75)
+                use_w = max(target75, 420)
+                use_w = min(use_w, max(0, max_right_space - safety))
+                preferred_w = max(preferred_w, use_w)
+            else:
+                # if not much room, fall back to the scaled target but don't change standard behavior
+                preferred_w = max(preferred_w, min(912, int(520 * ui_scale * 1.2)))
+        board_right = board_area_left + board_area_width
+        scale = layout.get('scale', 1.0)
+        gap = int(28 * scale)
+        right_margin = 12
+        available_right_space = W - (board_right + gap) - right_margin
+
+        # Default: try to place on the right with preferred width
+        if available_right_space >= preferred_w:
+            log_panel_left = board_right + gap
+            log_panel_top = board_area_top
+            log_panel_width = preferred_w
+            log_panel_height = min(board_area_height, max(220, H - log_panel_top - 24))
+        else:
+            # Not enough horizontal room: attempt to place below the board between board and hand
+            space_below_board = max(0, layout.get('card_area_top', H) - (board_top + board_size))
+            if space_below_board >= 160:
+                log_panel_left = layout['left_margin']
+                log_panel_top = board_top + board_size + int(12 * scale)
+                log_panel_width = min(preferred_w, W - 2 * layout['left_margin'] - 24)
+                log_panel_height = min(space_below_board - 12, 420)
+            else:
+                # fallback: try to sit to the right but shrink width to the available space
+                use_w = max(220, min(preferred_w, available_right_space)) if available_right_space > 0 else 0
+                if use_w > 0 and (board_right + gap + use_w + right_margin) <= W:
+                    log_panel_left = board_right + gap
+                    log_panel_top = board_area_top
+                    log_panel_width = use_w
+                    log_panel_height = min(board_area_height, max(200, H - log_panel_top - 24))
+                else:
+                    # last resort: force fit the panel to the far right and reduce width to avoid overlap
+                    forced_w = max(200, W - board_right - gap - right_margin)
+                    if forced_w >= 200:
+                        log_panel_left = board_right + gap
+                        log_panel_top = board_area_top
+                        log_panel_width = forced_w
+                        log_panel_height = min(board_area_height, max(180, H - log_panel_top - 24))
+                    else:
+                        # give up on right side, place below the board full-width within margins
+                        log_panel_left = layout['left_margin']
+                        log_panel_top = board_top + board_size + int(12 * scale)
+                        log_panel_width = min(preferred_w, W - 2 * layout['left_margin'] - 24)
+                        log_panel_height = min(space_below_board - 12 if 'space_below_board' in locals() else 200, 420)
+
+        # clamp to absolute maxima so huge monitors don't create gigantic panels
         MAX_LOG_W = 640
         MAX_LOG_H = 600
-        if log_panel_width > MAX_LOG_W:
-            # center the clamped panel so it doesn't stick to the right edge awkwardly
-            log_panel_left = max(board_area_left + board_area_width + 20, W - MAX_LOG_W - 24)
-            log_panel_width = MAX_LOG_W
-        if log_panel_height > MAX_LOG_H:
-            # keep top aligned but reduce height
-            log_panel_height = MAX_LOG_H
+        log_panel_width = min(log_panel_width, MAX_LOG_W)
+        log_panel_height = min(log_panel_height, MAX_LOG_H)
+
+        # Ensure the panel is nudged right and fully visible (avoid overlapping board and prevent clipping).
+        # Increase the desired gap so the log is pushed farther right (as the user requested),
+        # then shrink the panel a bit so it can sit as far right as possible without being cut off.
+        # push a bit more to the right as requested (try to keep the current width)
+        desired_right_gap = int(112 * layout.get('scale', 1.0))
+        right_margin = 12
+        min_gap_to_board = int(8 * layout.get('scale', 1.0))
+        desired_left = max(log_panel_left, board_right + desired_right_gap)
+
+        # Prefer moving the panel to desired_left WITHOUT shrinking width
+        if desired_left + log_panel_width + right_margin <= W:
+            log_panel_left = desired_left
+        else:
+            # Can't place at desired_left with current width. Try to push it as far right as possible while keeping width.
+            max_left = W - log_panel_width - right_margin
+            if max_left >= board_right + min_gap_to_board:
+                # push to the far right but keep width
+                log_panel_left = max_left
+            else:
+                # As a last resort (very narrow window), allow minimal shrinking so it can sit at desired_left
+                shrink_w = W - desired_left - right_margin
+                if shrink_w >= min_gap_to_board and shrink_w >= 180:
+                    log_panel_width = shrink_w
+                    log_panel_left = desired_left
+                else:
+                    # fallback: place at max_left (may overlap slightly if window is too narrow)
+                    log_panel_left = max(layout['left_margin'], max_left)
+
+        # Final safety clamp to ensure we never draw off-screen
+        if log_panel_left + log_panel_width + right_margin > W:
+            log_panel_left = max(layout['left_margin'], W - log_panel_width - right_margin)
+
+        # Force the log panel to be flush-right: try to keep its width but if that would overlap
+        # shrink the width until it can be right-aligned without covering the board.
+        try:
+            scale = layout.get('scale', 1.0)
+            right_margin = 12
+            min_gap = int(8 * scale)
+            # target fixed width (a bit narrower for safety)
+            # increase fixed width on expanded/fullscreen to make the log bigger there only
+            if layout.get('scale', 1.0) > 1.15:
+                # larger fixed width for expanded screens; try to use most of the right space
+                gap_exp = int(28 * layout.get('scale', 1.0))
+                right_margin_exp = 12
+                max_right_space = max(0, W - (board_right + gap_exp) - right_margin_exp)
+                if max_right_space > 360:
+                    # use ~75% of right space for fixed width, leave a small safety gap
+                    FIXED_LOG_W = int(max_right_space * 0.75)
+                    FIXED_LOG_W = max(FIXED_LOG_W, 420)
+                    FIXED_LOG_W = min(FIXED_LOG_W, max_right_space - 8)
+                else:
+                    FIXED_LOG_W = int(520 * 1.2)
+            else:
+                FIXED_LOG_W = 300
+            target_w = min(log_panel_width, FIXED_LOG_W)
+            # maximum width allowed so the panel's left edge is at least `min_gap` from the board
+            max_allowed_w = W - (board_right + min_gap) - right_margin
+            if max_allowed_w < 20:
+                max_allowed_w = 20
+            # choose the smaller of target and allowed
+            final_w = min(target_w, max_allowed_w)
+            # ensure final width is at least a small readable minimum when possible
+            if max_allowed_w >= 160:
+                final_w = max(160, final_w)
+            else:
+                final_w = max(20, final_w)
+
+            # set width and right-align (flush to right_margin)
+            log_panel_width = int(final_w)
+            log_panel_left = max(layout['left_margin'], W - log_panel_width - right_margin)
+        except Exception:
+            pass
 
         # ログパネル背景
         pygame.draw.rect(screen, (250, 250, 255),
@@ -1925,10 +2076,40 @@ def draw_panel():
     hand_title_y = card_area_top
     draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", hand_title_x, hand_title_y, (40, 40, 40))
     
-    # カードサイズ
-    card_w = 100
-    card_h = 135
-    card_spacing = 8
+    # カードサイズ: レイアウトで計算した card_h をベースに視覚的に拡大
+    scale = layout.get('scale', 1.0)
+    base_card_h = layout.get('card_h', max(72, int(175 * scale)))
+    # Apply a visual multiplier for thumbnails. Reduce the multiplier on
+    # normal/smaller window sizes to avoid clipping; allow larger scale on
+    # fullscreen where there's more space.
+    try:
+        ui_scale = layout.get('scale', 1.0)
+        if ui_scale <= 1.0:
+            # normal window: avoid any enlargement to prevent clipping
+            VISUAL_CARD_SCALE = 0.9
+        elif ui_scale <= 1.15:
+            VISUAL_CARD_SCALE = 1.0
+        else:
+            VISUAL_CARD_SCALE = 1.15
+    except Exception:
+        VISUAL_CARD_SCALE = 1.05
+    card_h = max(48, int(base_card_h * VISUAL_CARD_SCALE))
+
+    # Clamp card_h so it doesn't overlap the board or other UI.
+    try:
+        bottom_slack = H - (layout['board_top'] + layout['board_size'])
+        # leave a larger padding to prevent bottom clipping on usual windows
+        avail_for_card = max(48, bottom_slack - int(64 * scale))
+        max_by_board = int(layout['board_size'] * 0.75)
+        allowed = max(48, min(max_by_board, avail_for_card))
+        if card_h > allowed:
+            card_h = allowed
+    except Exception:
+        pass
+
+    # compute width preserving original aspect ratio used elsewhere (130x175 base)
+    card_w = max(48, int(card_h * (130.0 / 175.0)))
+    card_spacing = max(8, int(8 * scale))
     card_start_x = hand_title_x  # 左マージンから開始
     card_y = hand_title_y + 30
     

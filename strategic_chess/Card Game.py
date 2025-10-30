@@ -1352,7 +1352,13 @@ def compute_layout(win_w: int, win_h: int):
     central_width = max(0, central_right - central_left)
 
     # reserve bottom area for hand display (card height scaled)
+    # On large screens, prefer larger card thumbnails so cards can be "big" as requested.
     base_card_h = max(120, int(BASE_UI_H * 0.18))
+    # make cards substantially larger on big displays so artwork is prominent
+    if scale > 1.05:
+        # scale factor grows with UI scale, capped to avoid excessive sizes
+        extra = min(2.0, 1.0 + (scale - 1.0) * 1.0)
+        base_card_h = int(base_card_h * extra)
     card_h = max(48, int(base_card_h * scale))
     reserved_bottom = card_h + int(80 * scale)
     avail_height = win_h - board_area_top - reserved_bottom
@@ -1365,13 +1371,31 @@ def compute_layout(win_w: int, win_h: int):
             board_size = max(64, int(board_size * 0.9))
     except Exception:
         pass
-    # center board within central region
-    board_left = central_left + max(0, (central_width - board_size) // 2)
-    board_top = board_area_top
+    # center board within central region, but bias position for large screens
+    # so the board moves toward the left/top to make room for larger cards and reduce top whitespace
+    center_dx = max(0, (central_width - board_size) // 2)
+    # horizontal bias: on larger scales, shift the board left by a larger fraction of available space
+    try:
+        horiz_bias = int(max(0, (scale - 1.0) * central_width * 0.12))
+    except Exception:
+        horiz_bias = 0
+    board_left = central_left + max(0, center_dx - horiz_bias)
+
+    # vertical bias: if there is extra vertical slack, push the board upward to minimize top whitespace
+    slack = avail_height - board_size
+    if slack > 0:
+        # remove most of the top slack so the board moves up; keep a small safe margin
+        move_up = int(slack * 0.9)
+        board_top = max(8, board_area_top - move_up)
+    else:
+        board_top = board_area_top
 
     right_panel_x = win_w - left_margin - right_panel_width
 
     card_area_top = board_top + board_size + int(20 * scale)
+
+    # expose computed card height so draw_panel can size card thumbnails consistently
+    card_h = max(48, int(base_card_h * scale))
 
     return {
         'left_margin': left_margin,
@@ -1384,6 +1408,7 @@ def compute_layout(win_w: int, win_h: int):
         'board_area_top': board_area_top,
         'board_area_height': board_size,
         'card_area_top': card_area_top,
+    'card_h': card_h,
         'central_left': central_left,
         'central_right': central_right,
         'scale': scale,
@@ -1603,6 +1628,43 @@ def draw_panel():
         # Don't let animation errors break UI
         pass
 
+    # --- 封鎖タイルでのループ再生: Image_MG.gif ---
+    try:
+        _ensure_mg_gif_loaded()
+        if mg_gif_frames_cache and mg_gif_durations:
+            try:
+                total_ms = int(sum(mg_gif_durations))
+            except Exception:
+                total_ms = max(1, int(mg_gif_total_duration * 1000))
+            now_ms = int(_ct_time.time() * 1000) if total_ms > 0 else 0
+            for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+                # only show while turns > 0
+                if not turns:
+                    continue
+                bx = board_left + bc * square_w
+                by = board_top + br * square_h
+                # frame index by modulo looping
+                if total_ms > 0:
+                    tmod = now_ms % total_ms
+                    acc = 0
+                    idx = 0
+                    for i, d in enumerate(mg_gif_durations):
+                        acc += d
+                        if tmod < acc:
+                            idx = i
+                            break
+                else:
+                    idx = 0
+                frame = mg_gif_frames_cache[idx]
+                try:
+                    f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
+                except Exception:
+                    f_surf = frame
+                # draw on tile top-left so it covers the tile area
+                screen.blit(f_surf, (bx, by))
+    except Exception:
+        pass
+
     # --- ターン表示テロップ（中央・1秒表示） ---
     try:
         if turn_telop_msg and _ct_time.time() < turn_telop_until:
@@ -1775,8 +1837,18 @@ def draw_panel():
     if show_log:
         log_panel_left = board_area_left + board_area_width + 20
         log_panel_top = board_area_top
+        # compute panel size but clamp to a reasonable maximum so full-screen doesn't make it huge
         log_panel_width = W - log_panel_left - 24
         log_panel_height = board_area_height
+        MAX_LOG_W = 640
+        MAX_LOG_H = 600
+        if log_panel_width > MAX_LOG_W:
+            # center the clamped panel so it doesn't stick to the right edge awkwardly
+            log_panel_left = max(board_area_left + board_area_width + 20, W - MAX_LOG_W - 24)
+            log_panel_width = MAX_LOG_W
+        if log_panel_height > MAX_LOG_H:
+            # keep top aligned but reduce height
+            log_panel_height = MAX_LOG_H
 
         # ログパネル背景
         pygame.draw.rect(screen, (250, 250, 255),
@@ -1850,11 +1922,12 @@ def draw_panel():
     card_area_top = layout['card_area_top']
     # hand header aligned to board's left
     draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
-    # card sizes scale with UI scale to keep magnification consistent
+    # card sizes scale with layout-provided card height for responsive large-screen thumbnails
     scale = layout.get('scale', 1.0)
-    # bump baseline multipliers so cards are more prominent in upscaled/fullscreen
-    card_w = max(48, int(130 * scale))
-    card_h = max(72, int(175 * scale))
+    # prefer the card height computed by compute_layout (gives larger thumbnails on big screens)
+    card_h = layout.get('card_h', max(72, int(175 * scale)))
+    # compute width preserving original aspect ratio used elsewhere (130x175 base)
+    card_w = max(48, int(card_h * (130.0 / 175.0)))
     # increase spacing with scale so cards don't visually crowd in fullscreen
     card_spacing = max(8, int(12 * scale))
     # center up to 7 cards under the board

@@ -2123,7 +2123,7 @@ def draw_panel():
         elif game.pending.kind == 'target_piece':
             instruction_text = "凍結する相手コマを選択してください"
         elif game.pending.kind == 'heat_choice':
-            instruction_text = "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
+            instruction_text = "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
         else:
             instruction_text = "選択を完了してください"
         
@@ -2190,7 +2190,7 @@ def draw_panel():
             pygame.draw.rect(screen, (255,255,255), heat_choice_unfreeze_rect, 2)
             pygame.draw.rect(screen, (255,255,255), heat_choice_block_rect, 2)
             t1 = FONT.render('自分の凍結駒を解除', True, (255,255,255))
-            t2 = FONT.render('1～3マスを封鎖する', True, (255,255,255))
+            t2 = FONT.render('3マス封鎖をする', True, (255,255,255))
             screen.blit(t1, (heat_choice_unfreeze_rect.centerx - t1.get_width()//2, heat_choice_unfreeze_rect.centery - t1.get_height()//2))
             screen.blit(t2, (heat_choice_block_rect.centerx - t2.get_width()//2, heat_choice_block_rect.centery - t2.get_height()//2))
 
@@ -2528,6 +2528,17 @@ def handle_keydown(key):
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
                 else:
                     game.log.append("確認: はい")
+            elif confirm_id == 'confirm_heat_no_frozen':
+                # 灼熱で凍結駒がない場合の確認「はい」→カードを消費して墓地へ
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    game.player.graveyard.append(card)
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。凍結駒がないため効果なし。PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい → 効果なし")
             else:
                 # その他の確認（通常の墓地ルーレット実行など）
                 game.log.append("確認: はい")
@@ -2548,6 +2559,8 @@ def handle_keydown(key):
         if key in (pygame.K_n, pygame.K_ESCAPE):
             confirm_id = game.pending.info.get('id')
             if confirm_id == 'confirm_grave_roulette_empty':
+                game.log.append("確認: いいえ → キャンセル（カードは消費されません）")
+            elif confirm_id == 'confirm_heat_no_frozen':
                 game.log.append("確認: いいえ → キャンセル（カードは消費されません）")
             else:
                 game.log.append("確認: いいえ → キャンセル（効果なし）")
@@ -2713,6 +2726,17 @@ def handle_mouse_click(pos):
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{game.player.pp_current}/{game.player.pp_max}。")
                 else:
                     game.log.append("確認: はい")
+            elif confirm_id == 'confirm_heat_no_frozen':
+                # 灼熱で凍結駒がない場合の確認「はい」→カードを消費して墓地へ
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    game.player.graveyard.append(card)
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。凍結駒がないため効果なし。PPは{game.player.pp_current}/{game.player.pp_max}。")
+                else:
+                    game.log.append("確認: はい → 効果なし")
             else:
                 # その他の確認（通常の墓地ルーレット実行など）
                 game.log.append("確認: はい")
@@ -2729,25 +2753,57 @@ def handle_mouse_click(pos):
                             game.log.append(f"墓地から『{recovered.name}』を回収。")
             game.pending = None
             return
-
-    # 灼熱の二択ボタンのクリック処理（保留が heat_choice のとき）
-    if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
-        if heat_choice_unfreeze_rect and heat_choice_unfreeze_rect.collidepoint(pos):
-            # 選択: 自分の凍結駒を解除 -> target_piece_unfreeze 保留へ
-            game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
-            return
-        if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
-            # 選択: 複数マス封鎖へ（max_tiles まで選択）
-            info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
-            game.pending = PendingAction(kind='target_tiles_multi', info=info)
-            return
         if confirm_no_rect and confirm_no_rect.collidepoint(pos):
             confirm_id = game.pending.info.get('id')
             if confirm_id == 'confirm_grave_roulette_empty':
                 game.log.append("確認: いいえ → キャンセル（カードは消費されません）")
+            elif confirm_id == 'confirm_heat_no_frozen':
+                game.log.append("確認: いいえ → キャンセル（カードは消費されません）")
             else:
                 game.log.append("確認: いいえ → キャンセル（効果なし）")
             game.pending = None
+            return
+
+    # 灼熱の二択ボタンのクリック処理（保留が heat_choice のとき）
+    if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
+        if heat_choice_unfreeze_rect and heat_choice_unfreeze_rect.collidepoint(pos):
+            # 選択: 自分の凍結駒を解除 -> まず凍結駒の存在確認
+            frozen = getattr(game, 'frozen_pieces', {})
+            my_frozen_pieces = []
+            for p in chess.pieces:
+                if p.color == 'black' and id(p) in frozen and frozen[id(p)] > 0:
+                    my_frozen_pieces.append(p)
+            
+            if not my_frozen_pieces:
+                # 凍結駒がない場合は警告表示（カードはまだ消費していない）
+                game.pending = PendingAction(kind='confirm', info={
+                    'id': 'confirm_heat_no_frozen',
+                    'message': '凍結駒がありません。\nカードを使用しますか？',
+                    'hand_index': game.pending.info.get('hand_index')
+                })
+                return
+            else:
+                # 凍結駒がある場合は通常の解除処理へ（カードを消費してから）
+                hand_idx = game.pending.info.get('hand_index')
+                if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                    card = game.player.hand.cards[hand_idx]
+                    game.player.spend_pp(card.cost)
+                    game.player.hand.remove_at(hand_idx)
+                    game.player.graveyard.append(card)
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
+                game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
+                return
+        if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
+            # 選択: 複数マス封鎖へ（カードを消費してから）
+            hand_idx = game.pending.info.get('hand_index')
+            if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
+                card = game.player.hand.cards[hand_idx]
+                game.player.spend_pp(card.cost)
+                game.player.hand.remove_at(hand_idx)
+                game.player.graveyard.append(card)
+                game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
+            info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
+            game.pending = PendingAction(kind='target_tiles_multi', info=info)
             return
     
     # カードのクリック判定（優先）

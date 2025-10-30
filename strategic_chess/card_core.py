@@ -281,6 +281,19 @@ class Game:
                 },
             )
             return True, "確認待ち"
+
+        # 灼熱: カード消費前に二択を表示（カード未消費）
+        if card.name == "灼熱":
+            self.pending = PendingAction(
+                kind="heat_choice",
+                info={
+                    "turns": 2,
+                    "max_tiles": 3,
+                    "hand_index": hand_index,  # カードの位置を保存
+                    "note": "Choose: unfreeze one own frozen piece OR block 1-3 tiles for opponent.",
+                },
+            )
+            return True, "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
         
         # Optional precheck (e.g., cannot play if graveyard empty)
         if card.precheck is not None:
@@ -370,7 +383,7 @@ def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
             "note": "Choose: unfreeze one own frozen piece OR block 1-3 tiles for opponent.",
         },
     )
-    return "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
+    return "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
 
 
 def eff_freeze_piece(game: Game, player: PlayerState) -> str:

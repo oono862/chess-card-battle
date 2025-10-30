@@ -173,8 +173,7 @@ class Game:
         # Mark the card-game turn as active; player must press start_turn to enable actions
         self.turn_active = True
         self.player.reset_pp()
-        # Decay board statuses (done via helper so opponent-turn-only decay can be applied separately)
-        self.decay_statuses()
+        # 封鎖タイルや凍結駒の減少処理は相手ターン終了時に行われるため、ここでは行わない
 
         self.player.extra_moves_this_turn = 0
         self.player.next_move_can_jump = False
@@ -190,6 +189,7 @@ class Game:
                 self.log.append(f"ターン{self.turn}開始: 『{c.name}』を1枚ドロー。PPを{self.player.pp_max}に回復。")
             else:
                 self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
+
 
     def decay_statuses(self) -> None:
         """Decay time-limited statuses (blocked_tiles, frozen_pieces) by 1 turn.
@@ -281,6 +281,48 @@ class Game:
                 },
             )
             return True, "確認待ち"
+
+        # 灼熱: カード消費前に二択を表示（カード未消費）
+        if card.name == "灼熱":
+            self.pending = PendingAction(
+                kind="heat_choice",
+                info={
+                    "turns": 2,
+                    "max_tiles": 3,
+                    "hand_index": hand_index,  # カードの位置を保存
+                    "note": "Choose: unfreeze one own frozen piece OR block 1-3 tiles for opponent.",
+                },
+            )
+            return True, "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
+        
+        # 錬成: まず錬成カードを墓地に送り、1枚ドローして、その後手札から1枚捨てる処理
+        if card.name == "錬成":
+            # PPを消費して錬成カードを墓地に送る
+            assert self.player.spend_pp(card.cost)
+            self.player.hand.remove_at(hand_index)
+            self.player.graveyard.append(card)
+            
+            # 1枚ドロー
+            drawn_card = self.player.deck.draw()
+            if drawn_card:
+                self.player.hand.add(drawn_card)
+                msg = f"『{card.name}』（コスト{card.cost}）を使用。山札から『{drawn_card.name}』を引きました。PPは{self.player.pp_current}/{self.player.pp_max}。"
+            else:
+                msg = f"『{card.name}』（コスト{card.cost}）を使用。山札が空です。PPは{self.player.pp_current}/{self.player.pp_max}。"
+            
+            self.log.append(msg)
+            
+            # その後、手札から1枚捨てる処理を保留
+            self.pending = PendingAction(
+                kind="discard",
+                info={
+                    "count": 1,
+                    "is_alchemy": True,  # 錬成の捨てる処理であることを示す
+                    "drawn_card_name": drawn_card.name if drawn_card else None,  # 引いたカード名を保存
+                    "note": f"錬成で引いたカード『{drawn_card.name if drawn_card else 'なし'}』を含めて手札から1枚選んで墓地に捨ててください。",
+                },
+            )
+            return True, msg + " 手札から1枚選んで墓地に捨ててください。"
         
         # Optional precheck (e.g., cannot play if graveyard empty)
         if card.precheck is not None:
@@ -370,7 +412,7 @@ def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
             "note": "Choose: unfreeze one own frozen piece OR block 1-3 tiles for opponent.",
         },
     )
-    return "灼熱: 自分の凍結駒を解除するか、1～3マスを封鎖するか選択してください。"
+    return "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
 
 
 def eff_freeze_piece(game: Game, player: PlayerState) -> str:
@@ -414,15 +456,8 @@ def eff_draw2(game: Game, player: PlayerState) -> str:
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:
     """錬成(0): 山札から1枚引き、その後手札から1枚選んで捨てる（保留アクション）。"""
-    # New behavior: require the player to discard first; ONLY after discard is confirmed
-    # the effect draws 1 card. We capture this as an execute_after_discard instruction
-    # so the UI can perform the draw after the discard completes.
-    game.pending = PendingAction(kind="discard", info={
-        "count": 1,
-        "execute_after_discard": {"draw": 1},
-        "note": "錬成: 先に手札から1枚捨てると、その後1枚ドローします。",
-    })
-    return "錬成: まず手札から1枚を捨ててください。捨てると1枚ドローします。"
+    # 実際の処理はplay_card内で行われる（カード消費前に処理）
+    return "錬成の効果を実行中..."
 
 
 def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:

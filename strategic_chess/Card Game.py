@@ -1809,9 +1809,9 @@ def draw_panel():
             if check_colors != draw_panel.last_check_colors:
                 draw_panel.last_check_colors = check_colors.copy()
             
-            # 左パネルの下部に表示（手札の上）
+            # 左パネルの中央付近に表示（手札と被らない位置）
             check_x = left_margin + 10
-            check_y = H - 270  # 手札の上に配置
+            check_y = H // 2 - 50
             
             for idx, color in enumerate(draw_panel.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
@@ -1918,74 +1918,19 @@ def draw_panel():
         # ログ非表示時のヒント (右パネルに寄せる)
         draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
-    # === 下部エリア: 手札（横並び最大7枚） ===
+    # === 下部エリア: 手札（左から横並び最大7枚） ===
+    # ボードの下に左詰めで横並びで表示
     card_area_top = layout['card_area_top']
-    # hand header aligned to board's left
-    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", layout['board_left'], card_area_top, (40, 40, 40))
-    # card sizes scale with layout-provided card height for responsive large-screen thumbnails
-    scale = layout.get('scale', 1.0)
-    # prefer the card height computed by compute_layout (gives larger thumbnails on big screens)
-    card_h = layout.get('card_h', max(72, int(175 * scale)))
-    # compute width preserving original aspect ratio used elsewhere (130x175 base)
-    card_w = max(48, int(card_h * (130.0 / 175.0)))
-    # increase spacing with scale so cards don't visually crowd in fullscreen
-    card_spacing = max(8, int(12 * scale))
-    # center up to 7 cards under the board
-    visible = min(7, len(game.player.hand.cards))
-    total_w = visible * card_w + (visible - 1) * card_spacing if visible > 0 else 0
-    # If total width exceeds central content area, DO NOT shrink card images.
-    # Instead, reduce spacing to a sensible minimum so thumbnails remain readable.
-    central_left = layout.get('central_left', layout['board_left'])
-    central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
-    avail_w = max(0, central_right - central_left - 16)
-    if total_w > avail_w and visible > 0:
-        # compute the maximum spacing that fits while keeping card size fixed
-        min_spacing = 4
-        # available width for spacing after placing fixed-size cards
-        remaining = avail_w - visible * card_w
-        if visible > 1:
-            if remaining >= (visible - 1) * min_spacing:
-                card_spacing = max(min_spacing, remaining // (visible - 1))
-            else:
-                # not enough room even with minimal spacing: use minimal spacing and left-align
-                card_spacing = min_spacing
-        else:
-            card_spacing = min_spacing
-        total_w = visible * card_w + (visible - 1) * card_spacing
-    # Prefer centering under the board, but clamp to the central content area so cards
-    # never overlap the left/right side panels (where telops and helper text live).
-    central_left = layout.get('central_left', layout['board_left'])
-    central_right = layout.get('central_right', layout['board_left'] + layout['board_size'])
-    # Place the hand centered under the board, but ensure it never intrudes
-    # into the right panel. This replaces the previous multi-step shifting
-    # which caused right-bias in some window sizes.
-    center_start = layout['board_left'] + max(0, (layout['board_size'] - total_w) // 2)
-    # available horizontal region for the hand (inside central area and left of right panel)
-    available_left = central_left + 8
-    right_panel_left = layout.get('right_panel_x', layout.get('board_left', 0) + layout.get('board_size', 0) + 20)
-    available_right = right_panel_left - 12
-    available_width = max(0, available_right - available_left)
-
-    if total_w <= available_width:
-        # Plenty of room: center under the board but don't cross available bounds
-        card_start_x = max(available_left, min(center_start, available_right - total_w))
-    else:
-        # Not enough room: compute overflow and shift left proportionally, clamped to available_left
-        overflow = total_w - available_width
-        # shift at most the distance from center_start to available_left
-        max_shift = max(0, center_start - available_left)
-        shift = min(max_shift, overflow)
-        card_start_x = max(available_left, center_start - shift)
-    # vertical offset scaled so larger UI keeps cards clear of other overlays
-    card_y = card_area_top + max(20, int(30 * layout.get('scale', 1.0)))
-    # Ensure the hand is placed below the board (so telops/notice within board don't overlap)
-    min_card_y = layout['board_top'] + layout['board_size'] + max(8, int(8 * layout.get('scale', 1.0)))
-    # Also ensure we leave a bottom margin so side/bottom UI (チェック表示等) is not overlapped
-    bottom_margin = max(80, int(80 * layout.get('scale', 1.0)))
-    max_card_y = max(card_y, H - bottom_margin - card_h)
-    # clamp within safe vertical range
-    card_y = max(card_y, min_card_y)
-    card_y = min(card_y, max_card_y)
+    hand_title_x = layout['left_margin']  # 左マージンから開始
+    hand_title_y = card_area_top
+    draw_text(screen, "手札 (1-7で使用 / クリックで拡大):", hand_title_x, hand_title_y, (40, 40, 40))
+    
+    # カードサイズ
+    card_w = 100
+    card_h = 135
+    card_spacing = 8
+    card_start_x = hand_title_x  # 左マージンから開始
+    card_y = hand_title_y + 30
     
     # カード描画とクリック判定用の矩形保存
     global card_rects
@@ -2009,7 +1954,7 @@ def draw_panel():
             # 外側にもう一層、少し濃い金色
             pygame.draw.rect(screen, (218, 165, 32), rect.inflate(4, 4), 3)
         
-        # カード下部にボタン番号を大きく表示
+        # カード下部にボタン番号を表示
         button_number = f"[{i+1}]"
         # 背景ボックス
         button_bg_width = 35
@@ -2035,7 +1980,7 @@ def draw_panel():
 
     # === 状態表示（右下）===
     state_x = layout['right_panel_x'] + 12
-    state_y = card_area_top + 40
+    state_y = layout['card_area_top'] + 40
     draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
     state_y += 20
     draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))
@@ -2424,7 +2369,7 @@ def attempt_start_turn():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until
+    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until, show_grave, show_opponent_hand
     
     # ゲーム終了時のキー操作
     if game_over:
@@ -2459,15 +2404,21 @@ def handle_keydown(key):
         return
     
     if key == pygame.K_g:
-        # 保留中でも閲覧だけは可能にする
-        global show_grave
+        # 墓地表示切替（保留中でも閲覧だけは可能）
+        prev = show_grave
         show_grave = not show_grave
+        # 開くときは相手手札を閉じる（クリック時と同じ排他制御）
+        if not prev and show_grave:
+            show_opponent_hand = False
         return
     
     if key == pygame.K_h:
-        # 相手の手札表示切替
-        global show_opponent_hand
+        # 相手の手札表示切替（クリック時と同じ排他制御を反映）
+        prev = show_opponent_hand
         show_opponent_hand = not show_opponent_hand
+        # 開くときは墓地を閉じる
+        if not prev and show_opponent_hand:
+            show_grave = False
         return
 
     # --- DEBUG: 盤面セットショートカット ---

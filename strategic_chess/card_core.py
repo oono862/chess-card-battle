@@ -173,8 +173,7 @@ class Game:
         # Mark the card-game turn as active; player must press start_turn to enable actions
         self.turn_active = True
         self.player.reset_pp()
-        # Decay board statuses (done via helper so opponent-turn-only decay can be applied separately)
-        self.decay_statuses()
+        # 封鎖タイルや凍結駒の減少処理は相手ターン終了時に行われるため、ここでは行わない
 
         self.player.extra_moves_this_turn = 0
         self.player.next_move_can_jump = False
@@ -190,6 +189,7 @@ class Game:
                 self.log.append(f"ターン{self.turn}開始: 『{c.name}』を1枚ドロー。PPを{self.player.pp_max}に回復。")
             else:
                 self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
+
 
     def decay_statuses(self) -> None:
         """Decay time-limited statuses (blocked_tiles, frozen_pieces) by 1 turn.

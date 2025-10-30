@@ -2483,7 +2483,12 @@ def handle_keydown(key):
         if getattr(game, 'pending', None) is not None:
             if game.pending.kind == 'discard':
                 game.pending.info['selected'] = idx
-                game.log.append(f"捨てるカードとして手札{idx+1}番を選択。[D]で確定")
+                # カード名を取得してログに表示
+                if 0 <= idx < len(game.player.hand.cards):
+                    card_name = game.player.hand.cards[idx].name
+                    game.log.append(f"捨てるカードとして『{card_name}』を選択。[D]で確定")
+                else:
+                    game.log.append(f"捨てるカードとして手札{idx+1}番を選択。[D]で確定")
             else:
                 game.log.append("操作待ち: 先に保留中の選択を完了してください。")
             return
@@ -2605,6 +2610,7 @@ def handle_keydown(key):
             if removed:
                 game.player.graveyard.append(removed)
                 game.log.append(f"『{removed.name}』を捨てました。")
+                
                 # If there's an execute_after_discard instruction, perform it now
                 ex = game.pending.info.get('execute_after_discard')
                 if ex:

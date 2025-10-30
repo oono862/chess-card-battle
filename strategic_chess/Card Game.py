@@ -2130,30 +2130,62 @@ def draw_panel():
         # ボックスサイズ計算
         box_padding = 30
         
-        # confirmの場合は複数行対応
+        # レイアウト情報を取得
+        layout = compute_layout(W, H)
+        left_margin = layout['left_margin']
+        left_panel_width = layout['left_panel_width']
+        
+        # 左パネル内に収まる最大幅を計算
+        max_box_width = left_panel_width - 20
+        
+        # テキストを左パネルの幅に合わせて自動改行
         if game.pending.kind == 'confirm':
             msg = game.pending.info.get('message', '実行してもよろしいですか？ [Y]=はい / [N]=いいえ')
-            lines = msg.split('\n')
-            # 各行の幅を計算して最大幅を取得
-            max_width = 0
-            for line in lines:
-                line_surface = FONT.render(line, True, (0, 0, 0))
-                max_width = max(max_width, line_surface.get_width())
-            box_width = max_width + box_padding * 2
-            # タイトル + メッセージ行数分の高さ + 下部余白
-            box_height = 50 + len(lines) * 22 + 15
         else:
-            text_surface = FONT.render(instruction_text, True, (0, 0, 0))
-            text_width = text_surface.get_width()
-            box_width = text_width + box_padding * 2
-            box_height = 80
+            msg = instruction_text
         
-        # カード拡大表示の横に配置（右側）
-        if enlarged_card_index is not None:
-            box_x = (W - 300) // 2 + 300 + 30  # カードの右側
+        # メッセージを改行文字で分割
+        original_lines = msg.split('\n')
+        wrapped_lines = []
+        
+        # 各行を左パネルの幅に収まるように自動折り返し（より正確な計算）
+        for original_line in original_lines:
+            if len(original_line) == 0:
+                wrapped_lines.append('')
+                continue
+            
+            # 実際の描画幅を計算しながら折り返し
+            words = original_line
+            current_line = ""
+            for char in words:
+                test_line = current_line + char
+                test_surface = FONT.render(test_line, True, (0, 0, 0))
+                if test_surface.get_width() > (max_box_width - box_padding * 2):
+                    if current_line:
+                        wrapped_lines.append(current_line)
+                    current_line = char
+                else:
+                    current_line = test_line
+            if current_line:
+                wrapped_lines.append(current_line)
+        
+        # 各行の幅を計算して最大幅を取得
+        max_width = 0
+        for line in wrapped_lines:
+            line_surface = FONT.render(line, True, (0, 0, 0))
+            max_width = max(max_width, line_surface.get_width())
+        
+        box_width = min(max_width + box_padding * 2, max_box_width)
+        # タイトル + メッセージ行数分の高さ + 下部余白
+        box_height = 50 + len(wrapped_lines) * 22 + 15
+        
+        # 左パネルエリアに配置（ターン開始ボタンの下）
+        box_x = left_margin + 10
+        # ターン開始ボタンの下に配置（start_turn_rectがあればその下、なければデフォルト位置）
+        if 'start_turn_rect' in globals() and start_turn_rect is not None:
+            box_y = start_turn_rect.bottom + 20  # ターン開始ボタンの下に20pxの余白
         else:
-            box_x = (W - box_width) // 2  # 中央
-        box_y = (H - box_height) // 2
+            box_y = max(80, (H - box_height) // 2 - 100)
         
         # 背景ボックス
         pygame.draw.rect(screen, (255, 255, 200), (box_x, box_y, box_width, box_height))
@@ -2161,17 +2193,12 @@ def draw_panel():
         
         # タイトル
         draw_text(screen, "⚠ 操作待ち", box_x + box_padding, box_y + 15, (180, 60, 0))
-        # 操作説明テキスト
-        if game.pending.kind == 'confirm':
-            msg = game.pending.info.get('message', '実行してもよろしいですか？ [Y]=はい / [N]=いいえ')
-            # 改行対応: \nで分割して複数行描画
-            lines = msg.split('\n')
-            line_y = box_y + 45
-            for line in lines:
-                draw_text(screen, line, box_x + box_padding, line_y, (60, 60, 60))
-                line_y += 22  # 行間
-        else:
-            draw_text(screen, instruction_text, box_x + box_padding, box_y + 45, (60, 60, 60))
+        
+        # 操作説明テキスト（複数行対応）
+        line_y = box_y + 45
+        for line in wrapped_lines:
+            draw_text(screen, line, box_x + box_padding, line_y, (60, 60, 60))
+            line_y += 22  # 行間
 
         # 灼熱選択用の二択ボタン（保留が heat_choice のとき）
         global heat_choice_unfreeze_rect, heat_choice_block_rect
@@ -2180,6 +2207,7 @@ def draw_panel():
         if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
             btn_w, btn_h = 260, 40
             gap = 20
+            # ボタンを画面中央に配置（heat_choiceの選択肢は従来通り中央）
             btn_y = box_y + box_height + 12
             total_w = btn_w * 2 + gap
             start_x = (W - total_w) // 2
@@ -2194,16 +2222,17 @@ def draw_panel():
             screen.blit(t1, (heat_choice_unfreeze_rect.centerx - t1.get_width()//2, heat_choice_unfreeze_rect.centery - t1.get_height()//2))
             screen.blit(t2, (heat_choice_block_rect.centerx - t2.get_width()//2, heat_choice_block_rect.centery - t2.get_height()//2))
 
-        # 確認ダイアログのボタン（はい/いいえ）
+        # 確認ダイアログのボタン（はい/いいえ）- 警告ボックスの下に配置
         global confirm_yes_rect, confirm_no_rect
         confirm_yes_rect = None
         confirm_no_rect = None
         if game.pending.kind == 'confirm':
-            btn_w, btn_h = 120, 36
-            gap = 20
+            btn_w, btn_h = 100, 36
+            gap = 15
+            # 警告ボックスの下、左パネル内に配置
             btn_y = box_y + box_height + 12
             total_w = btn_w * 2 + gap
-            start_x = (W - total_w) // 2
+            start_x = box_x + (box_width - total_w) // 2  # 警告ボックスの中央に配置
             yes_label = game.pending.info.get('yes_label', 'はい(Y)')
             no_label = game.pending.info.get('no_label', 'いいえ(N)')
             confirm_yes_rect = pygame.Rect(start_x, btn_y, btn_w, btn_h)

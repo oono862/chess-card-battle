@@ -100,6 +100,25 @@ mg_gif_total_duration = 0.0
 mg_gif_load_attempted = False
 mg_gif_load_success = False
 
+# Ice GIF (氷結) cache + player (Image_ic (1).gif)
+ic_gif_frames_cache = None
+ic_gif_durations = None
+ic_gif_load_attempted = False
+ic_gif_load_success = False
+ic_gif_anim = {
+    'playing': False,
+    'start_time': 0.0,
+    'total_duration': 0.0,
+    'frames': None,
+    'durations': None,
+    'pos': None,  # (row, col)
+}
+# How much to slow down the ice GIF playback (multiplier on per-frame durations).
+# Increase to make the animation slower/longer. Default 2.5x for better visibility.
+IC_GIF_SPEED_FACTOR = 2.5
+# Scale multiplier for ice GIF when rendering over a tile (1.0 = tile size)
+IC_GIF_SCALE = 1.4
+
 def _load_gif_frames(path: str):
     """Try to load GIF frames using Pillow if available, fallback to single surface.
 
@@ -214,6 +233,115 @@ def play_heat_gif_at(row: int, col: int):
     heat_gif_anim['start_time'] = _ct_time.time()
     heat_gif_anim['total_duration'] = sum(durations) / 1000.0
     heat_gif_anim['pos'] = (row, col)
+
+
+def _ensure_ic_gif_loaded():
+    """Lazily load Image_ic GIF frames into ic_gif_* globals."""
+    global ic_gif_frames_cache, ic_gif_durations, ic_gif_load_attempted, ic_gif_load_success
+    if ic_gif_frames_cache is not None and ic_gif_durations is not None:
+        return
+    if ic_gif_load_attempted:
+        return
+    ic_gif_load_attempted = True
+    candidates = [
+        'Image_ic (1).gif',
+        'Image_ic.gif',
+        'Image_ic(1).gif',
+        'Image_ic_1.gif',
+        'Image_ic1.gif',
+        'ice.gif',
+    ]
+    frames = None
+    durations = None
+    for cand in candidates:
+        path = os.path.join(IMG_DIR, cand)
+        f, d = _load_gif_frames(path)
+        if f:
+            frames = f
+            durations = d
+            try:
+                game.log.append(f"Image_ic を読み込みました: {path} ({len(f)} frames)")
+            except Exception:
+                pass
+            break
+    if not frames and os.path.isdir(IMG_DIR):
+        for fn in os.listdir(IMG_DIR):
+            if fn.lower().startswith('image_ic'):
+                path = os.path.join(IMG_DIR, fn)
+                f, d = _load_gif_frames(path)
+                if f:
+                    frames = f
+                    durations = d
+                    try:
+                        game.log.append(f"Image_ic を読み込みました: {path} ({len(f)} frames)")
+                    except Exception:
+                        pass
+                    break
+    if not frames:
+        try:
+            path = os.path.join(IMG_DIR, 'Image_ic (1).gif')
+            surf = pygame.image.load(path).convert_alpha()
+            frames = [surf]
+            durations = [1000]
+            try:
+                game.log.append(f"Image_ic を pygame.image.load で単一フレームとして読み込みました: {path}")
+            except Exception:
+                pass
+            ic_gif_load_success = True
+        except Exception:
+            ic_gif_load_success = False
+            try:
+                game.log.append(f"Image_ic を読み込めませんでした: {IMG_DIR}")
+            except Exception:
+                pass
+            return
+    ic_gif_frames_cache = frames
+    # Apply speed factor to make ice animation slower and more visible
+    try:
+        # ensure durations is a list of ints
+        durations = [int(d) for d in (durations or [1000])]
+        slowed = [max(int(d * IC_GIF_SPEED_FACTOR), 120) for d in durations]
+        ic_gif_durations = slowed
+        ic_gif_anim['total_duration'] = sum(ic_gif_durations) / 1000.0
+        try:
+            game.log.append(f"Image_ic 再生速度を {IC_GIF_SPEED_FACTOR}x に設定（各フレーム最小120ms）。合計 {ic_gif_anim['total_duration']:.2f}s")
+        except Exception:
+            pass
+    except Exception:
+        ic_gif_durations = durations
+        try:
+            ic_gif_anim['total_duration'] = sum(durations) / 1000.0
+        except Exception:
+            ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
+    ic_gif_load_success = True
+
+
+def play_ic_gif_at(row: int, col: int):
+    """Start playing the ice GIF centered at board square (row,col)."""
+    global ic_gif_frames_cache, ic_gif_durations, ic_gif_anim
+    if ic_gif_frames_cache is None or ic_gif_durations is None:
+        _ensure_ic_gif_loaded()
+    frames = ic_gif_frames_cache
+    durations = ic_gif_durations
+    if not frames:
+        try:
+            game.log.append(f"(debug) Image_ic frames not loaded; cannot play at {(row,col)}")
+        except Exception:
+            pass
+        return
+    ic_gif_anim['frames'] = frames
+    ic_gif_anim['durations'] = durations
+    ic_gif_anim['playing'] = True
+    ic_gif_anim['start_time'] = _ct_time.time()
+    try:
+        ic_gif_anim['total_duration'] = sum(durations) / 1000.0
+    except Exception:
+        ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
+    ic_gif_anim['pos'] = (row, col)
+    try:
+        game.log.append(f"(debug) 再生トリガ: Image_ic at {(row,col)}")
+    except Exception:
+        pass
 
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
@@ -1020,149 +1148,116 @@ def ai_make_move():
     def ai_consider_play_card():
         # Ensure assignments to module-level AI flags affect globals (nested function)
         global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
-        # decide whether to attempt a card play based on difficulty
-        probs = {1: 0.08, 2: 0.18, 3: 0.45, 4: 0.7}
-        p_play = probs.get(CPU_DIFFICULTY, 0.18)
+        # aggressiveness / per-attempt probability by difficulty
+        # increase base play probability slightly so AI uses cards more often
+        probs = {1: 0.25, 2: 0.45, 3: 0.75, 4: 0.95}
+        p_play = probs.get(CPU_DIFFICULTY, 0.45)
         if not ai_player.hand.cards:
             return False
-        if random.random() > p_play:
-            return False
 
-        # collect playable indices
-        playable = [i for i, c in enumerate(ai_player.hand.cards) if c.can_play(ai_player)]
-        if not playable:
-            return False
+        # Gather simple board metrics to influence card choice (mobility, high-value targets)
+        try:
+            my_move_count = 0
+            opp_move_count = 0
+            for p in chess.pieces:
+                try:
+                    moves = get_valid_moves(p, ignore_check=True)
+                except Exception:
+                    moves = []
+                if getattr(p, 'color', None) == 'black':
+                    my_move_count += len(moves)
+                else:
+                    opp_move_count += len(moves)
+        except Exception:
+            my_move_count = opp_move_count = 0
 
-        # heuristic: prefer disruptive cards
-        names = [ai_player.hand.cards[i].name for i in playable]
-        # ranking order
-        prefer = ['氷結', '灼熱', '暴風', '迅雷', '2ドロー', '錬成']
-        chosen_idx = None
-        for pref in prefer:
-            if pref in names:
-                chosen_idx = playable[names.index(pref)]
+        # highest opponent piece value (for targeting priorities)
+        vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
+        highest_opp_val = 0
+        try:
+            for p in chess.pieces:
+                if getattr(p, 'color', None) == 'white':
+                    highest_opp_val = max(highest_opp_val, vals.get(getattr(p, 'name', ''), 0))
+        except Exception:
+            highest_opp_val = 0
+
+        # decide how many attempts to try this turn (higher difficulty => more plays)
+        max_attempts = {1: 1, 2: 2, 3: 3, 4: 4}.get(CPU_DIFFICULTY, 2)
+        attempts = 0
+        made_any = False
+        while attempts < max_attempts:
+            # if random roll fails, stop trying further plays
+            if random.random() > p_play:
                 break
-        if chosen_idx is None:
-            chosen_idx = random.choice(playable)
 
-        card = ai_player.hand.remove_at(chosen_idx)
-        if not card:
-            return False
-        # pay PP
-        if not ai_player.spend_pp(card.cost):
-            # cannot pay, return card to hand
-            ai_player.hand.add(card)
-            return False
+            # recompute playable indices according to current PP
+            playable = [i for i, c in enumerate(ai_player.hand.cards) if c.can_play(ai_player)]
+            if not playable:
+                break
 
-        # apply simplified effects directly (auto-targeting)
-        nm = card.name
-        if nm == '灼熱':
-            # block a square near white's highest-value piece
-            target = None
-            best_val = -1
-            vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
-            for wp in chess.pieces:
-                if getattr(wp, 'color', None) == 'white':
-                    v = vals.get(getattr(wp, 'name', ''), 0)
-                    if v > best_val:
-                        best_val = v
-                        target = wp
-            if target:
-                tr, tc = target.row, target.col
-                # choose a neighboring empty square if possible
-                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
-                    nr, nc = tr+dr, tc+dc
-                    if 0<=nr<8 and 0<=nc<8 and chess.get_piece_at(nr,nc) is None:
-                        game.blocked_tiles[(nr,nc)] = 2
-                        game.blocked_tiles_owner[(nr,nc)] = 'black'
-                        game.log.append(f"AI: 灼熱でマス {(nr,nc)} を封鎖しました。")
+            # prefer list (disruptive first), but adjust order by simple board heuristics
+            names = [ai_player.hand.cards[i].name for i in playable]
+            prefer = ['氷結', '灼熱', '暴風', '迅雷', '2ドロー', '錬成']
+            # If opponent has much higher mobility, prefer blocking (灼熱)
+            if opp_move_count > my_move_count + 4:
+                prefer.remove('灼熱') if '灼熱' in prefer else None
+                prefer.insert(0, '灼熱')
+            # If AI has low mobility, prefer buffs that grant movement (暴風/迅雷)
+            if my_move_count < opp_move_count and '暴風' in prefer:
+                prefer.remove('暴風')
+                prefer.insert(0, '暴風')
+            # If opponent has a high-value piece, prioritize 氷結
+            if highest_opp_val >= 5:
+                if '氷結' in prefer:
+                    prefer.remove('氷結')
+                    prefer.insert(0, '氷結')
+            chosen_idx = None
+            for pref in prefer:
+                if pref in names:
+                    chosen_idx = playable[names.index(pref)]
+                    break
+            if chosen_idx is None:
+                # for higher difficulty prefer deterministic choice (first in prefer that exists)
+                chosen_idx = None
+                for pref in prefer:
+                    if pref in names:
+                        chosen_idx = playable[names.index(pref)]
                         break
-        elif nm == '氷結':
-            # freeze highest-value white piece for 1 turn
-            target = None
-            best_val = -1
-            vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
-            for wp in chess.pieces:
-                if getattr(wp, 'color', None) == 'white':
-                    v = vals.get(getattr(wp,'name',''),0)
-                    if v > best_val and id(wp) not in game.frozen_pieces:
-                        best_val = v
-                        target = wp
-            if target:
-                game.frozen_pieces[id(target)] = 1
-                game.log.append(f"AI: 氷結で {target.name} を凍結しました。")
-        elif nm == '暴風':
-            # set module-level AI jump flag so get_valid_moves can consult it for black
-            ai_next_move_can_jump = True
-            game.log.append("AI: 暴風を使用、次の移動で1駒飛び越え可能。")
-        elif nm == '迅雷':
-            # grant AI an extra/continuous-turn marker (consumed elsewhere if implemented)
-            ai_consecutive_turns = max(ai_consecutive_turns, 1)
-            game.log.append("AI: 迅雷を使用、連続ターンを獲得しました。")
-        elif nm == '2ドロー':
-            for _ in range(2):
-                c = ai_player.deck.draw()
-                if c:
-                    ai_player.hand.add(c)
-            game.log.append("AI: 2ドローを使用しました。")
-        elif nm == '錬成':
-            # draw 1 and discard random if over hand limit
-            c = ai_player.deck.draw()
-            if c:
-                ai_player.hand.add(c)
-            if ai_player.hand.cards:
-                ai_player.hand.remove_at(random.randrange(len(ai_player.hand.cards)))
-            game.log.append("AI: 錬成を使用しました。")
-        else:
-            # fallback: do nothing special
-            game.log.append(f"AI: {nm} を使用しました（効果は簡略適用）。")
+                if chosen_idx is None:
+                    chosen_idx = random.choice(playable)
 
-        # move card to graveyard
-        ai_player.graveyard.append(card)
-        return True
+            # attempt play via unified resolver so AI follows same rules as player
+            try:
+                ok, msg = game.play_card_for(ai_player, chosen_idx)
+                if ok:
+                    made_any = True
+                else:
+                    try:
+                        game.log.append(f"AI: カードの使用に失敗しました: {msg}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                try:
+                    game.log.append(f"AI: カード使用中に例外が発生しました: {e}")
+                except Exception:
+                    pass
+
+            attempts += 1
+
+        return made_any
 
     # attempt to play a card (may mutate ai state)
     try:
+        prev_turn_active = getattr(game, 'turn_active', False)
+        # allow AI to play via game.play_card_for which requires turn_active
+        game.turn_active = True
         ai_consider_play_card()
+        game.turn_active = prev_turn_active
     except Exception:
-        pass
-
-    # --- 封鎖タイル向けの継続アニメーション (Image_MG.gif) ---
-    try:
-        _ensure_mg_gif_loaded()
-        if mg_gif_frames_cache and mg_gif_durations:
-            # compute global loop time in ms
-            try:
-                total_ms = int(sum(mg_gif_durations))
-            except Exception:
-                total_ms = max(1, int(mg_gif_total_duration * 1000))
-            now_ms = int(_ct_time.time() * 1000) if total_ms > 0 else 0
-            for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
-                # only show while turns > 0
-                if not turns:
-                    continue
-                bx = board_left + bc * square_w
-                by = board_top + br * square_h
-                # frame index by modulo looping
-                if total_ms > 0:
-                    tmod = now_ms % total_ms
-                    acc = 0
-                    idx = 0
-                    for i, d in enumerate(mg_gif_durations):
-                        acc += d
-                        if tmod < acc:
-                            idx = i
-                            break
-                else:
-                    idx = 0
-                frame = mg_gif_frames_cache[idx]
-                try:
-                    f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
-                except Exception:
-                    f_surf = frame
-                # draw on tile top-left so it covers the tile area
-                screen.blit(f_surf, (bx, by))
-    except Exception:
+        try:
+            game.turn_active = prev_turn_active
+        except Exception:
+            pass
         pass
 
     # (animation rendering moved to draw_panel where board metrics are available)
@@ -1648,6 +1743,45 @@ def draw_panel():
                     screen.blit(f_surf, (fx, fy))
     except Exception:
         # Don't let animation errors break UI
+        pass
+
+    # Play ice GIF animation if active (centered on target/frozen piece square)
+    try:
+        if ic_gif_anim.get('playing') and ic_gif_anim.get('frames'):
+            elapsed = _ct_time.time() - ic_gif_anim.get('start_time', 0.0)
+            total = ic_gif_anim.get('total_duration', 0.0)
+            frames = ic_gif_anim.get('frames')
+            durations = ic_gif_anim.get('durations') or [1000]
+            if elapsed >= total:
+                ic_gif_anim['playing'] = False
+            else:
+                # determine current frame
+                acc = 0.0
+                elapsed_ms = elapsed * 1000.0
+                idx = 0
+                for i, d in enumerate(durations):
+                    acc += d
+                    if elapsed_ms < acc:
+                        idx = i
+                        break
+                frame = frames[idx]
+                pos = ic_gif_anim.get('pos')
+                if pos is not None:
+                    r, c = pos
+                    # scale animation slightly larger than tile for visibility
+                    try:
+                        fw = max(1, int(square_w * IC_GIF_SCALE))
+                        fh = max(1, int(square_h * IC_GIF_SCALE))
+                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
+                    except Exception:
+                        f_surf = frame
+                        fw = f_surf.get_width()
+                        fh = f_surf.get_height()
+                    # center the scaled animation over the tile
+                    fx = board_left + c * square_w + (square_w - fw) // 2
+                    fy = board_top + r * square_h + (square_h - fh) // 2
+                    screen.blit(f_surf, (fx, fy))
+    except Exception:
         pass
 
     # --- 封鎖タイルでのループ再生: Image_MG.gif ---
@@ -3202,12 +3336,34 @@ def handle_mouse_click(pos):
                     except Exception:
                         name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
                     game.log.append(f"凍結: {name} を {turns} ターン凍結")
+                    # play ice GIF on the target square
+                    try:
+                        # clicked may be object or dict
+                        tr = getattr(clicked, 'row', None)
+                        tc = getattr(clicked, 'col', None)
+                        if tr is None:
+                            tr = clicked.get('row') if isinstance(clicked, dict) else None
+                        if tc is None:
+                            tc = clicked.get('col') if isinstance(clicked, dict) else None
+                        if tr is not None and tc is not None:
+                            play_ic_gif_at(int(tr), int(tc))
+                    except Exception:
+                        pass
                     game.pending = None
                 else:
                     game.log.append("相手の駒を選んでください。")
                 return
         # Normal piece selection / move handling
         if selected_piece is None:
+            # If the clicked piece is frozen, play the ice GIF at that square as feedback
+            try:
+                if clicked is not None and id(clicked) in getattr(game, 'frozen_pieces', {}):
+                    try:
+                        play_ic_gif_at(row, col)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
                 selected_piece = clicked
                 highlight_squares = get_valid_moves(clicked)

@@ -343,6 +343,157 @@ class Game:
         self.log.append(msg_full)
         return True, msg_full
 
+    def play_card_for(self, player, hand_index: int) -> Tuple[bool, str]:
+        """Play a card on behalf of `player` (AI). This mirrors play_card but
+        uses the provided player object instead of self.player and automatically
+        resolves interactive pending choices with reasonable defaults for AI.
+        """
+        # Basic guards similar to play_card
+        if not getattr(self, 'turn_active', False):
+            return False, "ターンが開始していません。[T]で開始してください。"
+        if self.pending is not None:
+            return False, "操作待ちがあるためカードを使用できません。"
+        if not (0 <= hand_index < len(player.hand.cards)):
+            return False, "手札の番号が不正です。"
+        card = player.hand.cards[hand_index]
+        if not card.can_play(player):
+            return False, f"PPが不足しています（現在{player.pp_current}）。『{card.name}』のコストは{card.cost}です。"
+
+        # For AI, auto-resolve cards that normally create pending actions
+        # Handle 墓地ルーレット: if grave empty, AI will cancel use
+        if card.name == "墓地ルーレット" and not player.graveyard:
+            return False, "AI: 墓地が空のため墓地ルーレットを使いませんでした。"
+
+        # 迅雷: if already active, AI will skip using
+        if card.name == "迅雷" and getattr(self, 'player_consecutive_turns', 0) >= 1:
+            return False, "AI: 迅雷は既に効果があるため使用しませんでした。"
+
+        # 暴風: if player's next_move_can_jump already True, skip
+        if card.name == "暴風" and getattr(player, 'next_move_can_jump', False):
+            return False, "AI: 暴風は既に効果があるため使用しませんでした。"
+
+        # 錬成 special-case: AI will consume PP and perform immediate discard
+        if card.name == "錬成":
+            assert player.spend_pp(card.cost)
+            player.hand.remove_at(hand_index)
+            player.graveyard.append(card)
+            drawn = player.deck.draw()
+            if drawn:
+                player.hand.add(drawn)
+            # AI discards a random card if hand not empty
+            import random
+            if player.hand.cards:
+                player.hand.remove_at(random.randrange(len(player.hand.cards)))
+            self.log.append(f"AI: 錬成を使用しました。")
+            return True, "AI: 錬成を使用しました。"
+
+        # Spend PP and resolve general effects
+        assert player.spend_pp(card.cost)
+        player.hand.remove_at(hand_index)
+        # Call effect; many effects expect (game, player)
+        msg = card.effect(self, player)
+        # If effect created pending (unlikely for AI), try to auto-resolve simple kinds
+        if self.pending is not None:
+            # Auto-resolve pending actions for AI in sensible ways
+            try:
+                from . import chess_engine as chess
+            except Exception:
+                try:
+                    import chess_engine as chess
+                except Exception:
+                    chess = None
+
+            # Determine player color: assume self.player is human (white), others are black
+            own_color = 'white' if player is self.player else 'black'
+            opp_color = 'black' if own_color == 'white' else 'white'
+
+            if self.pending.kind == 'heat_choice':
+                turns = self.pending.info.get('turns', 2)
+                max_tiles = self.pending.info.get('max_tiles', 3)
+
+                # If AI has any frozen own pieces, unfreeze the highest-value one; otherwise block tiles
+                unfreeze_candidates = []
+                if chess is not None:
+                    try:
+                        for p in chess.pieces:
+                            if getattr(p, 'color', None) == own_color and id(p) in self.frozen_pieces:
+                                unfreeze_candidates.append(p)
+                    except Exception:
+                        unfreeze_candidates = []
+
+                if unfreeze_candidates:
+                    # choose highest-value by piece type
+                    vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+                    best = None
+                    best_v = -1
+                    for p in unfreeze_candidates:
+                        v = vals.get(getattr(p, 'name', ''), 0)
+                        if v > best_v:
+                            best_v = v
+                            best = p
+                    if best is not None:
+                        try:
+                            del self.frozen_pieces[id(best)]
+                        except Exception:
+                            pass
+                        self.log.append(f"AI: 灼熱で自分の凍結駒 {getattr(best,'name',str(best))} を解除しました。")
+                        self.pending = None
+                else:
+                    # Block up to max_tiles around strongest opponent piece
+                    target = None
+                    best_val = -1
+                    vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+                    if chess is not None:
+                        try:
+                            for p in chess.pieces:
+                                if getattr(p, 'color', None) == opp_color:
+                                    v = vals.get(getattr(p, 'name', ''), 0)
+                                    if v > best_val:
+                                        best_val = v
+                                        target = p
+                        except Exception:
+                            target = None
+                    if target is not None:
+                        tr, tc = getattr(target, 'row', None), getattr(target, 'col', None)
+                        placed = 0
+                        for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
+                            if placed >= max_tiles:
+                                break
+                            nr, nc = tr + dr, tc + dc
+                            if nr is None or nc is None:
+                                continue
+                            if 0 <= nr < 8 and 0 <= nc < 8:
+                                # ensure empty
+                                empty = True
+                                if chess is not None:
+                                    try:
+                                        if chess.get_piece_at(nr, nc) is not None:
+                                            empty = False
+                                    except Exception:
+                                        empty = True
+                                if empty:
+                                    try:
+                                        self.blocked_tiles[(nr, nc)] = turns
+                                        self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                    except Exception:
+                                        self.blocked_tiles[(nr, nc)] = turns
+                                    placed += 1
+                        if placed > 0:
+                            self.log.append(f"AI: 灼熱でマスの封鎖を行いました: {placed} マス")
+                        else:
+                            self.log.append("AI: 灼熱を使用しましたが、有効な封鎖マスが見つかりませんでした。")
+                        self.pending = None
+                    else:
+                        # no target found, just clear pending
+                        self.pending = None
+            else:
+                # Clear any other pending for AI (best-effort)
+                self.pending = None
+        # move to graveyard
+        player.graveyard.append(card)
+        self.log.append(f"AI: 『{card.name}』を使用しました。 {msg}")
+        return True, f"AI: 『{card.name}』を使用しました。 {msg}"
+
 
 # -----------------------------
 # Sample effects and a small sample card pool

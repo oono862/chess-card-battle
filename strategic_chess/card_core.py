@@ -622,11 +622,7 @@ def eff_graveyard_roulette(game: Game, player: PlayerState) -> str:
     return f"墓地から『{card.name}』を回収。"
 
 
-def pre_graveyard_not_empty(game: Game, player: PlayerState) -> Optional[str]:
-    """墓地が空ならエラーを返し、カードを使用不可にする。"""
-    if not player.graveyard:
-        return "墓地が空のため『墓地ルーレット』は発動できません。"
-    return None
+
 
 
 def eff_leech_pp2(game: Game, player: PlayerState) -> str:

@@ -247,10 +247,6 @@ def _ensure_mg_gif_loaded():
     except Exception:
         mg_gif_total_duration = len(durations) * 0.1 if durations else 0.0
     mg_gif_load_success = True
-    try:
-        game.log.append(f"Image_MG.gif を読み込みました: {len(frames)} フレーム")
-    except Exception:
-        pass
 
 def play_heat_gif_at(row: int, col: int):
     """Start playing the heat GIF animation centered at board square (row,col)."""
@@ -259,7 +255,9 @@ def play_heat_gif_at(row: int, col: int):
     if heat_gif_frames_cache is None or heat_gif_durations is None:
         frames, durations = _load_gif_frames(gif_path)
         heat_gif_frames_cache = frames
-        heat_gif_durations = durations
+
+
+
     frames = heat_gif_frames_cache
     durations = heat_gif_durations
     if not frames:
@@ -764,76 +762,6 @@ def show_deck_modal(screen):
 
         pygame.display.flip()
         clock.tick(30)
-    
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit(0)
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    pygame.quit(); sys.exit(0)
-                if pygame.K_1 <= event.key <= pygame.K_4:
-                    CPU_DIFFICULTY = event.key - pygame.K_0
-                    return
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                mx, my = event.pos
-                # check horizontal buttons
-                btn_x = (W - (btn_w*4 + 16*3))//2
-                for i, (_lab, val) in enumerate(options):
-                    bx = btn_x + i * (btn_w + 16)
-                    by = start_y
-                    if bx <= mx <= bx + btn_w and by <= my <= by + btn_h:
-                        CPU_DIFFICULTY = val
-                        return
-                # deck button area
-                deck_btn = pygame.Rect((W-160)//2, start_y + btn_h + 80, 160, 48)
-                if deck_btn.collidepoint((mx,my)):
-                    show_deck_editor()
-                    continue
-
-        # draw background
-        if bg is not None:
-            screen.blit(bg, (0,0))
-        else:
-            screen.fill((200, 150, 90))
-
-        # semi-transparent dark overlay to improve text contrast
-        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,90))
-        screen.blit(overlay, (0,0))
-
-        # Title with outline
-        title_surf = title_font.render("CPUの難易度を選択してください", True, (245,245,240))
-        tx = (W - title_surf.get_width())//2
-        ty = start_y - 90
-        for ox, oy in [(-2,0),(2,0),(0,-2),(0,2)]:
-            screen.blit(title_font.render("CPUの難易度を選択してください", True, (30,30,30)), (tx+ox, ty+oy))
-        screen.blit(title_surf, (tx, ty))
-
-        # buttons (wide grey boxes like original, arranged horizontally)
-        btn_x = (W - (btn_w*4 + 16*3))//2
-        for i, (lab, val) in enumerate(options):
-            bx = btn_x + i * (btn_w + 16)
-            by = start_y
-            rect = pygame.Rect(bx, by, btn_w, btn_h)
-            pygame.draw.rect(screen, (200,200,200), rect)
-            pygame.draw.rect(screen, (70,70,70), rect, 4)
-            txt = btn_font.render(lab, True, (30,30,30))
-            screen.blit(txt, (bx + (btn_w-txt.get_width())//2, by + (btn_h-txt.get_height())//2))
-
-        # hint text and deck button
-        hint = SMALL.render("キー1-4でも選択できます。Escで終了", True, (230,230,230))
-        screen.blit(hint, ((W-hint.get_width())//2, start_y + btn_h + 40))
-
-        deck_btn = pygame.Rect((W-160)//2, start_y + btn_h + 80, 160, 48)
-        pygame.draw.rect(screen, (230,230,230), deck_btn)
-        pygame.draw.rect(screen, (60,60,60), deck_btn, 3)
-        dbtxt = btn_font.render("デッキ作成", True, (30,30,30))
-        screen.blit(dbtxt, (deck_btn.x + (deck_btn.w-dbtxt.get_width())//2, deck_btn.y + (deck_btn.h-dbtxt.get_height())//2))
-
-        pygame.display.flip()
-        clock.tick(30)
-
 
 def get_piece_at(row, col):
     # 後方互換のための薄いラッパー
@@ -1476,11 +1404,18 @@ def compute_layout(win_w: int, win_h: int):
     left_margin = max(12, int(base_left_margin * scale))
     left_panel_width = max(12, int(base_left_panel_width * scale))
     right_panel_width = max(12, int(base_right_panel_width * scale))
+    # 右側に一定割合の外側余白を確保して、表示サイズが変わっても見やすさを維持
+    # 画面幅に対する割合で設定（例: 6%）。最小値は12pxを確保。
+    try:
+        right_outer_margin = max(12, int(win_w * 0.06))
+    except Exception:
+        right_outer_margin = 20
 
     board_area_top = max(8, int(base_board_area_top * scale))
 
     central_left = left_margin + left_panel_width + inner_gap
-    central_right = win_w - left_margin - right_panel_width - inner_gap
+    # 右パネルの右側に right_outer_margin を設ける
+    central_right = win_w - right_outer_margin - right_panel_width - inner_gap
     central_width = max(0, central_right - central_left)
 
     # reserve bottom area for hand display (card height scaled)
@@ -1524,7 +1459,7 @@ def compute_layout(win_w: int, win_h: int):
     else:
         board_top = board_area_top
 
-    right_panel_x = win_w - left_margin - right_panel_width
+    right_panel_x = win_w - right_outer_margin - right_panel_width
 
     card_area_top = board_top + board_size + int(20 * scale)
 
@@ -1556,6 +1491,7 @@ def compute_layout(win_w: int, win_h: int):
         'left_panel_width': left_panel_width,
         'right_panel_width': right_panel_width,
         'right_panel_x': right_panel_x,
+        'right_outer_margin': right_outer_margin,
         'board_left': board_left,
         'board_top': board_top,
         'board_size': board_size,
@@ -1592,16 +1528,17 @@ def draw_panel():
     # PP
     draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
     info_y += line_height
-    # 簡易エフェクト表示: 次の移動でジャンプ/追加行動がある場合に左パネルへ表示
-    # Draw each effect on its own full line to avoid overlapping with other telops
+    # 簡易エフェクト表示: 次に発動する特別アクションを左パネルに表示
+    # 表記ルール: 「次：飛越可」「次：追加行動×n」
     if getattr(game.player, 'next_move_can_jump', False):
-        draw_text(screen, "[効果] 次の移動でジャンプ可能", info_x, info_y, (10, 40, 180))
+        draw_text(screen, "次：飛越可", info_x, info_y, (10, 40, 180))
         info_y += line_height - 6
     # 迅雷効果の表示（player_consecutive_turnsを使用）
     consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
     if consecutive_turns > 0:
         info_y += 6
-        draw_text(screen, f"[効果] 追加行動: {consecutive_turns}", info_x, info_y, (10, 120, 10))
+        label = "次：追加行動" if consecutive_turns == 1 else f"次：追加行動×{consecutive_turns}"
+        draw_text(screen, label, info_x, info_y, (10, 120, 10))
         info_y += line_height - 6
     info_y += line_height
     
@@ -2372,18 +2309,19 @@ def draw_panel():
 
 
     # === 状態表示（右下）===
-    state_x = layout['right_panel_x'] + 12
-    state_y = layout['card_area_top'] + 40
-    draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
-    state_y += 20
-    draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))
-    state_y += 20
-    # 迅雷効果の表示（player_consecutive_turnsを使用）
-    consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
-    draw_text(screen, f"追加行動: {consecutive_turns}", state_x, state_y, (80, 80, 80))
-    state_y += 20
-    if game.player.next_move_can_jump:
-        draw_text(screen, "次: 飛越可", state_x, state_y, (0, 120, 0))
+    # ご要望により、右下の『封鎖/凍結/追加行動/次』の簡易表示は非表示にします。
+    # （必要になったら下記を有効化してください）
+    # state_x = layout['right_panel_x'] + 12
+    # state_y = layout['card_area_top'] + 40
+    # draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
+    # draw_text(screen, f"追加行動: {consecutive_turns}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # if game.player.next_move_can_jump:
+    #     draw_text(screen, "次: 飛越可", state_x, state_y, (0, 120, 0))
 
     # === 墓地オーバーレイ ===
     if show_grave:
@@ -2713,10 +2651,10 @@ def draw_panel():
         # 勝敗メッセージ
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 48, bold=True)
         if game_over_winner == 'white':
-            msg = "白の勝利！"
+            msg = "YOU WIN！"
             color = (255, 255, 100)
         elif game_over_winner == 'black':
-            msg = "黒の勝利！"
+            msg = "YOU LOSE！"
             color = (150, 150, 255)
         else:  # draw
             msg = "引き分け"
@@ -3657,11 +3595,11 @@ def main_loop():
             if not white_king:
                 game_over = True
                 game_over_winner = 'black'
-                game.log.append("白のキングが捕獲されました！黒の勝利！")
+                game.log.append("YOU LOSE！黒の勝利！")
             elif not black_king:
                 game_over = True
                 game_over_winner = 'white'
-                game.log.append("黒のキングが捕獲されました！白の勝利！")
+                game.log.append("YOU WIN！白の勝利")
             # どちらかが詰みの場合も勝利判定
             elif not chess.has_legal_moves_for('white') and is_in_check(chess.pieces, 'white'):
                 game_over = True

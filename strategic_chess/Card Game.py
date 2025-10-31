@@ -100,11 +100,19 @@ mg_gif_total_duration = 0.0
 mg_gif_load_attempted = False
 mg_gif_load_success = False
 
+# 2P-color variant for AI-applied blocked tiles
+mg_gif_2p_frames_cache = None
+mg_gif_2p_durations = None
+mg_gif_2p_total_duration = 0.0
+mg_gif_2p_load_attempted = False
+mg_gif_2p_load_success = False
+
 # Ice GIF (氷結) cache + player (Image_ic (1).gif)
 ic_gif_frames_cache = None  # 凍結の追加
 ic_gif_durations = None
 ic_gif_load_attempted = False
 ic_gif_load_success = False
+
 ic_gif_anim = {
     'playing': False,
     'start_time': 0.0,
@@ -113,6 +121,35 @@ ic_gif_anim = {
     'durations': None,
     'pos': None,  # (row, col)
 }
+
+def _ensure_mg_gif_2p_loaded():
+    """Lazily load Image_MG_2P.gif frames into mg_gif_2p_* globals."""
+    global mg_gif_2p_frames_cache, mg_gif_2p_durations, mg_gif_2p_total_duration
+    global mg_gif_2p_load_attempted, mg_gif_2p_load_success
+    if mg_gif_2p_frames_cache is not None and mg_gif_2p_durations is not None:
+        return
+    if mg_gif_2p_load_attempted:
+        return
+    mg_gif_2p_load_attempted = True
+    gif_path = os.path.join(IMG_DIR, 'Image_MG_2P.gif')
+    frames, durations = _load_gif_frames(gif_path)
+    if not frames:
+        # fallback: try the standard MG gif
+        gif_path2 = os.path.join(IMG_DIR, 'Image_MG.gif')
+        frames, durations = _load_gif_frames(gif_path2)
+    if not frames:
+        mg_gif_2p_frames_cache = None
+        mg_gif_2p_durations = None
+        mg_gif_2p_total_duration = 0.0
+        mg_gif_2p_load_success = False
+        return
+    mg_gif_2p_frames_cache = frames
+    mg_gif_2p_durations = durations
+    try:
+        mg_gif_2p_total_duration = sum(durations) / 1000.0
+    except Exception:
+        mg_gif_2p_total_duration = 0.0
+    mg_gif_2p_load_success = True
 # How much to slow down the ice GIF playback (multiplier on per-frame durations).
 # Increase to make the animation slower/longer. Default 2.5x for better visibility.
 IC_GIF_SPEED_FACTOR = 2.5
@@ -1149,8 +1186,8 @@ def ai_make_move():
         # Ensure assignments to module-level AI flags affect globals (nested function)
         global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
         # aggressiveness / per-attempt probability by difficulty
-        # increase base play probability slightly so AI uses cards more often
-        probs = {1: 0.25, 2: 0.45, 3: 0.75, 4: 0.95}
+        # increased base play probability so AI uses cards more often on Easy/Normal
+        probs = {1: 0.35, 2: 0.60, 3: 0.80, 4: 0.98}
         p_play = probs.get(CPU_DIFFICULTY, 0.45)
         if not ai_player.hand.cards:
             return False
@@ -1768,56 +1805,97 @@ def draw_panel():
                 pos = ic_gif_anim.get('pos')
                 if pos is not None:
                     r, c = pos
-                    # scale animation slightly larger than tile for visibility
+                    # scale animation so it FITS INSIDE the tile while preserving aspect ratio
                     try:
-                        fw = max(1, int(square_w * IC_GIF_SCALE))
-                        fh = max(1, int(square_h * IC_GIF_SCALE))
+                        fw0, fh0 = frame.get_width(), frame.get_height()
+                        # compute max allowed scale to fit inside tile
+                        max_w = max(1, square_w)
+                        max_h = max(1, square_h)
+                        # respect IC_GIF_SCALE as an upper bound but ensure not exceeding tile
+                        scale_bound = IC_GIF_SCALE
+                        # scale factors to fit width/height
+                        sf_w = max_w / fw0
+                        sf_h = max_h / fh0
+                        # choose smallest to ensure fit, and do not exceed scale_bound
+                        sf = min(sf_w, sf_h, scale_bound)
+                        if sf <= 0:
+                            sf = 1.0
+                        fw = max(1, int(fw0 * sf))
+                        fh = max(1, int(fh0 * sf))
                         f_surf = pygame.transform.smoothscale(frame, (fw, fh))
                     except Exception:
                         f_surf = frame
                         fw = f_surf.get_width()
                         fh = f_surf.get_height()
-                    # center the scaled animation over the tile
+                    # center the scaled animation INSIDE the tile
                     fx = board_left + c * square_w + (square_w - fw) // 2
                     fy = board_top + r * square_h + (square_h - fh) // 2
                     screen.blit(f_surf, (fx, fy))
     except Exception:
         pass
 
-    # --- 封鎖タイルでのループ再生: Image_MG.gif ---
+    # --- 封鎖タイルでのループ再生: Image_MG.gif (player) / Image_MG_2P.gif (AI) ---
     try:
+        # ensure both variants are loaded (2P may fallback to standard MG)
         _ensure_mg_gif_loaded()
-        if mg_gif_frames_cache and mg_gif_durations:
+        _ensure_mg_gif_2p_loaded()
+
+        # if neither is available, skip
+        if not (mg_gif_frames_cache or mg_gif_2p_frames_cache):
+            raise Exception("no mg gif available")
+
+        # We'll compute per-variant total_ms as needed
+        now_ms = int(_ct_time.time() * 1000)
+
+        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+            # only show while turns > 0
+            if not turns:
+                continue
+            bx = board_left + bc * square_w
+            by = board_top + br * square_h
+
+            # select which gif variant to use based on blocked_tiles_owner
+            owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
+            use_2p = False
             try:
-                total_ms = int(sum(mg_gif_durations))
+                # Heuristic: if the blocked tile owner is 'white' (i.e. the tile
+                # blocks white player) it's likely AI applied it; show 2P variant.
+                if owner == 'white' and mg_gif_2p_frames_cache:
+                    use_2p = True
             except Exception:
-                total_ms = max(1, int(mg_gif_total_duration * 1000))
-            now_ms = int(_ct_time.time() * 1000) if total_ms > 0 else 0
-            for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
-                # only show while turns > 0
-                if not turns:
-                    continue
-                bx = board_left + bc * square_w
-                by = board_top + br * square_h
-                # frame index by modulo looping
-                if total_ms > 0:
-                    tmod = now_ms % total_ms
-                    acc = 0
-                    idx = 0
-                    for i, d in enumerate(mg_gif_durations):
-                        acc += d
-                        if tmod < acc:
-                            idx = i
-                            break
-                else:
-                    idx = 0
-                frame = mg_gif_frames_cache[idx]
-                try:
-                    f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
-                except Exception:
-                    f_surf = frame
-                # draw on tile top-left so it covers the tile area
-                screen.blit(f_surf, (bx, by))
+                use_2p = False
+
+            frames_cache = mg_gif_2p_frames_cache if use_2p and mg_gif_2p_frames_cache else mg_gif_frames_cache
+            durations = mg_gif_2p_durations if use_2p and mg_gif_2p_durations else mg_gif_durations
+
+            if not frames_cache or not durations:
+                continue
+
+            try:
+                total_ms = int(sum(durations))
+            except Exception:
+                total_ms = max(1, int((mg_gif_2p_total_duration if use_2p else mg_gif_total_duration) * 1000))
+
+            # frame index by modulo looping
+            if total_ms > 0:
+                tmod = now_ms % total_ms
+                acc = 0
+                idx = 0
+                for i, d in enumerate(durations):
+                    acc += d
+                    if tmod < acc:
+                        idx = i
+                        break
+            else:
+                idx = 0
+
+            frame = frames_cache[idx]
+            try:
+                f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
+            except Exception:
+                f_surf = frame
+            # draw on tile top-left so it covers the tile area
+            screen.blit(f_surf, (bx, by))
     except Exception:
         pass
 

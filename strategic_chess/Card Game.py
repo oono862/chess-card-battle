@@ -101,7 +101,7 @@ mg_gif_load_attempted = False
 mg_gif_load_success = False
 
 # Ice GIF (氷結) cache + player (Image_ic (1).gif)
-ic_gif_frames_cache = None
+ic_gif_frames_cache = None  # 凍結の追加
 ic_gif_durations = None
 ic_gif_load_attempted = False
 ic_gif_load_success = False

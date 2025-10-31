@@ -361,7 +361,7 @@ class Game:
 
         # For AI, auto-resolve cards that normally create pending actions
         # Handle 墓地ルーレット: if grave empty, AI will cancel use
-        if card.name == "墓地ルーレット" and not player.graveyard:
+        if card.name == "墓地ルーレット" and not player.graveyard:  # AIのカード使用度改正
             return False, "AI: 墓地が空のため墓地ルーレットを使いませんでした。"
 
         # 迅雷: if already active, AI will skip using

@@ -227,10 +227,6 @@ def _ensure_mg_gif_loaded():
         mg_gif_durations = None
         mg_gif_total_duration = 0.0
         mg_gif_load_success = False
-        try:
-            game.log.append(f"Image_MG.gif を読み込めませんでした: {gif_path}")
-        except Exception:
-            pass
         # fallback: try pygame.image.load as a single-surface fallback
         try:
             surf = pygame.image.load(gif_path).convert_alpha()
@@ -238,10 +234,7 @@ def _ensure_mg_gif_loaded():
             mg_gif_durations = [1000]
             mg_gif_total_duration = 1.0
             mg_gif_load_success = True
-            try:
-                game.log.append(f"Image_MG.gif を pygame.image.load で単一フレームとして読み込みました")
-            except Exception:
-                pass
+            # note: intentionally do not log image/GIF internal loading to game.log
             return
         except Exception:
             return
@@ -299,10 +292,7 @@ def _ensure_ic_gif_loaded():
         if f:
             frames = f
             durations = d
-            try:
-                game.log.append(f"Image_ic を読み込みました: {path} ({len(f)} frames)")
-            except Exception:
-                pass
+            # suppress GIF load logging (internal asset loading)
             break
     if not frames and os.path.isdir(IMG_DIR):
         for fn in os.listdir(IMG_DIR):
@@ -312,10 +302,7 @@ def _ensure_ic_gif_loaded():
                 if f:
                     frames = f
                     durations = d
-                    try:
-                        game.log.append(f"Image_ic を読み込みました: {path} ({len(f)} frames)")
-                    except Exception:
-                        pass
+                    # suppress GIF load logging (internal asset loading)
                     break
     if not frames:
         try:
@@ -323,17 +310,11 @@ def _ensure_ic_gif_loaded():
             surf = pygame.image.load(path).convert_alpha()
             frames = [surf]
             durations = [1000]
-            try:
-                game.log.append(f"Image_ic を pygame.image.load で単一フレームとして読み込みました: {path}")
-            except Exception:
-                pass
+            # suppress GIF load logging (internal asset loading)
             ic_gif_load_success = True
         except Exception:
             ic_gif_load_success = False
-            try:
-                game.log.append(f"Image_ic を読み込めませんでした: {IMG_DIR}")
-            except Exception:
-                pass
+            # suppress GIF load failure logging (internal asset loading)
             return
     ic_gif_frames_cache = frames
     # Apply speed factor to make ice animation slower and more visible
@@ -343,10 +324,7 @@ def _ensure_ic_gif_loaded():
         slowed = [max(int(d * IC_GIF_SPEED_FACTOR), 120) for d in durations]
         ic_gif_durations = slowed
         ic_gif_anim['total_duration'] = sum(ic_gif_durations) / 1000.0
-        try:
-            game.log.append(f"Image_ic 再生速度を {IC_GIF_SPEED_FACTOR}x に設定（各フレーム最小120ms）。合計 {ic_gif_anim['total_duration']:.2f}s")
-        except Exception:
-            pass
+        # suppress GIF playback-setting logging (internal asset loading)
     except Exception:
         ic_gif_durations = durations
         try:
@@ -364,10 +342,7 @@ def play_ic_gif_at(row: int, col: int):
     frames = ic_gif_frames_cache
     durations = ic_gif_durations
     if not frames:
-        try:
-            game.log.append(f"(debug) Image_ic frames not loaded; cannot play at {(row,col)}")
-        except Exception:
-            pass
+        # suppress GIF playback debug logging
         return
     ic_gif_anim['frames'] = frames
     ic_gif_anim['durations'] = durations
@@ -378,10 +353,7 @@ def play_ic_gif_at(row: int, col: int):
     except Exception:
         ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
     ic_gif_anim['pos'] = (row, col)
-    try:
-        game.log.append(f"(debug) 再生トリガ: Image_ic at {(row,col)}")
-    except Exception:
-        pass
+    # suppress GIF playback debug logging
 
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
@@ -969,7 +941,8 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             if color == 'white':
                 can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
             else:
-                can_jump = globals().get('ai_next_move_can_jump', False)
+                # prefer game-level AI flag if present (set by card effects), otherwise fall back to module-level global
+                can_jump = getattr(game, 'ai_next_move_can_jump', globals().get('ai_next_move_can_jump', False))
         except Exception:
             can_jump = False
         
@@ -1006,7 +979,7 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
     elif name == 'N':
         for dr,dc in [(2,1),(1,2),(-1,2),(-2,1),(-2,-1),(-1,-2),(1,-2),(2,-1)]:
             nr,nc = r+dr, c+dc
-            if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
+            if on_board(nr,nc) and not occupied_by_color(nr,nc,color) and not is_blocked_tile(nr, nc, color):
                 moves.append((nr,nc))
     elif name in ('B','R','Q'):
         directions = []
@@ -1035,7 +1008,7 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                         if color == 'white':
                             can_jump = getattr(game, 'player', None) is not None and getattr(game.player, 'next_move_can_jump', False)
                         else:
-                            can_jump = globals().get('ai_next_move_can_jump', False)
+                            can_jump = getattr(game, 'ai_next_move_can_jump', globals().get('ai_next_move_can_jump', False))
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
@@ -1055,7 +1028,7 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             for dc in (-1,0,1):
                 if dr==0 and dc==0: continue
                 nr,nc = r+dr, c+dc
-                if on_board(nr,nc) and not occupied_by_color(nr,nc,color):
+                if on_board(nr,nc) and not occupied_by_color(nr,nc,color) and not is_blocked_tile(nr, nc, color):
                     moves.append((nr,nc))
 
         # キャスリング
@@ -1069,14 +1042,18 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
             if (rook_kingside and _pget(rook_kingside, 'name') == 'R' and
                 _pget(rook_kingside, 'color') == color and
                 not _pget(rook_kingside, 'has_moved', False)):
-                if not occupied(king_row, 5) and not occupied(king_row, 6):
+                # ensure path squares are free and not blocked for this color
+                if (not occupied(king_row, 5) and not occupied(king_row, 6)
+                        and not is_blocked_tile(king_row, 5, color) and not is_blocked_tile(king_row, 6, color)):
                     moves.append((king_row, 6))  # キャスリング後のキングの位置
 
             rook_queenside = get_piece_at(king_row, 0)
             if (rook_queenside and _pget(rook_queenside, 'name') == 'R' and
                 _pget(rook_queenside, 'color') == color and
                 not _pget(rook_queenside, 'has_moved', False)):
-                if not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3):
+                # ensure path squares are free and not blocked for this color
+                if (not occupied(king_row, 1) and not occupied(king_row, 2) and not occupied(king_row, 3)
+                        and not is_blocked_tile(king_row, 1, color) and not is_blocked_tile(king_row, 2, color) and not is_blocked_tile(king_row, 3, color)):
                     moves.append((king_row, 2))  # キャスリング後のキングの位置
 
     # filter moves that leave king in check
@@ -1295,9 +1272,17 @@ def ai_make_move():
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
     # consume AI jump flag or extra moves
     try:
-        if ai_next_move_can_jump:
+        # Prefer game-level flag if present (set by card_core), fallback to module-level
+        if getattr(game, 'ai_next_move_can_jump', globals().get('ai_next_move_can_jump', False)):
             # consumed for one move
-            ai_next_move_can_jump = False
+            try:
+                game.ai_next_move_can_jump = False
+            except Exception:
+                pass
+            try:
+                ai_next_move_can_jump = False
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -2615,8 +2600,27 @@ def draw_panel():
         # サイズ・配置
         box_w = 460
         box_h = 160
-        box_x = (W - box_w)//2
-        box_y = (H - box_h)//2
+        # Prefer positioning the promotion box so it stays within the chessboard area.
+        # If possible, center the box over the promotion square; otherwise clamp to board bounds.
+        try:
+            piece = promot.get('piece')
+            # tile origin (top-left) for the piece's square
+            pr = getattr(piece, 'row', None)
+            pc = getattr(piece, 'col', None)
+            tile_x = board_left + (pc * (board_size // 8)) if pc is not None else None
+            tile_y = board_top + (pr * (board_size // 8)) if pr is not None else None
+        except Exception:
+            tile_x = None
+            tile_y = None
+
+        # center promotion box within the chessboard area
+        try:
+            box_x = board_left + (board_size - box_w) // 2
+            box_y = board_top + (board_size - box_h) // 2
+        except Exception:
+            # fallback to screen center if board metrics aren't available
+            box_x = (W - box_w)//2
+            box_y = (H - box_h)//2
         pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
         pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
         # ヘッダ
@@ -3481,13 +3485,30 @@ def handle_mouse_click(pos):
                         except Exception:
                             pass
                 else:
-                    chess_current_turn = 'white'
-                    # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
-                    try:
-                        if is_in_check_for_display(chess.pieces, 'white'):
-                            game.log.append("⚠ 白キングがチェック状態です！")
-                    except Exception:
-                        pass
+                    # If AI has consecutive-turns remaining (from '迅雷'), consume one and keep the turn
+                    a_cct = getattr(game, 'ai_consecutive_turns', 0)
+                    if a_cct and a_cct > 0:
+                        try:
+                            game.ai_consecutive_turns -= 1
+                        except Exception:
+                            setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
+                        # keep chess_current_turn as black so AI moves again immediately
+                        chess_current_turn = 'black'
+                        # ensure AI-related flags remain/are reset appropriately
+                        try:
+                            game.player_moved_this_turn = False
+                            game.turn_active = False
+                        except Exception:
+                            pass
+                        game.log.append("迅雷効果: AIの連続ターンを1つ消費しました。")
+                    else:
+                        chess_current_turn = 'white'
+                        # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
+                        try:
+                            if is_in_check_for_display(chess.pieces, 'white'):
+                                game.log.append("⚠ 白キングがチェック状態です！")
+                        except Exception:
+                            pass
                 # クリア
                 selected_piece = None
                 highlight_squares = []
@@ -3661,23 +3682,41 @@ def main_loop():
             elif time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move
                 ai_make_move()
-                cpu_wait = False
-                # restore player turn
-                chess_current_turn = 'white'
-                # プレイヤーターン開始テロップを1秒表示
+                # After AI move, check if AI has extra consecutive turns (迅雷)
                 try:
-                    turn_telop_msg = "YOUR TURN"
-                    turn_telop_until = _ct_time.time() + 1.0
+                    a_cct = getattr(game, 'ai_consecutive_turns', 0)
                 except Exception:
-                    pass
-                # Apply decay for time-limited card effects now that the opponent's turn finished.
-                # Do NOT automatically start the player's card-game turn; the player must press [T]
-                # to start their own turn. This keeps chess movement locked until the player
-                # explicitly starts their turn.
-                try:
-                    game.decay_statuses()
-                except Exception:
-                    pass
+                    a_cct = 0
+
+                if a_cct and a_cct > 0:
+                    # consume one AI extra-turn and schedule another AI think cycle
+                    try:
+                        game.ai_consecutive_turns -= 1
+                    except Exception:
+                        setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
+                    # keep AI's turn so it moves again
+                    chess_current_turn = 'black'
+                    # schedule next AI move after the think delay
+                    cpu_wait = True
+                    cpu_wait_start = time.time()
+                else:
+                    # no extra AI turns -> restore player turn
+                    cpu_wait = False
+                    chess_current_turn = 'white'
+                    # プレイヤーターン開始テロップを1秒表示
+                    try:
+                        turn_telop_msg = "YOUR TURN"
+                        turn_telop_until = _ct_time.time() + 1.0
+                    except Exception:
+                        pass
+                    # Apply decay for time-limited card effects now that the opponent's turn finished.
+                    # Do NOT automatically start the player's card-game turn; the player must press [T]
+                    # to start their own turn. This keeps chess movement locked until the player
+                    # explicitly starts their turn.
+                    try:
+                        game.decay_statuses()
+                    except Exception:
+                        pass
 
         clock.tick(60)
 

@@ -456,28 +456,55 @@ class Game:
                     if target is not None:
                         tr, tc = getattr(target, 'row', None), getattr(target, 'col', None)
                         placed = 0
-                        for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
-                            if placed >= max_tiles:
-                                break
-                            nr, nc = tr + dr, tc + dc
-                            if nr is None or nc is None:
-                                continue
-                            if 0 <= nr < 8 and 0 <= nc < 8:
-                                # ensure empty
-                                empty = True
-                                if chess is not None:
-                                    try:
-                                        if chess.get_piece_at(nr, nc) is not None:
-                                            empty = False
-                                    except Exception:
+                        # Try to place up to max_tiles empty blocked tiles around the target.
+                        # Instead of only checking immediate 8 neighbours, expand search by
+                        # increasing Manhattan radius so AI can still place tiles if nearby
+                        # squares are occupied.
+                        if tr is not None and tc is not None:
+                            # Collect candidate empty tiles in deterministic order
+                            candidates = []
+                            max_radius = 3
+                            for radius in range(1, max_radius + 1):
+                                # produce ordered offsets for this radius: iterate dr from -radius..radius
+                                for dr in range(-radius, radius + 1):
+                                    dc_base = radius - abs(dr)
+                                    dc_list = [dc_base] if dc_base == 0 else [dc_base, -dc_base]
+                                    for dc in dc_list:
+                                        nr, nc = tr + dr, tc + dc
+                                        if nr is None or nc is None:
+                                            continue
+                                        if not (0 <= nr < 8 and 0 <= nc < 8):
+                                            continue
+                                        # ensure empty
                                         empty = True
-                                if empty:
-                                    try:
-                                        self.blocked_tiles[(nr, nc)] = turns
-                                        self.blocked_tiles_owner[(nr, nc)] = opp_color
-                                    except Exception:
-                                        self.blocked_tiles[(nr, nc)] = turns
-                                    placed += 1
+                                        if chess is not None:
+                                            try:
+                                                if chess.get_piece_at(nr, nc) is not None:
+                                                    empty = False
+                                            except Exception:
+                                                empty = True
+                                        if not empty:
+                                            continue
+                                        # skip already blocked
+                                        if (nr, nc) in self.blocked_tiles:
+                                            continue
+                                        candidates.append((nr, nc))
+                                if len(candidates) >= max_tiles:
+                                    break
+                            # Apply up to max_tiles from candidates (deterministic order)
+                            to_place = candidates[:max_tiles]
+                            for (nr, nc) in to_place:
+                                try:
+                                    self.blocked_tiles[(nr, nc)] = turns
+                                    self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                except Exception:
+                                    self.blocked_tiles[(nr, nc)] = turns
+                            placed = len(to_place)
+                            if placed:
+                                try:
+                                    self.log.append(f"AI: 灼熱で封鎖マスを適用しました: {to_place}")
+                                except Exception:
+                                    pass
                         if placed > 0:
                             self.log.append(f"AI: 灼熱でマスの封鎖を行いました: {placed} マス")
                         else:

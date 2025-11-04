@@ -355,6 +355,13 @@ def play_ic_gif_at(row: int, col: int):
     ic_gif_anim['pos'] = (row, col)
     # suppress GIF playback debug logging
 
+
+# Register hook on module-level `game` so core logic can request GIF playback
+try:
+    game.play_ic_gif = play_ic_gif_at
+except Exception:
+    pass
+
 def get_piece_image_surface(name: str, color: str, size: tuple):
     """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
     Cache scaled images by (name,color,size). If file not found, return None to indicate fallback.
@@ -873,12 +880,17 @@ def is_in_check(pcs, color):
     opponent = 'black' if color == 'white' else 'white'
     
     frozen = getattr(game, 'frozen_pieces', {})
-    
+
     for p in pcs:
         p_color = p.color if hasattr(p, 'color') else p.get('color')
         if p_color == opponent:
             # 凍結されている駒は攻撃できないため、チェック判定から除外
-            if id(p) in frozen and frozen[id(p)] > 0:
+            is_frozen = False
+            try:
+                is_frozen = (id(p) in frozen and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0)
+            except Exception:
+                is_frozen = (id(p) in frozen and frozen.get(id(p), 0) > 0)
+            if is_frozen:
                 continue
             
             # この駒の有効手を取得(ignore_castling=Trueで高速化)
@@ -898,10 +910,47 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
         # prefer local 'pieces' (dict-style) if present, otherwise fall back to chess.pieces
         pcs = globals().get('pieces', chess.pieces)
     moves = []
-    # If this piece is frozen by a card effect, it cannot move
-    if getattr(game, 'frozen_pieces', None) is not None:
-        if id(piece) in game.frozen_pieces and game.frozen_pieces[id(piece)] > 0:
+    # If this piece is frozen by a card effect, it cannot move.
+    # The UI sometimes passes dict-style piece representations while the
+    # engine maintains canonical Piece instances in chess.pieces. Try to
+    # resolve the canonical engine piece at the piece's location and consult
+    # the freeze map and transient attribute on that instance.
+    frozen_map = getattr(game, 'frozen_pieces', {}) or {}
+    try:
+        # get row/col from either object attributes or dict keys
+        prow = getattr(piece, 'row', None)
+        pcol = getattr(piece, 'col', None)
+    except Exception:
+        prow = None
+        pcol = None
+    try:
+        if (prow is None or pcol is None) and isinstance(piece, dict):
+            prow = prow if prow is not None else piece.get('row')
+            pcol = pcol if pcol is not None else piece.get('col')
+    except Exception:
+        pass
+
+    engine_piece = None
+    try:
+        if prow is not None and pcol is not None:
+            engine_piece = chess.get_piece_at(int(prow), int(pcol))
+    except Exception:
+        engine_piece = None
+
+    # Check freeze on canonical engine piece first
+    try:
+        if engine_piece is not None:
+            if (id(engine_piece) in frozen_map and frozen_map.get(id(engine_piece), 0) > 0) or (hasattr(engine_piece, 'frozen_turns') and getattr(engine_piece, 'frozen_turns', 0) > 0):
+                return []
+    except Exception:
+        pass
+
+    # Fallback: check freeze on the passed-in piece object itself
+    try:
+        if (id(piece) in frozen_map and frozen_map.get(id(piece), 0) > 0) or (hasattr(piece, 'frozen_turns') and getattr(piece, 'frozen_turns', 0) > 0):
             return []
+    except Exception:
+        pass
 
     # small accessor to support both object-style Piece and dict-style pieces
     def _pget(p, key, default=None):
@@ -1896,7 +1945,14 @@ def draw_panel():
 
     try:
         for p in chess.pieces:
-            if id(p) in getattr(game, 'frozen_pieces', {}):
+            # consider both the game.frozen_pieces mapping and a transient
+            # per-piece attribute that may be set when AI applies 凍結
+            try:
+                frozen_map = getattr(game, 'frozen_pieces', {})
+                is_frozen = (id(p) in frozen_map and frozen_map.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0)
+            except Exception:
+                is_frozen = id(p) in getattr(game, 'frozen_pieces', {})
+            if is_frozen:
                 fx = board_left + p.col * square_w
                 fy = board_top + p.row * square_h
                 s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
@@ -3172,7 +3228,11 @@ def handle_mouse_click(pos):
             frozen = getattr(game, 'frozen_pieces', {})
             my_frozen_pieces = []
             for p in chess.pieces:
-                if p.color == 'black' and id(p) in frozen and frozen[id(p)] > 0:
+                try:
+                    is_fz = (p.color == 'black') and (((id(p) in frozen) and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0))
+                except Exception:
+                    is_fz = (p.color == 'black') and (id(p) in frozen and frozen.get(id(p), 0) > 0)
+                if is_fz:
                     my_frozen_pieces.append(p)
             
             if not my_frozen_pieces:
@@ -3351,6 +3411,18 @@ def handle_mouse_click(pos):
                             del game.frozen_pieces[pid]
                         except Exception:
                             pass
+                            # Also clear transient attribute on the piece object if present
+                            try:
+                                if clicked is not None and hasattr(clicked, 'frozen_turns'):
+                                    try:
+                                        delattr(clicked, 'frozen_turns')
+                                    except Exception:
+                                        try:
+                                            del clicked.frozen_turns
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
                         try:
                             name = clicked.name
                         except Exception:
@@ -3377,15 +3449,54 @@ def handle_mouse_click(pos):
                         clicked_color = None
                 if clicked is not None and clicked_color is not None and clicked_color != player_color:
                     turns = game.pending.info.get('turns', 1)
+                    # Prefer to record the frozen state on the canonical engine piece
+                    # so engine-level checks reliably detect it. Try to look up the
+                    # engine Piece at the clicked coordinates.
+                    tr = getattr(clicked, 'row', None)
+                    tc = getattr(clicked, 'col', None)
                     try:
-                        game.frozen_pieces[id(clicked)] = turns
+                        if tr is None and isinstance(clicked, dict):
+                            tr = clicked.get('row')
+                        if tc is None and isinstance(clicked, dict):
+                            tc = clicked.get('col')
                     except Exception:
-                        game.frozen_pieces[id(clicked)] = turns
+                        pass
+                    engine_piece = None
+                    try:
+                        engine_piece = chess.get_piece_at(int(tr), int(tc)) if (tr is not None and tc is not None) else None
+                    except Exception:
+                        engine_piece = None
+                    if engine_piece is not None:
+                        # record on canonical engine piece
+                        try:
+                            game.frozen_pieces[id(engine_piece)] = turns
+                        except Exception:
+                            game.frozen_pieces[id(engine_piece)] = turns
+                        try:
+                            setattr(engine_piece, 'frozen_turns', turns)
+                        except Exception:
+                            pass
+                        target_for_log = engine_piece
+                    else:
+                        # fallback: record on clicked object (dict or other)
+                        try:
+                            game.frozen_pieces[id(clicked)] = turns
+                        except Exception:
+                            game.frozen_pieces[id(clicked)] = turns
+                        try:
+                            setattr(clicked, 'frozen_turns', turns)
+                        except Exception:
+                            pass
+                        target_for_log = clicked
                     # try to get a readable name
                     try:
-                        name = clicked.name
+                        name = getattr(target_for_log, 'name', None)
+                        if name is None and isinstance(target_for_log, dict):
+                            name = target_for_log.get('name')
+                        if name is None:
+                            name = str(target_for_log)
                     except Exception:
-                        name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                        name = '駒'
                     game.log.append(f"凍結: {name} を {turns} ターン凍結")
                     # play ice GIF on the target square
                     try:
@@ -3408,7 +3519,13 @@ def handle_mouse_click(pos):
         if selected_piece is None:
             # If the clicked piece is frozen, play the ice GIF at that square as feedback
             try:
-                if clicked is not None and id(clicked) in getattr(game, 'frozen_pieces', {}):
+                is_clicked_frozen = False
+                try:
+                    frozen_map = getattr(game, 'frozen_pieces', {})
+                    is_clicked_frozen = (clicked is not None) and ((id(clicked) in frozen_map and frozen_map.get(id(clicked), 0) > 0) or (hasattr(clicked, 'frozen_turns') and getattr(clicked, 'frozen_turns', 0) > 0))
+                except Exception:
+                    is_clicked_frozen = (clicked is not None) and (id(clicked) in getattr(game, 'frozen_pieces', {}))
+                if is_clicked_frozen:
                     try:
                         play_ic_gif_at(row, col)
                     except Exception:
@@ -3478,6 +3595,11 @@ def handle_mouse_click(pos):
                         game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
                     else:
                         chess_current_turn = 'black'
+                        # At the end of the player's (white) turn, decay statuses
+                        try:
+                            game.decay_statuses('white')
+                        except Exception:
+                            pass
                         # 白の手番終了後、黒キングがチェック状態か確認（表示用なので凍結駒も含む）
                         try:
                             if is_in_check_for_display(chess.pieces, 'black'):
@@ -3710,11 +3832,11 @@ def main_loop():
                     except Exception:
                         pass
                     # Apply decay for time-limited card effects now that the opponent's turn finished.
-                    # Do NOT automatically start the player's card-game turn; the player must press [T]
-                    # to start their own turn. This keeps chess movement locked until the player
-                    # explicitly starts their turn.
+                    # We pass the ended color ('black' here) so only statuses that apply to that
+                    # color are decremented. This prevents freezes applied to white by the AI
+                    # from being decremented immediately when the AI finishes its move.
                     try:
-                        game.decay_statuses()
+                        game.decay_statuses('black')
                     except Exception:
                         pass
 

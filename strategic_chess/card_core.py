@@ -195,20 +195,27 @@ class Game:
                 self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
 
 
-    def decay_statuses(self) -> None:
+    def decay_statuses(self, ended_color: Optional[str] = None) -> None:
         """Decay time-limited statuses (blocked_tiles, frozen_pieces) by 1 turn.
 
-        This function is intended to be called once per opponent turn end so that
-        effects like 封鎖 (灼熱) which last N opponent turns are decremented.
-        It only decrements the counters and removes expired entries; it does not
-        perform start-of-turn actions like drawing cards or restoring PP.
+        If `ended_color` is provided ('white' or 'black'), only statuses that
+        apply to that color are decremented. This ensures that a freeze applied
+        to a player piece is decremented at the end of that player's turn, not
+        immediately when the opponent finishes their move.
+
+        If `ended_color` is None, behave like the legacy behavior and decrement
+        all status counters.
         """
-        # Decay blocked tiles
+        # Decay blocked tiles: only decrement tiles that belong to the color
+        # whose turn just ended (if provided).
         for k in list(self.blocked_tiles.keys()):
+            owner = self.blocked_tiles_owner.get(k)
+            if ended_color is not None and owner is not None and owner != ended_color:
+                # skip tiles that belong to the other color
+                continue
             try:
                 self.blocked_tiles[k] -= 1
             except Exception:
-                # If value is not numeric, ignore
                 continue
             if self.blocked_tiles[k] <= 0:
                 try:
@@ -219,13 +226,55 @@ class Game:
                     del self.blocked_tiles[k]
                 except Exception:
                     pass
-        # Decay frozen pieces
+        # Decay frozen pieces: we need to look up the engine piece for each id
+        # and only decrement if its color matches ended_color (when provided).
         for k in list(self.frozen_pieces.keys()):
             try:
+                # If ended_color given, find piece and skip if colors don't match
+                if ended_color is not None:
+                    try:
+                        try:
+                            from . import chess_engine as chess
+                        except Exception:
+                            import chess_engine as chess
+                        found = None
+                        for p in getattr(chess, 'pieces', []) or []:
+                            if id(p) == k:
+                                found = p
+                                break
+                        if found is None:
+                            # If the id doesn't match, try to skip decrementing
+                            # because we can't determine ownership reliably.
+                            continue
+                        if getattr(found, 'color', None) != ended_color:
+                            # not the color whose turn ended -> skip
+                            continue
+                    except Exception:
+                        # conservative: if lookup fails, skip decrement
+                        continue
+                # decrement
                 self.frozen_pieces[k] -= 1
             except Exception:
                 continue
             if self.frozen_pieces[k] <= 0:
+                # Clear transient attribute on the actual piece object
+                try:
+                    try:
+                        from . import chess_engine as chess
+                    except Exception:
+                        import chess_engine as chess
+                    for p in getattr(chess, 'pieces', []) or []:
+                        if id(p) == k and hasattr(p, 'frozen_turns'):
+                            try:
+                                delattr(p, 'frozen_turns')
+                            except Exception:
+                                try:
+                                    del p.frozen_turns
+                                except Exception:
+                                    pass
+                            break
+                except Exception:
+                    pass
                 try:
                     del self.frozen_pieces[k]
                 except Exception:
@@ -444,6 +493,18 @@ class Game:
                             del self.frozen_pieces[id(best)]
                         except Exception:
                             pass
+                        # Also clear transient attribute on the actual piece object
+                        try:
+                            if hasattr(best, 'frozen_turns'):
+                                try:
+                                    delattr(best, 'frozen_turns')
+                                except Exception:
+                                    try:
+                                        del best.frozen_turns
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
                         self.log.append(f"AI: 灼熱で自分の凍結駒 {getattr(best,'name',str(best))} を解除しました。")
                         self.pending = None
                 else:
@@ -539,8 +600,34 @@ class Game:
                         self.frozen_pieces[id(target)] = turns
                     except Exception:
                         self.frozen_pieces[id(target)] = turns
+                    # Also set a transient attribute on the piece object so
+                    # UI/engine code that looks at the piece directly can see
+                    # the frozen state even if id-based lookups fail in some
+                    # execution paths.
                     try:
-                        self.log.append(f"AI: 氷結で相手の駒 {getattr(target,'name',str(target))} を {turns} ターン凍結しました。")
+                        setattr(target, 'frozen_turns', turns)
+                    except Exception:
+                        pass
+                    # If UI hook present on the Game instance, request GIF playback
+                    try:
+                        play_hook = getattr(self, 'play_ic_gif', None)
+                        tr = getattr(target, 'row', None)
+                        tc = getattr(target, 'col', None)
+                        if callable(play_hook) and tr is not None and tc is not None:
+                            try:
+                                play_hook(int(tr), int(tc))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Enhance log to include coordinates when possible
+                    try:
+                        tr = getattr(target, 'row', None)
+                        tc = getattr(target, 'col', None)
+                        if tr is not None and tc is not None:
+                            self.log.append(f"AI: 氷結で相手の駒 {getattr(target,'name',str(target))} を ({tr},{tc}) に {turns} ターン凍結しました。")
+                        else:
+                            self.log.append(f"AI: 氷結で相手の駒 {getattr(target,'name',str(target))} を {turns} ターン凍結しました。")
                     except Exception:
                         self.log.append("AI: 氷結で相手の駒を凍結しました。")
                 else:

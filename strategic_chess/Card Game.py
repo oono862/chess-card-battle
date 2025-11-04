@@ -67,6 +67,11 @@ card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
 chess_log = []  # チェス専用ログ（カード用の game.log と分離）
 
+# プレイ画面用背景画像の候補とキャッシュ
+PLAY_BG_FILENAME = "ChatGPT Image 2025年11月4日 11_12_06.png"
+play_bg_img = None      # 元画像を保持（リサイズ用）
+play_bg_surf = None     # 現在のウィンドウサイズに合わせたスケール済みサーフ
+
 # クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
 confirm_yes_rect = None
 confirm_no_rect = None
@@ -1506,8 +1511,34 @@ def compute_layout(win_w: int, win_h: int):
 
 
 def draw_panel():
-    screen.fill((240, 240, 245))
-    global log_toggle_rect
+    # 背景画像があればそれを描画し、なければ従来の塗りつぶしを行う
+    global log_toggle_rect, play_bg_img, play_bg_surf
+    try:
+        # 初回: 画像ファイルがあればロードしてキャッシュ
+        if play_bg_img is None and play_bg_surf is None:
+            try:
+                bg_path = os.path.join(IMG_DIR, PLAY_BG_FILENAME)
+                if os.path.exists(bg_path):
+                    play_bg_img = pygame.image.load(bg_path)
+            except Exception:
+                play_bg_img = None
+
+        # play_bg_img が存在すれば現在のウィンドウサイズに合わせてスケールして描画
+        if play_bg_img is not None:
+            try:
+                play_bg_surf = pygame.transform.smoothscale(play_bg_img, (W, H)).convert()
+                screen.blit(play_bg_surf, (0, 0))
+            except Exception:
+                # スケーリングや描画に失敗した場合は単色で塗りつぶす
+                screen.fill((240, 240, 245))
+        else:
+            screen.fill((240, 240, 245))
+    except Exception:
+        # どこかで例外が出ても UI が壊れないようにフォールバック
+        try:
+            screen.fill((240, 240, 245))
+        except Exception:
+            pass
 
     # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
     # Use shared responsive layout so left/right panels and board stay balanced

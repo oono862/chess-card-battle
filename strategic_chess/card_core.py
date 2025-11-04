@@ -137,6 +137,10 @@ class Game:
     turn_active: bool = False
     # Number of consecutive extra full chess turns the player may take (skip opponent moves)
     player_consecutive_turns: int = 0
+    # Number of consecutive extra full chess turns for AI (black)
+    ai_consecutive_turns: int = 0
+    # AI-specific single-move jump flag (暴風) stored here so card effects can set it
+    ai_next_move_can_jump: bool = False
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -191,20 +195,27 @@ class Game:
                 self.log.append(f"ターン{self.turn}開始: 手札上限のため『{c.name}』は墓地へ。PPを{self.player.pp_max}に回復。")
 
 
-    def decay_statuses(self) -> None:
+    def decay_statuses(self, ended_color: Optional[str] = None) -> None:
         """Decay time-limited statuses (blocked_tiles, frozen_pieces) by 1 turn.
 
-        This function is intended to be called once per opponent turn end so that
-        effects like 封鎖 (灼熱) which last N opponent turns are decremented.
-        It only decrements the counters and removes expired entries; it does not
-        perform start-of-turn actions like drawing cards or restoring PP.
+        If `ended_color` is provided ('white' or 'black'), only statuses that
+        apply to that color are decremented. This ensures that a freeze applied
+        to a player piece is decremented at the end of that player's turn, not
+        immediately when the opponent finishes their move.
+
+        If `ended_color` is None, behave like the legacy behavior and decrement
+        all status counters.
         """
-        # Decay blocked tiles
+        # Decay blocked tiles: only decrement tiles that belong to the color
+        # whose turn just ended (if provided).
         for k in list(self.blocked_tiles.keys()):
+            owner = self.blocked_tiles_owner.get(k)
+            if ended_color is not None and owner is not None and owner != ended_color:
+                # skip tiles that belong to the other color
+                continue
             try:
                 self.blocked_tiles[k] -= 1
             except Exception:
-                # If value is not numeric, ignore
                 continue
             if self.blocked_tiles[k] <= 0:
                 try:
@@ -215,13 +226,55 @@ class Game:
                     del self.blocked_tiles[k]
                 except Exception:
                     pass
-        # Decay frozen pieces
+        # Decay frozen pieces: we need to look up the engine piece for each id
+        # and only decrement if its color matches ended_color (when provided).
         for k in list(self.frozen_pieces.keys()):
             try:
+                # If ended_color given, find piece and skip if colors don't match
+                if ended_color is not None:
+                    try:
+                        try:
+                            from . import chess_engine as chess
+                        except Exception:
+                            import chess_engine as chess
+                        found = None
+                        for p in getattr(chess, 'pieces', []) or []:
+                            if id(p) == k:
+                                found = p
+                                break
+                        if found is None:
+                            # If the id doesn't match, try to skip decrementing
+                            # because we can't determine ownership reliably.
+                            continue
+                        if getattr(found, 'color', None) != ended_color:
+                            # not the color whose turn ended -> skip
+                            continue
+                    except Exception:
+                        # conservative: if lookup fails, skip decrement
+                        continue
+                # decrement
                 self.frozen_pieces[k] -= 1
             except Exception:
                 continue
             if self.frozen_pieces[k] <= 0:
+                # Clear transient attribute on the actual piece object
+                try:
+                    try:
+                        from . import chess_engine as chess
+                    except Exception:
+                        import chess_engine as chess
+                    for p in getattr(chess, 'pieces', []) or []:
+                        if id(p) == k and hasattr(p, 'frozen_turns'):
+                            try:
+                                delattr(p, 'frozen_turns')
+                            except Exception:
+                                try:
+                                    del p.frozen_turns
+                                except Exception:
+                                    pass
+                            break
+                except Exception:
+                    pass
                 try:
                     del self.frozen_pieces[k]
                 except Exception:
@@ -364,9 +417,13 @@ class Game:
         if card.name == "墓地ルーレット" and not player.graveyard:  # AIのカード使用度改正
             return False, "AI: 墓地が空のため墓地ルーレットを使いませんでした。"
 
-        # 迅雷: if already active, AI will skip using
-        if card.name == "迅雷" and getattr(self, 'player_consecutive_turns', 0) >= 1:
-            return False, "AI: 迅雷は既に効果があるため使用しませんでした。"
+        # 迅雷: if already active for the side using it, AI will skip using
+        if card.name == "迅雷":
+            # if AI is the actor, check ai_consecutive_turns; otherwise check player_consecutive_turns
+            if player is self.player and getattr(self, 'player_consecutive_turns', 0) >= 1:
+                return False, "AI: 迅雷は既に効果があるため使用しませんでした。"
+            if player is not self.player and getattr(self, 'ai_consecutive_turns', 0) >= 1:
+                return False, "AI: 迅雷は既に効果があるため使用しませんでした。"
 
         # 暴風: if player's next_move_can_jump already True, skip
         if card.name == "暴風" and getattr(player, 'next_move_can_jump', False):
@@ -434,6 +491,18 @@ class Game:
                     if best is not None:
                         try:
                             del self.frozen_pieces[id(best)]
+                        except Exception:
+                            pass
+                        # Also clear transient attribute on the actual piece object
+                        try:
+                            if hasattr(best, 'frozen_turns'):
+                                try:
+                                    delattr(best, 'frozen_turns')
+                                except Exception:
+                                    try:
+                                        del best.frozen_turns
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                         self.log.append(f"AI: 灼熱で自分の凍結駒 {getattr(best,'name',str(best))} を解除しました。")
@@ -510,9 +579,61 @@ class Game:
                         else:
                             self.log.append("AI: 灼熱を使用しましたが、有効な封鎖マスが見つかりませんでした。")
                         self.pending = None
-                    else:
-                        # no target found, just clear pending
-                        self.pending = None
+            elif self.pending.kind == 'target_piece':
+                # AI should pick an opponent piece to freeze for the specified turns
+                turns = self.pending.info.get('turns', 1)
+                target = None
+                best_val = -1
+                vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+                if chess is not None:
+                    try:
+                        for p in chess.pieces:
+                            if getattr(p, 'color', None) == opp_color:
+                                v = vals.get(getattr(p, 'name', ''), 0)
+                                if v > best_val:
+                                    best_val = v
+                                    target = p
+                    except Exception:
+                        target = None
+                if target is not None:
+                    try:
+                        self.frozen_pieces[id(target)] = turns
+                    except Exception:
+                        self.frozen_pieces[id(target)] = turns
+                    # Also set a transient attribute on the piece object so
+                    # UI/engine code that looks at the piece directly can see
+                    # the frozen state even if id-based lookups fail in some
+                    # execution paths.
+                    try:
+                        setattr(target, 'frozen_turns', turns)
+                    except Exception:
+                        pass
+                    # If UI hook present on the Game instance, request GIF playback
+                    try:
+                        play_hook = getattr(self, 'play_ic_gif', None)
+                        tr = getattr(target, 'row', None)
+                        tc = getattr(target, 'col', None)
+                        if callable(play_hook) and tr is not None and tc is not None:
+                            try:
+                                play_hook(int(tr), int(tc))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Enhance log to include coordinates when possible
+                    try:
+                        tr = getattr(target, 'row', None)
+                        tc = getattr(target, 'col', None)
+                        if tr is not None and tc is not None:
+                            self.log.append(f"AI: 氷結で相手の駒 {getattr(target,'name',str(target))} を ({tr},{tc}) に {turns} ターン凍結しました。")
+                        else:
+                            self.log.append(f"AI: 氷結で相手の駒 {getattr(target,'name',str(target))} を {turns} ターン凍結しました。")
+                    except Exception:
+                        self.log.append("AI: 氷結で相手の駒を凍結しました。")
+                else:
+                    # no valid target found, clear pending
+                    self.log.append("AI: 氷結を使用しましたが、凍結対象が見つかりませんでした。")
+                self.pending = None
             else:
                 # Clear any other pending for AI (best-effort)
                 self.pending = None
@@ -527,11 +648,17 @@ class Game:
 # -----------------------------
 
 def eff_draw1(game: Game, player: PlayerState) -> str:
-    res = game.draw_to_hand(1)
-    if not res or res[0][0] is None:
+    # Draw one card for the specified player (works for both human and AI)
+    drawn = player.deck.draw()
+    if drawn is None:
         return "山札が空のためドローできません。"
-    c, added = res[0]
-    return f"『{c.name}』をドロー。" if added else f"手札上限のため『{c.name}』は墓地へ。"
+    if len(player.hand.cards) >= player.hand_limit:
+        player.graveyard.append(drawn)
+        game.log.append(f"手札上限{player.hand_limit}のため『{drawn.name}』は墓地へ。")
+        return f"手札上限のため『{drawn.name}』は墓地へ。"
+    else:
+        player.hand.add(drawn)
+        return f"『{drawn.name}』をドロー。"
 
 
 def eff_gain_pp1(game: Game, player: PlayerState) -> str:
@@ -607,28 +734,51 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
 
 def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
     """暴風(1): 駒を一つ飛び越えられる（次の移動1回に有効）。"""
+    # Mark the flag on the PlayerState so human benefits immediately.
     player.next_move_can_jump = True
+    # If the effect was played by AI (player is not the human player), also mark
+    # the game-level AI jump flag so AI movement code can read it.
+    try:
+        if player is not game.player:
+            game.ai_next_move_can_jump = True
+    except Exception:
+        pass
     return "次の移動で駒を1つ飛び越え可能。"
 
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
     """迅雷(1): このターンに1回だけ追加の全行動（合計で2ターン分）。"""
     # Grant one extra full chess turn to the player (so player gets this turn + 1 more).
+    # If the effect is played by the human (game.player), set player_consecutive_turns;
+    # otherwise (AI) set ai_consecutive_turns so the AI benefits.
     try:
-        game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
+        if player is game.player:
+            game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
+        else:
+            game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
     except Exception:
-        setattr(game, 'player_consecutive_turns', 1)
+        if player is game.player:
+            setattr(game, 'player_consecutive_turns', 1)
+        else:
+            setattr(game, 'ai_consecutive_turns', 1)
     return "このターンに追加で1ターン分行動できます（合計2ターン）。"
 
 
 def eff_draw2(game: Game, player: PlayerState) -> str:
     """2ドロー(1): 山札から2枚引く。"""
-    res = game.draw_to_hand(2)
+    # Draw two cards for the specified player (works for both human and AI)
     items: List[str] = []
-    for c, added in res:
+    for _ in range(2):
+        c = player.deck.draw()
         if c is None:
             continue
-        items.append(c.name if added else f"{c.name}(墓地)")
+        if len(player.hand.cards) >= player.hand_limit:
+            player.graveyard.append(c)
+            game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
+            items.append(f"{c.name}(墓地)")
+        else:
+            player.hand.add(c)
+            items.append(c.name)
     return "ドロー: " + (", ".join(items) if items else "なし")
 
 

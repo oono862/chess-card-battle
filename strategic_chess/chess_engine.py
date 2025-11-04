@@ -42,6 +42,13 @@ class Piece:
     def get_valid_moves(self, pcs: List["Piece"], ignore_castling: bool = False):
         moves = []
 
+        # If this piece has been frozen by a gimmick, disallow any moves.
+        try:
+            if hasattr(self, 'frozen_turns') and getattr(self, 'frozen_turns', 0) > 0:
+                return moves
+        except Exception:
+            pass
+
         def add_direction(dr: int, dc: int, max_steps: int = 8):
             for step in range(1, max_steps + 1):
                 nr = self.row + dr * step
@@ -217,12 +224,84 @@ def simulate_move(src_piece: Piece, to_r: int, to_c: int) -> List[Piece]:
 
 def apply_move(piece: Piece, to_r: int, to_c: int) -> None:
     global en_passant_target, promotion_pending
-    from_r, from_c = piece.row, piece.col
+    # Support both object-style Piece and dict-style piece representations
+    try:
+        from_r = getattr(piece, 'row')
+        from_c = getattr(piece, 'col')
+    except Exception:
+        try:
+            from_r = piece.get('row') if isinstance(piece, dict) else None
+            from_c = piece.get('col') if isinstance(piece, dict) else None
+        except Exception:
+            from_r = None
+            from_c = None
+
+    # Defensive: ensure frozen pieces (e.g. from gimmicks) cannot be moved.
+    # The UI or core may pass a Piece-like object that's not the same instance
+    # as the canonical one in this module's `pieces` list. Find the canonical
+    # engine piece (by identity or by matching row/col/name/color) and consult
+    # its transient `frozen_turns` attribute. If frozen, abort the move.
+    try:
+        canonical = None
+        for p in pieces:
+            if p is piece:
+                canonical = p
+                break
+        if canonical is None:
+            # Try matching by attributes; support both object-style and dict-style
+            piece_row = getattr(piece, 'row', None)
+            piece_col = getattr(piece, 'col', None)
+            piece_name = getattr(piece, 'name', None)
+            piece_color = getattr(piece, 'color', None)
+            # If piece is a mapping (dict-like), try key access for missing attrs
+            try:
+                if piece_row is None and isinstance(piece, dict):
+                    piece_row = piece.get('row')
+                if piece_col is None and isinstance(piece, dict):
+                    piece_col = piece.get('col')
+                if piece_name is None and isinstance(piece, dict):
+                    piece_name = piece.get('name')
+                if piece_color is None and isinstance(piece, dict):
+                    piece_color = piece.get('color')
+            except Exception:
+                pass
+            for p in pieces:
+                try:
+                    if p.row == piece_row and p.col == piece_col and p.name == piece_name and p.color == piece_color:
+                        canonical = p
+                        break
+                except Exception:
+                    continue
+        if canonical is not None:
+            if hasattr(canonical, 'frozen_turns') and getattr(canonical, 'frozen_turns', 0) > 0:
+                # Do not perform the move when frozen; silently ignore to keep callers simple.
+                return
+    except Exception:
+        # If anything unexpected happens during the frozen check, fall back to normal behavior.
+        canonical = None
+
+    # Use the canonical engine piece if we found one; otherwise operate on the passed-in piece
+    src = canonical if canonical is not None else piece
+
+    # If we don't yet know from_r/from_c (e.g., piece was engine instance but getattr failed earlier), derive from src
+    try:
+        if from_r is None:
+            from_r = getattr(src, 'row', None)
+        if from_c is None:
+            from_c = getattr(src, 'col', None)
+    except Exception:
+        try:
+            if from_r is None and isinstance(src, dict):
+                from_r = src.get('row')
+            if from_c is None and isinstance(src, dict):
+                from_c = src.get('col')
+        except Exception:
+            pass
 
     # en passant capture
     target = get_piece_at(to_r, to_c)
-    if piece.name == 'P' and target is None and en_passant_target is not None and (to_r, to_c) == en_passant_target:
-        captured_row = to_r + (1 if piece.color == 'white' else -1)
+    if getattr(src, 'name', None) == 'P' and target is None and en_passant_target is not None and (to_r, to_c) == en_passant_target:
+        captured_row = to_r + (1 if getattr(src, 'color', None) == 'white' else -1)
         captured_piece = get_piece_at(captured_row, to_c)
         if captured_piece and captured_piece.name == 'P':
             pieces.remove(captured_piece)
@@ -232,7 +311,7 @@ def apply_move(piece: Piece, to_r: int, to_c: int) -> None:
         pieces.remove(target)
 
     # castling rook move
-    if piece.name == 'K' and abs(to_c - from_c) == 2:
+    if getattr(src, 'name', None) == 'K' and from_r is not None and from_c is not None and abs(to_c - from_c) == 2:
         if to_c == 6:  # kingside
             rook = get_piece_at(to_r, 7)
             if rook and rook.name == 'R':
@@ -244,17 +323,38 @@ def apply_move(piece: Piece, to_r: int, to_c: int) -> None:
                 rook.col = 3
                 rook.has_moved = True
 
-    # move the piece
-    piece.row = to_r
-    piece.col = to_c
-    piece.has_moved = True
+    # move the src piece (canonical engine piece if available)
+    try:
+        src.row = to_r
+        src.col = to_c
+        src.has_moved = True
+    except Exception:
+        # if src is dict-like, update keys
+        try:
+            if isinstance(src, dict):
+                src['row'] = to_r
+                src['col'] = to_c
+                src['has_moved'] = True
+        except Exception:
+            pass
 
     # set en passant target only on double pawn move
-    if piece.name == 'P' and abs(to_r - from_r) == 2:
+    if getattr(src, 'name', None) == 'P' and (from_r is not None and abs(to_r - from_r) == 2):
         en_passant_target = ((from_r + to_r)//2, to_c)
     else:
         en_passant_target = None
 
     # promotion: mark pending for UI handling
-    if piece.name == 'P' and (piece.row == 0 or piece.row == 7):
-        promotion_pending = {'piece': piece, 'color': piece.color}
+    if getattr(src, 'name', None) == 'P':
+        try:
+            sr = getattr(src, 'row', None)
+        except Exception:
+            sr = src.get('row') if isinstance(src, dict) else None
+        if sr == 0 or sr == 7:
+            try:
+                promotion_pending = {'piece': src, 'color': getattr(src, 'color', None)}
+            except Exception:
+                try:
+                    promotion_pending = {'piece': src, 'color': src.get('color') if isinstance(src, dict) else None}
+                except Exception:
+                    promotion_pending = {'piece': src, 'color': None}

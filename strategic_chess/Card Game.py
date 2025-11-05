@@ -23,7 +23,7 @@ pygame.init()
 W, H = 1200, 800
 # Allow the user to resize/minimize/maximize the game window
 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-pygame.display.set_caption("カードゲーム デモ")
+pygame.display.set_caption("Chess Card Battle β")
 clock = pygame.time.Clock()
 
 # Base UI resolution used for consistent scaling between windowed and fullscreen
@@ -56,6 +56,12 @@ enlarged_card_index = None  # 拡大表示中のカードインデックス（No
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
 opponent_hand_count = 5  # 相手の手札枚数（仮の値、実際はゲームロジックから取得）
+
+# ---- BGM 設定 (UI から変更可能) ----
+# BGM を再生するかどうか (設定画面で切替)
+bgm_enabled = True
+# BGM ボリューム (0.0 - 1.0)
+bgm_volume = 0.8
 
 # CPU 難易度 (1=Easy,2=Medium,3=Hard,4=Expert)
 CPU_DIFFICULTY = 2
@@ -573,6 +579,36 @@ def show_start_screen():
     # keep the original loaded image (if any) for rescaling on resize
     bg_img = locals().get('img', None)
 
+    # Try to play title BGM (non-fatal if audio subsystem or file missing)
+    try:
+        # prefer project-local mugic folder
+        bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-162.mp3')
+        if os.path.exists(bgm_path):
+            try:
+                # ensure mixer is initialized
+                if not pygame.mixer.get_init():
+                    try:
+                        pygame.mixer.init()
+                    except Exception:
+                        pass
+                # load BGM; only start playing if bgm_enabled
+                pygame.mixer.music.load(bgm_path)
+                try:
+                    if bgm_enabled:
+                        pygame.mixer.music.play(-1)
+                        pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
+                    else:
+                        # keep volume at 0 if disabled (do not play)
+                        pygame.mixer.music.set_volume(0.0)
+                except Exception:
+                    # ignore set_volume/play errors
+                    pass
+            except Exception:
+                # ignore audio errors silently so UI still works
+                pass
+    except Exception:
+        pass
+
     while True:
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
@@ -631,12 +667,22 @@ def show_start_screen():
                         CPU_DIFFICULTY = val
                         return
 
-                # deck button (centered below)
-                deck_w = 200
-                deck_h = 56
+                # deck button (centered below) - match the drawing coordinates used later
+                deck_w = 220  # matches deck_btn_w when drawing
+                deck_h = 64   # matches deck_btn_h when drawing
                 deck_x = (W - deck_w)//2
-                # deck_y is computed later when drawing; approximate here using same formula
-                deck_y = start_y + btn_h + 48 + 56
+                # compute deck_y to match drawing: hint_y = start_y + btn_h + 140; deck_y = hint_y + 100
+                deck_y = start_y + btn_h + 240
+                # settings button on the left (same vertical position as deck button)
+                settings_w = 180
+                settings_h = deck_h
+                settings_x = 20
+                settings_y = deck_y
+                if settings_x <= mx <= settings_x + settings_w and settings_y <= my <= settings_y + settings_h:
+                    # open settings modal/screen
+                    show_settings_screen(screen)
+                    # consume click and continue the main loop (settings handles its own loop)
+                    continue
                 if deck_x <= mx <= deck_x + deck_w and deck_y <= my <= deck_y + deck_h:
                     # show a simple deck modal
                     show_deck_modal(screen)
@@ -700,6 +746,52 @@ def show_start_screen():
         pygame.draw.rect(screen, (70,70,70), deck_rect, 3)
         dtxt = btn_font.render("デッキ作成", True, (30,30,30))
         screen.blit(dtxt, (deck_x + (deck_btn_w - dtxt.get_width())//2, deck_y + (deck_btn_h - dtxt.get_height())//2))
+        # Settings button (left bottom, same vertical as deck button)
+        try:
+            settings_w = 180
+            settings_h = deck_btn_h
+            settings_x = 20
+            settings_y = deck_y
+            settings_rect = pygame.Rect(settings_x, settings_y, settings_w, settings_h)
+            pygame.draw.rect(screen, (230,230,230), settings_rect)
+            pygame.draw.rect(screen, (70,70,70), settings_rect, 3)
+            stxt = btn_font.render("設定", True, (30,30,30))
+            screen.blit(stxt, (settings_x + (settings_w - stxt.get_width())//2, settings_y + (settings_h - stxt.get_height())//2))
+        except Exception:
+            pass
+        # BGM クレジット表示（右下） 
+        try:
+            credit_text = "BGM:MusMus様"
+            # create a bold variant for slightly thicker text
+            try:
+                credit_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", SMALL.get_height(), bold=True)
+            except Exception:
+                credit_font = SMALL
+            # darker fill color for "濃く"
+            fill_color = (200, 200, 200)
+            outline_color = (10, 10, 10)
+            credit_surf = credit_font.render(credit_text, True, fill_color)
+            # draw a slightly darker outline for readability
+            try:
+                outline = credit_font.render(credit_text, True, outline_color)
+                x = W - credit_surf.get_width() - 14
+                y = H - credit_surf.get_height() - 40
+                # outline offset (one pixel) then draw the main text twice to emphasize weight
+                screen.blit(outline, (x + 1, y + 1))
+            except Exception:
+                x = W - credit_surf.get_width() - 14
+                y = H - credit_surf.get_height() - 40
+            # draw main text twice with tiny offset to make it visually bolder
+            try:
+                screen.blit(credit_surf, (x, y))
+                screen.blit(credit_surf, (x + 1, y))
+            except Exception:
+                try:
+                    screen.blit(credit_surf, (x, y))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         pygame.display.flip()
         clock.tick(30)
@@ -743,6 +835,167 @@ def show_deck_modal(screen):
 
         hint = TINY.render("クリック/タッチで閉じる", True, (80,80,80))
         screen.blit(hint, (x + (w - hint.get_width())//2, y + h - 28))
+
+
+def show_settings_screen(screen):
+    """Simple settings screen to toggle BGM ON/OFF and adjust volume.
+
+    This is a modal-like loop that returns when the user presses "戻る".
+    It updates module-level `bgm_enabled` and `bgm_volume` globals and
+    applies them to pygame.mixer.music where appropriate.
+    """
+    global bgm_enabled, bgm_volume
+    clk = pygame.time.Clock()
+    dragging = False
+    drag_offset = 0
+
+    # layout
+    w = 640
+    h = 280
+    x = (W - w) // 2
+    y = (H - h) // 2
+
+    # slider geometry
+    slider_x = x + 40
+    slider_y = y + 120
+    slider_w = w - 80
+    slider_h = 6
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # back button
+                back_rect = pygame.Rect(x + w - 120, y + h - 56, 100, 40)
+                if back_rect.collidepoint(mx, my):
+                    return
+                # toggle BGM checkbox
+                chk_rect = pygame.Rect(x + 40, y + 60, 24, 24)
+                if chk_rect.collidepoint(mx, my):
+                    bgm_enabled = not bgm_enabled
+                    try:
+                        if pygame.mixer.get_init():
+                            if bgm_enabled:
+                                # restore volume
+                                pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
+                                # if music is loaded but not playing, try to unpause
+                                try:
+                                    pygame.mixer.music.unpause()
+                                except Exception:
+                                    pass
+                            else:
+                                pygame.mixer.music.set_volume(0.0)
+                    except Exception:
+                        pass
+                # slider hit check
+                slid_rect = pygame.Rect(slider_x, slider_y - 8, slider_w, 24)
+                if slid_rect.collidepoint(mx, my):
+                    dragging = True
+                    # compute proportion
+                    rel = (mx - slider_x) / float(max(1, slider_w))
+                    bgm_volume = max(0.0, min(1.0, rel))
+                    try:
+                        if pygame.mixer.get_init() and bgm_enabled:
+                            pygame.mixer.music.set_volume(bgm_volume)
+                    except Exception:
+                        pass
+            elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+                dragging = False
+            elif ev.type == pygame.MOUSEMOTION and dragging:
+                mx, my = ev.pos
+                rel = (mx - slider_x) / float(max(1, slider_w))
+                bgm_volume = max(0.0, min(1.0, rel))
+                try:
+                    if pygame.mixer.get_init() and bgm_enabled:
+                        pygame.mixer.music.set_volume(bgm_volume)
+                except Exception:
+                    pass
+
+        # draw modal
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0,160))
+        screen.blit(overlay, (0,0))
+
+        surf = pygame.Surface((w, h))
+        surf.fill((245,245,250))
+        pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
+
+        title = FONT.render("設定", True, (30,30,30))
+        surf.blit(title, (20, 12))
+
+        # BGM enabled checkbox
+        try:
+            chk_rect = pygame.Rect(40, 60, 24, 24)
+            pygame.draw.rect(surf, (230,230,230), chk_rect)
+            pygame.draw.rect(surf, (80,80,80), chk_rect, 2)
+            txt = SMALL.render("BGM を再生する", True, (30,30,30))
+            surf.blit(txt, (80, 60))
+            if bgm_enabled:
+                # draw a tidy check mark that fits inside the checkbox
+                try:
+                    cx = chk_rect.x
+                    cy = chk_rect.y
+                    pts = [
+                        (cx + 4, cy + 12),
+                        (cx + 10, cy + 18),
+                        (cx + 20, cy + 6),
+                    ]
+                    pygame.draw.lines(surf, (20,20,20), False, pts, 3)
+                except Exception:
+                    # fallback: small filled rect
+                    pygame.draw.rect(surf, (20,20,20), (chk_rect.x+6, chk_rect.y+6, 12, 12))
+        except Exception:
+            pass
+
+        # Volume slider
+        try:
+            # slider background
+            sx = slider_x - x
+            sy = slider_y - y
+            pygame.draw.rect(surf, (200,200,200), (sx, sy - slider_h//2, slider_w, slider_h))
+            # knob position
+            kx = int(sx + bgm_volume * slider_w)
+            ky = sy
+            pygame.draw.circle(surf, (80,80,80), (kx, ky), 10)
+            vol_txt = SMALL.render(f"音量: {int(bgm_volume*100)}%", True, (30,30,30))
+            surf.blit(vol_txt, (40, sy + 24))
+        except Exception:
+            pass
+
+        # Back button
+        back_rect = pygame.Rect(w - 120, h - 56, 100, 40)
+        pygame.draw.rect(surf, (220,220,220), back_rect)
+        pygame.draw.rect(surf, (70,70,70), back_rect, 2)
+        back_txt = SMALL.render("戻る", True, (30,30,30))
+        surf.blit(back_txt, (back_rect.x + (back_rect.w - back_txt.get_width())//2, back_rect.y + (back_rect.h - back_txt.get_height())//2))
+
+        # クレジット表示（モーダル左下）
+        try:
+            credit_text = "BGM:MusMus様"
+            try:
+                credit_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(14, SMALL.get_height()-2), bold=True)
+            except Exception:
+                credit_font = SMALL
+            fill_color = (120, 120, 120)
+            outline_color = (30, 30, 30)
+            credit_surf = credit_font.render(credit_text, True, fill_color)
+            outline = credit_font.render(credit_text, True, outline_color)
+            cx = 12
+            cy = h - credit_surf.get_height() - 12
+            # draw outline slightly offset then main text
+            surf.blit(outline, (cx + 1, cy + 1))
+            surf.blit(credit_surf, (cx, cy))
+        except Exception:
+            pass
+
+        screen.blit(surf, (x, y))
+        pygame.display.flip()
+        clk.tick(30)
 
         pygame.display.flip()
         clock.tick(30)
@@ -3227,14 +3480,16 @@ def handle_mouse_click(pos):
             # 選択: 自分の凍結駒を解除 -> まず凍結駒の存在確認
             frozen = getattr(game, 'frozen_pieces', {})
             my_frozen_pieces = []
+            # assume human player controls 'white'
+            own_color = 'white'
             for p in chess.pieces:
                 try:
-                    is_fz = (p.color == 'black') and (((id(p) in frozen) and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0))
+                    is_fz = (p.color == own_color) and (((id(p) in frozen) and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0))
                 except Exception:
-                    is_fz = (p.color == 'black') and (id(p) in frozen and frozen.get(id(p), 0) > 0)
+                    is_fz = (p.color == own_color) and (id(p) in frozen and frozen.get(id(p), 0) > 0)
                 if is_fz:
                     my_frozen_pieces.append(p)
-            
+
             if not my_frozen_pieces:
                 # 凍結駒がない場合は警告表示（カードはまだ消費していない）
                 game.pending = PendingAction(kind='confirm', info={
@@ -3244,7 +3499,7 @@ def handle_mouse_click(pos):
                 })
                 return
             else:
-                # 凍結駒がある場合は通常の解除処理へ（カードを消費してから）
+                # 凍結駒がある場合はカードを消費してから処理
                 hand_idx = game.pending.info.get('hand_index')
                 if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
                     card = game.player.hand.cards[hand_idx]
@@ -3252,8 +3507,39 @@ def handle_mouse_click(pos):
                     game.player.hand.remove_at(hand_idx)
                     game.player.graveyard.append(card)
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
-                game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
-                return
+                # If there's exactly one frozen own piece, unfreeze it immediately
+                if len(my_frozen_pieces) == 1:
+                    target = my_frozen_pieces[0]
+                    try:
+                        if id(target) in game.frozen_pieces:
+                            del game.frozen_pieces[id(target)]
+                    except Exception:
+                        try:
+                            game.frozen_pieces.pop(id(target), None)
+                        except Exception:
+                            pass
+                    try:
+                        if hasattr(target, 'frozen_turns'):
+                            try:
+                                delattr(target, 'frozen_turns')
+                            except Exception:
+                                try:
+                                    del target.frozen_turns
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    try:
+                        name = target.name
+                    except Exception:
+                        name = str(target)
+                    game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                    game.pending = None
+                    return
+                else:
+                    # 複数ある場合は選択状態へ（UIが選択させる）
+                    game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
+                    return
         if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
             # 選択: 複数マス封鎖へ（カードを消費してから）
             hand_idx = game.pending.info.get('hand_index')
@@ -3693,6 +3979,46 @@ def main_loop():
     # scrollbar_rect は draw_panel 内で更新されるが、初期 None を明示
     scrollbar_rect = None
     
+    # Transition audio: stop title BGM and start gameplay BGM (MusMus-BGM-173.mp3).
+    try:
+        # ensure mixer available
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception:
+                pass
+        # attempt to stop any title music
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+
+        # start gameplay BGM if file exists (respecting user setting)
+        try:
+            bgm_game = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-173.mp3')
+            if os.path.exists(bgm_game) and bgm_enabled:
+                try:
+                    pygame.mixer.music.load(bgm_game)
+                    pygame.mixer.music.play(-1)
+                    try:
+                        pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
+                    except Exception:
+                        pass
+                except Exception:
+                    # ignore load/play errors
+                    pass
+            else:
+                # if user disabled BGM, ensure music is not playing and volume is muted
+                try:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.set_volume(0.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:

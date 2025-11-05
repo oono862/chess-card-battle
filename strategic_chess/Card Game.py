@@ -976,7 +976,7 @@ def show_settings_screen(screen):
 
         # クレジット表示（モーダル左下）
         try:
-            credit_text = "BGM:MusMus様"
+            credit_text = "フリーBGM・音楽素材:MusMus様"
             try:
                 credit_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(14, SMALL.get_height()-2), bold=True)
             except Exception:

@@ -23,7 +23,7 @@ pygame.init()
 W, H = 1200, 800
 # Allow the user to resize/minimize/maximize the game window
 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-pygame.display.set_caption("カードゲーム デモ")
+pygame.display.set_caption("Chess Card Battle β")
 clock = pygame.time.Clock()
 
 # Base UI resolution used for consistent scaling between windowed and fullscreen
@@ -721,7 +721,7 @@ def show_start_screen():
         pygame.draw.rect(screen, (70,70,70), deck_rect, 3)
         dtxt = btn_font.render("デッキ作成", True, (30,30,30))
         screen.blit(dtxt, (deck_x + (deck_btn_w - dtxt.get_width())//2, deck_y + (deck_btn_h - dtxt.get_height())//2))
-        # BGM クレジット表示（右下） — 少し濃く、太く表示
+        # BGM クレジット表示（右下） 
         try:
             credit_text = "BGM:MusMus様"
             # create a bold variant for slightly thicker text

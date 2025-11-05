@@ -573,6 +573,27 @@ def show_start_screen():
     # keep the original loaded image (if any) for rescaling on resize
     bg_img = locals().get('img', None)
 
+    # Try to play title BGM (non-fatal if audio subsystem or file missing)
+    try:
+        # prefer project-local mugic folder
+        bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-162.mp3')
+        if os.path.exists(bgm_path):
+            try:
+                # ensure mixer is initialized
+                if not pygame.mixer.get_init():
+                    try:
+                        pygame.mixer.init()
+                    except Exception:
+                        pass
+                # load and play looped BGM
+                pygame.mixer.music.load(bgm_path)
+                pygame.mixer.music.play(-1)
+            except Exception:
+                # ignore audio errors silently so UI still works
+                pass
+    except Exception:
+        pass
+
     while True:
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
@@ -700,6 +721,39 @@ def show_start_screen():
         pygame.draw.rect(screen, (70,70,70), deck_rect, 3)
         dtxt = btn_font.render("デッキ作成", True, (30,30,30))
         screen.blit(dtxt, (deck_x + (deck_btn_w - dtxt.get_width())//2, deck_y + (deck_btn_h - dtxt.get_height())//2))
+        # BGM クレジット表示（右下） — 少し濃く、太く表示
+        try:
+            credit_text = "BGM:MusMus様"
+            # create a bold variant for slightly thicker text
+            try:
+                credit_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", SMALL.get_height(), bold=True)
+            except Exception:
+                credit_font = SMALL
+            # darker fill color for "濃く"
+            fill_color = (200, 200, 200)
+            outline_color = (10, 10, 10)
+            credit_surf = credit_font.render(credit_text, True, fill_color)
+            # draw a slightly darker outline for readability
+            try:
+                outline = credit_font.render(credit_text, True, outline_color)
+                x = W - credit_surf.get_width() - 14
+                y = H - credit_surf.get_height() - 40
+                # outline offset (one pixel) then draw the main text twice to emphasize weight
+                screen.blit(outline, (x + 1, y + 1))
+            except Exception:
+                x = W - credit_surf.get_width() - 14
+                y = H - credit_surf.get_height() - 40
+            # draw main text twice with tiny offset to make it visually bolder
+            try:
+                screen.blit(credit_surf, (x, y))
+                screen.blit(credit_surf, (x + 1, y))
+            except Exception:
+                try:
+                    screen.blit(credit_surf, (x, y))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         pygame.display.flip()
         clock.tick(30)
@@ -3726,6 +3780,35 @@ def main_loop():
     # scrollbar_rect は draw_panel 内で更新されるが、初期 None を明示
     scrollbar_rect = None
     
+    # Transition audio: stop title BGM and start gameplay BGM (MusMus-BGM-173.mp3).
+    try:
+        # ensure mixer available
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception:
+                pass
+        # attempt to stop any title music
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+
+        # start gameplay BGM if file exists (safe no-op if missing)
+        try:
+            bgm_game = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-173.mp3')
+            if os.path.exists(bgm_game):
+                try:
+                    pygame.mixer.music.load(bgm_game)
+                    pygame.mixer.music.play(-1)
+                except Exception:
+                    # ignore load/play errors
+                    pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:

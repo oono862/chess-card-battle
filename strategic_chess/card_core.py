@@ -575,7 +575,7 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
         kind="target_piece",
         info={"turns": 1, "note": "Freeze enemy piece until end of next opponent turn."},
     )
-    return "凍結する相手コマを選択してください（デモでは選択のみ）。"
+    return "凍結する相手コマを選択してください。"
 
 
 def eff_storm_jump_once(game: Game, player: PlayerState) -> str:

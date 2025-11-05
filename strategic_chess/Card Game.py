@@ -3227,14 +3227,16 @@ def handle_mouse_click(pos):
             # 選択: 自分の凍結駒を解除 -> まず凍結駒の存在確認
             frozen = getattr(game, 'frozen_pieces', {})
             my_frozen_pieces = []
+            # assume human player controls 'white'
+            own_color = 'white'
             for p in chess.pieces:
                 try:
-                    is_fz = (p.color == 'black') and (((id(p) in frozen) and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0))
+                    is_fz = (p.color == own_color) and (((id(p) in frozen) and frozen.get(id(p), 0) > 0) or (hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0))
                 except Exception:
-                    is_fz = (p.color == 'black') and (id(p) in frozen and frozen.get(id(p), 0) > 0)
+                    is_fz = (p.color == own_color) and (id(p) in frozen and frozen.get(id(p), 0) > 0)
                 if is_fz:
                     my_frozen_pieces.append(p)
-            
+
             if not my_frozen_pieces:
                 # 凍結駒がない場合は警告表示（カードはまだ消費していない）
                 game.pending = PendingAction(kind='confirm', info={
@@ -3244,7 +3246,7 @@ def handle_mouse_click(pos):
                 })
                 return
             else:
-                # 凍結駒がある場合は通常の解除処理へ（カードを消費してから）
+                # 凍結駒がある場合はカードを消費してから処理
                 hand_idx = game.pending.info.get('hand_index')
                 if hand_idx is not None and 0 <= hand_idx < len(game.player.hand.cards):
                     card = game.player.hand.cards[hand_idx]
@@ -3252,8 +3254,39 @@ def handle_mouse_click(pos):
                     game.player.hand.remove_at(hand_idx)
                     game.player.graveyard.append(card)
                     game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
-                game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
-                return
+                # If there's exactly one frozen own piece, unfreeze it immediately
+                if len(my_frozen_pieces) == 1:
+                    target = my_frozen_pieces[0]
+                    try:
+                        if id(target) in game.frozen_pieces:
+                            del game.frozen_pieces[id(target)]
+                    except Exception:
+                        try:
+                            game.frozen_pieces.pop(id(target), None)
+                        except Exception:
+                            pass
+                    try:
+                        if hasattr(target, 'frozen_turns'):
+                            try:
+                                delattr(target, 'frozen_turns')
+                            except Exception:
+                                try:
+                                    del target.frozen_turns
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    try:
+                        name = target.name
+                    except Exception:
+                        name = str(target)
+                    game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                    game.pending = None
+                    return
+                else:
+                    # 複数ある場合は選択状態へ（UIが選択させる）
+                    game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
+                    return
         if heat_choice_block_rect and heat_choice_block_rect.collidepoint(pos):
             # 選択: 複数マス封鎖へ（カードを消費してから）
             hand_idx = game.pending.info.get('hand_index')

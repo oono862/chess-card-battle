@@ -23,7 +23,7 @@ pygame.init()
 W, H = 1200, 800
 # Allow the user to resize/minimize/maximize the game window
 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-pygame.display.set_caption("Chess Card Battle β")
+pygame.display.set_caption("Chess-Card-Battle β")
 clock = pygame.time.Clock()
 
 # Base UI resolution used for consistent scaling between windowed and fullscreen
@@ -3020,19 +3020,31 @@ def draw_panel():
         btn_h = 60
         
         restart_rect = pygame.Rect(W//2 - btn_w//2, H//2, btn_w, btn_h)
-        quit_rect = pygame.Rect(W//2 - btn_w//2, H//2 + btn_h + 20, btn_w, btn_h)
+        # add "change difficulty and rematch" button (gold)
+        change_rect = pygame.Rect(W//2 - btn_w//2, H//2 + btn_h + 12, btn_w, btn_h)
+        quit_rect = pygame.Rect(W//2 - btn_w//2, H//2 + 2*btn_h + 24, btn_w, btn_h)
         
         # ボタン描画
         pygame.draw.rect(screen, (50, 150, 50), restart_rect)
+        # gold button for changing difficulty then rematch
+        gold = (212, 175, 55)
+        pygame.draw.rect(screen, gold, change_rect)
         pygame.draw.rect(screen, (150, 50, 50), quit_rect)
+        # borders
         pygame.draw.rect(screen, (255, 255, 255), restart_rect, 3)
+        pygame.draw.rect(screen, (255, 255, 255), change_rect, 3)
         pygame.draw.rect(screen, (255, 255, 255), quit_rect, 3)
-        
+
         screen.blit(restart_surf, restart_surf.get_rect(center=restart_rect.center))
+        # change button text
+        change_text = "難易度変更"
+        change_surf = btn_font.render(change_text, True, (30,30,30))
+        screen.blit(change_surf, change_surf.get_rect(center=change_rect.center))
         screen.blit(quit_surf, quit_surf.get_rect(center=quit_rect.center))
         
         # ボタンの矩形を保存（クリック判定用）
         draw_panel.restart_rect = restart_rect
+        draw_panel.change_difficulty_rect = change_rect
         draw_panel.quit_rect = quit_rect
 
 
@@ -3320,6 +3332,14 @@ def handle_mouse_click(pos):
     # ゲーム終了画面のボタン処理
     if game_over:
         if hasattr(draw_panel, 'restart_rect') and draw_panel.restart_rect.collidepoint(pos):
+            restart_game()
+            return
+        if hasattr(draw_panel, 'change_difficulty_rect') and draw_panel.change_difficulty_rect.collidepoint(pos):
+            # go back to difficulty select, then restart game with chosen difficulty
+            try:
+                show_start_screen()
+            except Exception:
+                pass
             restart_game()
             return
         if hasattr(draw_panel, 'quit_rect') and draw_panel.quit_rect.collidepoint(pos):

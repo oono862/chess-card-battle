@@ -602,58 +602,58 @@ def debug_setup_counter_check_white():
         pass
 
 def debug_setup_simul_check_start():
-    """同時チェック（両者チェック）状態で開始できる局面をセット。
+    """F9: 白が黒Kを取る手を実行し、その後黒が白Kを取れるかをテストする局面をセット。
 
     例の配置:
-      - 白K: e1 (7,4) ← 黒R e8 からの縦チェック
-      - 黒R: e8 (0,4)
-      - 白R: b6 (2,1) → 黒K a6 へ横チェック
+      - 白K: e1 (7,4)
       - 黒K: a6 (2,0)
+      - 白R: a1 (7,0) → 黒K a6 に縦で取れる
+      - 黒R: e8 (0,4) → 白K e1 に縦で取れる
 
-    これにより白/黒どちらもチェック状態。main_loop 側の検知で
-    simul_check_active が True になり、各サイドは「次の自分手番開始までに解除」判定が動く。
+    白Rがa1からa6へ移動して黒Kを取り、その後黒Rがe8からe1へ移動して白Kを取ることができる。
+    両方のKが取られた場合は引き分け、片方だけが残っている場合はそのプレイヤーの勝ち。
     """
     # 盤面リセット
     chess.pieces.clear()
     chess.en_passant_target = None
 
-    # 駒配置（両チェック）
+    # 駒配置
     wk = chess.Piece(7, 4, 'K', 'white')  # e1
-    br = chess.Piece(0, 4, 'R', 'black')  # e8（白Kにチェック）
-    wr = chess.Piece(2, 1, 'R', 'white')  # b6（黒Kにチェック）
     bk = chess.Piece(2, 0, 'K', 'black')  # a6
-    chess.pieces.extend([wk, br, wr, bk])
+    wr = chess.Piece(7, 0, 'R', 'white')  # a1（a6の黒Kを取れる）
+    br = chess.Piece(0, 4, 'R', 'black')  # e8（e1の白Kを取れる）
+    chess.pieces.extend([wk, bk, wr, br])
 
-    # UI/ターン関連
-    globals()['selected_piece'] = None
-    globals()['highlight_squares'] = []
+    # 白Rを選択状態にして、a6（黒K）への移動をハイライト
+    globals()['selected_piece'] = wr
+    try:
+        globals()['highlight_squares'] = get_valid_moves(wr)
+    except Exception:
+        globals()['highlight_squares'] = []
+    
     globals()['chess_current_turn'] = 'white'
     try:
-        game.turn_active = True  # すぐ動かせるように
+        game.turn_active = True
         game.player_moved_this_turn = False
     except Exception:
         pass
 
-    # ログ案内（次の自分手番開始までの判定説明）
+    # 両キング取得テストモードをONにする（片方のキングが取られても即座に終了しない）
+    globals()['dual_king_capture_test'] = True
+    globals()['first_king_captured'] = None  # 最初に取られたキングの色を記録
+
+    # ログ案内
     try:
-        game.log.append("[DEBUG] 同時チェック開始局面をセットしました（白番）。")
-        game.log.append("  白K:e1 / 黒R:e8 / 白R:b6 / 黒K:a6 → 白黒ともチェック中")
-        game.log.append("  それぞれ『次の自分のチェス手番開始』までにチェック解除できなければ失敗。")
-        game.log.append("  白が指して黒番→黒が指して白番…の境目で成否判定がログに出ます。")
+        game.log.append("[DEBUG] F9: 両キング取得テスト局面をセットしました（白番）。")
+        game.log.append("  白K:e1 / 黒K:a6 / 白R:a1(選択済) / 黒R:e8")
+        game.log.append("  白Ra1→a6で黒Kを取ってください。その後、黒Re8→e1で白Kを取ります。")
+        game.log.append("  両方のKが取られた場合は引き分けになります。")
     except Exception:
         pass
 
     # デバッグモードONなら、利便性のため自動で「カード直後扱い」を付与
     if globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False):
         _debug_mark_card_played()
-
-    # 案内ログ
-    try:
-        game.log.append("[DEBUG] 反撃チェック直前局面をセットしました（白番）。")
-        game.log.append("  白K:e1 / 黒R:e8（白にチェック中） / 白R:b1 / 黒K:a6")
-        game.log.append("  推奨手: Rb1-b6 → 自分は依然チェック・相手にもチェック（反撃チェック）。")
-        game.log.append("  実行には迅雷、または[F6]ON + [F7]（カード直後扱い）が必要です。")
-    except Exception:
         pass
 
 
@@ -1721,19 +1721,20 @@ def draw_panel():
     draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
     info_y += line_height
     # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
-    try:
-        w_check = is_in_check_for_display(chess.pieces, 'white')
-        b_check = is_in_check_for_display(chess.pieces, 'black')
-        if w_check or b_check:
-            col = (230, 120, 0)
-            if w_check:
-                draw_text(screen, "白チェック中", info_x, info_y, col)
-                info_y += line_height - 10
-            if b_check:
-                draw_text(screen, "黒チェック中", info_x, info_y, col)
-                info_y += line_height - 10
-    except Exception:
-        pass
+    # PPの下の表示を非表示（下部に表示されるため）
+    # try:
+    #     w_check = is_in_check_for_display(chess.pieces, 'white')
+    #     b_check = is_in_check_for_display(chess.pieces, 'black')
+    #     if w_check or b_check:
+    #         col = (230, 120, 0)
+    #         if w_check:
+    #             draw_text(screen, "白チェック中", info_x, info_y, col)
+    #             info_y += line_height - 10
+    #         if b_check:
+    #             draw_text(screen, "黒チェック中", info_x, info_y, col)
+    #             info_y += line_height - 10
+    # except Exception:
+    #     pass
     # 簡易エフェクト表示: 次に発動する特別アクションを左パネルに表示
     # 表記ルール: 「次：飛越可」「次：追加行動×n」
     if getattr(game.player, 'next_move_can_jump', False):
@@ -2895,10 +2896,26 @@ def draw_panel():
         
         # 勝敗メッセージ
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 48, bold=True)
-        if game_over_winner == 'white':
+        
+        # game_over_winnerがNoneの場合、キングの存在から勝者を推定
+        current_winner = game_over_winner
+        if current_winner is None:
+            try:
+                white_king_exists = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+                black_king_exists = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+                if white_king_exists and not black_king_exists:
+                    current_winner = 'white'
+                elif black_king_exists and not white_king_exists:
+                    current_winner = 'black'
+                else:
+                    current_winner = 'draw'
+            except Exception:
+                current_winner = 'draw'
+        
+        if current_winner == 'white':
             msg = "YOU WIN！"
             color = (255, 255, 100)
-        elif game_over_winner == 'black':
+        elif current_winner == 'black':
             msg = "YOU LOSE！"
             color = (150, 150, 255)
         else:  # draw
@@ -3042,12 +3059,13 @@ def handle_keydown(key):
     if key == pygame.K_F5:
         debug_setup_checkmate()
         return
-    if key == pygame.K_F8:
-        debug_setup_counter_check_white()
-        return
-    if key == pygame.K_F9:
-        debug_setup_simul_check_start()
-        return
+    # F8とF9のデバッグ機能を無効化（通常プレイ時に誤操作を防ぐため）
+    # if key == pygame.K_F8:
+    #     debug_setup_counter_check_white()
+    #     return
+    # if key == pygame.K_F9:
+    #     debug_setup_simul_check_start()
+    #     return
     # --- DEBUG: 反撃チェック検証モード ---
     if key == pygame.K_F6:
         globals()['DEBUG_COUNTER_CHECK_CARD_MODE'] = not globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False)
@@ -3246,7 +3264,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand, notice_msg, notice_until
+    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand, notice_msg, notice_until, game_over
     
     # ゲーム終了画面のボタン処理
     if game_over:
@@ -3741,40 +3759,93 @@ def handle_mouse_click(pos):
                 except Exception:
                     name = selected_piece.get('name', str(selected_piece)) if isinstance(selected_piece, dict) else str(selected_piece)
                 chess_log.append(f"{name} を {(row,col)} へ移動")
-                # ターン切替
-                if chess_current_turn == 'white':
-                    # If player has consecutive-turns remaining (from '迅雷'), consume one and keep the turn
-                    cct = getattr(game, 'player_consecutive_turns', 0)
-                    if cct and cct > 0:
-                        try:
-                            game.player_consecutive_turns -= 1
-                        except Exception:
-                            setattr(game, 'player_consecutive_turns', max(0, cct-1))
-                        # keep chess_current_turn as white so player moves again immediately
-                        chess_current_turn = 'white'
-                        # reset per-move flags so player can move again
-                        game.player_moved_this_turn = False
-                        # ensure turn_active remains True so card plays are allowed
-                        game.turn_active = True
-                        game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
+                
+                # 駒移動直後はキング存在チェック（即座に勝敗判定）
+                # 迅雷使用中もそうでない場合も、駒移動直後に判定
+                if not game_over:
+                    white_king_exists = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+                    black_king_exists = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+                    
+                    # 両キング取得テストモード（F9）の場合は即座に終了しない
+                    if globals().get('dual_king_capture_test', False):
+                        if not white_king_exists and not black_king_exists:
+                            # 両方のキングが取られた場合のみゲーム終了（引き分け）
+                            game_over = True
+                            game_over_winner = 'draw'
+                            game.log.append("両者のキングが取られました。引き分け。")
+                            globals()['dual_king_capture_test'] = False
+                            globals()['first_king_captured'] = None
+                        elif not white_king_exists:
+                            # 白Kが取られた
+                            if globals().get('first_king_captured') is None:
+                                globals()['first_king_captured'] = 'white'
+                                game.log.append("[テストモード] 白のキングが取られました。ゲームを続行します...")
+                            else:
+                                # 2つ目のキング取得
+                                game_over = True
+                                game_over_winner = 'draw'
+                                game.log.append("両者のキングが取られました。引き分け。")
+                                globals()['dual_king_capture_test'] = False
+                                globals()['first_king_captured'] = None
+                        elif not black_king_exists:
+                            # 黒Kが取られた
+                            if globals().get('first_king_captured') is None:
+                                globals()['first_king_captured'] = 'black'
+                                game.log.append("[テストモード] 黒のキングが取られました。ゲームを続行します...")
+                            else:
+                                # 2つ目のキング取得
+                                game_over = True
+                                game_over_winner = 'draw'
+                                game.log.append("両者のキングが取られました。引き分け。")
+                                globals()['dual_king_capture_test'] = False
+                                globals()['first_king_captured'] = None
                     else:
-                        chess_current_turn = 'black'
-                        # 白の手番終了後、黒キングがチェック状態か確認（表示用なので凍結駒も含む）
+                        # 通常モード: 即座に勝敗判定
+                        if not white_king_exists:
+                            game_over = True
+                            game_over_winner = 'black'
+                            game.log.append("YOU LOSE！黒の勝利！")
+                        elif not black_king_exists:
+                            game_over = True
+                            game_over_winner = 'white'
+                            game.log.append("YOU WIN！白の勝利")
+                
+                # ゲーム終了していなければターン切替
+                if not game_over:
+                    # ターン切替
+                    if chess_current_turn == 'white':
+                        # If player has consecutive-turns remaining (from '迅雷'), consume one and keep the turn
+                        cct = getattr(game, 'player_consecutive_turns', 0)
+                        if cct and cct > 0:
+                            try:
+                                game.player_consecutive_turns -= 1
+                            except Exception:
+                                setattr(game, 'player_consecutive_turns', max(0, cct-1))
+                            # keep chess_current_turn as white so player moves again immediately
+                            chess_current_turn = 'white'
+                            # reset per-move flags so player can move again
+                            game.player_moved_this_turn = False
+                            # ensure turn_active remains True so card plays are allowed
+                            game.turn_active = True
+                            game.log.append("迅雷効果: プレイヤーの連続ターンを1つ消費しました。")
+                        else:
+                            chess_current_turn = 'black'
+                            # 白の手番終了後、黒キングがチェック状態か確認（表示用なので凍結駒も含む）
+                            try:
+                                if is_in_check_for_display(chess.pieces, 'black'):
+                                    game.log.append("⚠ 黒キングがチェック状態です！")
+                            except Exception:
+                                pass
+                    else:
+                        chess_current_turn = 'white'
+                        # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
                         try:
-                            if is_in_check_for_display(chess.pieces, 'black'):
-                                game.log.append("⚠ 黒キングがチェック状態です！")
+                            if is_in_check_for_display(chess.pieces, 'white'):
+                                game.log.append("⚠ 白キングがチェック状態です！")
                         except Exception:
                             pass
-                else:
-                    chess_current_turn = 'white'
-                    # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
-                    try:
-                        if is_in_check_for_display(chess.pieces, 'white'):
-                            game.log.append("⚠ 白キングがチェック状態です！")
-                    except Exception:
-                        pass
-                # クリア
-                selected_piece = None
+                    # クリア
+                    selected_piece = None
                 highlight_squares = []
                 # AI の手
                 if chess_current_turn == 'black':
@@ -4035,37 +4106,78 @@ def main_loop():
             if should_check_kings:
                 white_king = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
                 black_king = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
-                # まず両者のキング不在を最優先で引き分け判定
-                if not white_king and not black_king:
-                    game_over = True
-                    game_over_winner = 'draw'
-                    game.log.append("両者のキングが取られました。引き分け。")
-                    if globals().get('simul_check_active', False):
-                        globals()['simul_check_active'] = False
-                        globals()['simul_white_deadline_turn'] = None
-                        globals()['simul_black_deadline_turn'] = None
-                        globals()['simul_white_result'] = 'none'
-                        globals()['simul_black_result'] = 'none'
-                elif not white_king:
-                    game_over = True
-                    game_over_winner = 'black'
-                    game.log.append("YOU LOSE！黒の勝利！")
-                    # 同時チェック状態をクリア
-                    if globals().get('simul_check_active', False):
-                        globals()['simul_check_active'] = False
-                        globals()['simul_white_deadline_turn'] = None
-                        globals()['simul_black_deadline_turn'] = None
-                        globals()['simul_white_result'] = 'none'
-                        globals()['simul_black_result'] = 'none'
-                elif not black_king:
-                    game_over = True
-                    game_over_winner = 'white'
-                    game.log.append("YOU WIN！白の勝利")
-                    # 同時チェック状態をクリア
-                    if globals().get('simul_check_active', False):
-                        globals()['simul_check_active'] = False
-                        globals()['simul_white_deadline_turn'] = None
-                        globals()['simul_black_deadline_turn'] = None
+                
+                # 両キング取得テストモード（F9）の処理
+                if globals().get('dual_king_capture_test', False):
+                    # まず両者のキング不在を最優先で引き分け判定
+                    if not white_king and not black_king:
+                        game_over = True
+                        game_over_winner = 'draw'
+                        game.log.append("両者のキングが取られました。引き分け。")
+                        # テストモードを終了
+                        globals()['dual_king_capture_test'] = False
+                        globals()['first_king_captured'] = None
+                    elif not white_king:
+                        # 白Kが取られた場合
+                        if globals().get('first_king_captured') is None:
+                            # 最初のキング取得
+                            globals()['first_king_captured'] = 'white'
+                            game.log.append("[テストモード] 白のキングが取られました。黒の手番を続けます...")
+                        else:
+                            # 2つ目のキングが取られた（黒Kは既に取られている）
+                            game_over = True
+                            game_over_winner = 'draw'
+                            game.log.append("両者のキングが取られました。引き分け。")
+                            globals()['dual_king_capture_test'] = False
+                            globals()['first_king_captured'] = None
+                    elif not black_king:
+                        # 黒Kが取られた場合
+                        if globals().get('first_king_captured') is None:
+                            # 最初のキング取得
+                            globals()['first_king_captured'] = 'black'
+                            game.log.append("[テストモード] 黒のキングが取られました。白の手番を続けます...")
+                        else:
+                            # 2つ目のキングが取られた（白Kは既に取られている）
+                            game_over = True
+                            game_over_winner = 'draw'
+                            game.log.append("両者のキングが取られました。引き分け。")
+                            globals()['dual_king_capture_test'] = False
+                            globals()['first_king_captured'] = None
+                else:
+                    # 通常モード: 既存の処理
+                    # まず両者のキング不在を最優先で引き分け判定
+                    if not white_king and not black_king:
+                        game_over = True
+                        game_over_winner = 'draw'
+                        game.log.append("両者のキングが取られました。引き分け。")
+                        if globals().get('simul_check_active', False):
+                            globals()['simul_check_active'] = False
+                            globals()['simul_white_deadline_turn'] = None
+                            globals()['simul_black_deadline_turn'] = None
+                            globals()['simul_white_result'] = 'none'
+                            globals()['simul_black_result'] = 'none'
+                    elif not white_king:
+                        game_over = True
+                        game_over_winner = 'black'
+                        game.log.append("YOU LOSE！黒の勝利！")
+                        # 同時チェック状態をクリア
+                        if globals().get('simul_check_active', False):
+                            globals()['simul_check_active'] = False
+                            globals()['simul_white_deadline_turn'] = None
+                            globals()['simul_black_deadline_turn'] = None
+                            globals()['simul_white_result'] = 'none'
+                            globals()['simul_black_result'] = 'none'
+                    elif not black_king:
+                        game_over = True
+                        game_over_winner = 'white'
+                        game.log.append("YOU WIN！白の勝利")
+                        # 同時チェック状態をクリア
+                        if globals().get('simul_check_active', False):
+                            globals()['simul_check_active'] = False
+                            globals()['simul_white_deadline_turn'] = None
+                            globals()['simul_black_deadline_turn'] = None
+                            globals()['simul_white_result'] = 'none'
+                            globals()['simul_black_result'] = 'none'
                         globals()['simul_white_result'] = 'none'
                         globals()['simul_black_result'] = 'none'
         

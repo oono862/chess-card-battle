@@ -647,10 +647,10 @@ def _normalize_card_name(name: str) -> str:
 def make_rule_cards_deck() -> Deck:
     """Create a deck containing the cards listed in the provided table."""
     kinds = [
-        Card("灼熱", 1, eff_heat_block_tile),
-        Card("氷結", 1, eff_freeze_piece),
-        Card("暴風", 1, eff_storm_jump_once),
-        Card("迅雷", 1, eff_lightning_two_actions),
+        Card("灼熱", 2, eff_heat_block_tile),
+        Card("氷結", 2, eff_freeze_piece),
+        Card("暴風", 3, eff_storm_jump_once),
+        Card("迅雷", 3, eff_lightning_two_actions),
         Card("2ドロー", 1, eff_draw2),
     Card("錬成", 0, eff_alchemy),
     # 墓地ルーレットは空でも使用可能にし、UIで確認を促す

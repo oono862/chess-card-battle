@@ -3422,23 +3422,6 @@ def handle_keydown(key):
     # if key == pygame.K_F9:
     #     debug_setup_simul_check_start()
     #     return
-    # --- DEBUG: 反撃チェック検証モード ---
-    if key == pygame.K_F6:
-        globals()['DEBUG_COUNTER_CHECK_CARD_MODE'] = not globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False)
-        # モードOFFにしたら念のためフラグを落とす
-        if not globals()['DEBUG_COUNTER_CHECK_CARD_MODE']:
-            try:
-                setattr(game, '_debug_last_action_was_card', False)
-            except Exception:
-                pass
-        try:
-            game.log.append(f"[DEBUG] 反撃チェック: カード直後のみ許可モード {'ON' if globals()['DEBUG_COUNTER_CHECK_CARD_MODE'] else 'OFF'}")
-        except Exception:
-            pass
-        return
-    if key == pygame.K_F7:
-        _debug_mark_card_played()
-        return
     
     # 1-9 キーでカード使用
     if pygame.K_1 <= key <= pygame.K_9:
@@ -4654,11 +4637,11 @@ def main_loop():
             if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
                 game_over = True
                 game_over_winner = 'black'
-                game.log.append("白がチェックメイト！黒の勝利！")
+                game.log.append("YOU LOSE！黒の勝利！")
             elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
                 game_over = True
                 game_over_winner = 'white'
-                game.log.append("黒がチェックメイト！白の勝利！")
+                game.log.append("YOU WIN！白の勝利！")
             # ステイルメイト（合法手がないがチェックでない）の判定（カード効果込み）
             elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
                 game_over = True

@@ -584,15 +584,23 @@ class Game:
                 turns = self.pending.info.get('turns', 1)
                 target = None
                 best_val = -1
+                # prefer non-king high-value targets; only choose king if no other targets
                 vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
                 if chess is not None:
                     try:
+                        # first, consider non-king targets
                         for p in chess.pieces:
-                            if getattr(p, 'color', None) == opp_color:
+                            if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') != 'K':
                                 v = vals.get(getattr(p, 'name', ''), 0)
                                 if v > best_val:
                                     best_val = v
                                     target = p
+                        # if no non-king targets found, fall back to considering the king
+                        if target is None:
+                            for p in chess.pieces:
+                                if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
+                                    target = p
+                                    break
                     except Exception:
                         target = None
                 if target is not None:

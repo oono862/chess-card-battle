@@ -45,17 +45,28 @@ for _ in range(4):
     c = ai_player.deck.draw()
     if c is not None:
         ai_player.hand.add(c)
+# ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
+def get_opponent_hand_count():
+    try:
+        return len(getattr(ai_player, 'hand').cards)
+    except Exception:
+        # フォールバック: 初期値や何らかの理由で参照できない場合は 0 を返す
+        return 0
 # AI 用のギミックフラグ
 ai_next_move_can_jump = False
 ai_extra_moves_this_turn = 0
 ai_consecutive_turns = 0
+# When True, the next ai_make_move() call is a continuation of an existing AI
+# '迅雷' extra-turn and should NOT perform start-of-turn effects (draw/PP reset).
+ai_continuation = False
 show_grave = False
 show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
-opponent_hand_count = 5  # 相手の手札枚数（仮の値、実際はゲームロジックから取得）
+# （注意）従来の固定変数 `opponent_hand_count` は使わず、
+# UI 表示時に `get_opponent_hand_count()` を呼んで実際の枚数を参照します。
 
 # ---- BGM 設定 (UI から変更可能) ----
 # BGM を再生するかどうか (設定画面で切替)
@@ -1570,15 +1581,22 @@ def ai_make_move():
     global CPU_DIFFICULTY
     global ai_player, ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
 
-    # Begin AI turn: restore PP and draw 1 card (simple turn-start behavior for AI)
+    # Begin AI turn: restore PP and draw 1 card (simple turn-start behavior for AI).
+    # If this ai_make_move() call is a continuation of a '迅雷' extra-turn
+    # (ai_continuation True), skip start-of-turn effects (PP reset / draw).
+    global ai_continuation
     try:
-        ai_player.reset_pp()
-        # draw 1 card if available and hand limit not exceeded
-        if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
-            c = ai_player.deck.draw()
-            if c:
-                ai_player.hand.add(c)
-                game.log.append("AI: ターン開始で1枚ドローしました。")
+        if ai_continuation:
+            # This is an extra consecutive AI move; do not reset PP or draw.
+            ai_continuation = False
+        else:
+            ai_player.reset_pp()
+            # draw 1 card if available and hand limit not exceeded
+            if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
+                c = ai_player.deck.draw()
+                if c:
+                    ai_player.hand.add(c)
+                    game.log.append("AI: ターン開始で1枚ドローしました。")
     except Exception:
         # defensive: ignore if ai_player not properly initialized
         pass
@@ -1624,13 +1642,14 @@ def ai_make_move():
         max_attempts = {1: 1, 2: 2, 3: 3, 4: 4}.get(CPU_DIFFICULTY, 2)
         attempts = 0
         made_any = False
+        played_names = set()  # avoid repeating the same card multiple times in one AI think session
         while attempts < max_attempts:
             # if random roll fails, stop trying further plays
             if random.random() > p_play:
                 break
 
             # recompute playable indices according to current PP
-            playable = [i for i, c in enumerate(ai_player.hand.cards) if c.can_play(ai_player)]
+            playable = [i for i, c in enumerate(ai_player.hand.cards) if c.can_play(ai_player) and c.name not in played_names]
             if not playable:
                 break
 
@@ -1642,22 +1661,208 @@ def ai_make_move():
                 prefer.remove('灼熱') if '灼熱' in prefer else None
                 prefer.insert(0, '灼熱')
             # If AI has low mobility, prefer buffs that grant movement (暴風/迅雷)
-            if my_move_count < opp_move_count and '暴風' in prefer:
-                prefer.remove('暴風')
-                prefer.insert(0, '暴風')
+            if '暴風' in prefer:
+                # Estimate whether 暴風 (jump) would actually increase AI mobility.
+                try:
+                    # compute moves with jump enabled by temporarily toggling flag
+                    before_moves = my_move_count
+                    added = 0
+                    try:
+                        # set a temporary flag so get_valid_moves considers jump
+                        prev_flag_game = getattr(game, 'ai_next_move_can_jump', None)
+                        prev_flag_global = globals().get('ai_next_move_can_jump', None)
+                        try:
+                            setattr(game, 'ai_next_move_can_jump', True)
+                        except Exception:
+                            globals()['ai_next_move_can_jump'] = True
+                        # recompute AI move count with jump
+                        with_jump = 0
+                        for p in chess.pieces:
+                            try:
+                                if getattr(p, 'color', None) == 'black':
+                                    with_jump += len(get_valid_moves(p, ignore_check=True))
+                            except Exception:
+                                pass
+                        added = with_jump - before_moves
+                    finally:
+                        # restore flags
+                        try:
+                            if prev_flag_game is None:
+                                try:
+                                    delattr(game, 'ai_next_move_can_jump')
+                                except Exception:
+                                    globals().pop('ai_next_move_can_jump', None)
+                            else:
+                                setattr(game, 'ai_next_move_can_jump', prev_flag_game)
+                        except Exception:
+                            try:
+                                if prev_flag_global is None:
+                                    globals().pop('ai_next_move_can_jump', None)
+                                else:
+                                    globals()['ai_next_move_can_jump'] = prev_flag_global
+                            except Exception:
+                                pass
+                    # prefer 暴風 only if it yields at least one extra legal move
+                    if my_move_count < opp_move_count and added > 0:
+                        prefer.remove('暴風')
+                        prefer.insert(0, '暴風')
+                    elif my_move_count < opp_move_count and added <= 0:
+                        # don't aggressively pick 暴風 if it doesn't increase mobility
+                        if '暴風' in prefer:
+                            prefer.remove('暴風')
+                            # reinsert lower in preference
+                            pref_tail = ['迅雷', '2ドロー', '錬成']
+                            for t in pref_tail:
+                                if t in prefer:
+                                    prefer.insert(prefer.index(t), '暴風')
+                                    break
+                except Exception:
+                    # fallback to original behavior if any error
+                    if my_move_count < opp_move_count and '暴風' in prefer:
+                        prefer.remove('暴風')
+                        prefer.insert(0, '暴風')
+            # If there are no good non-king targets, deprioritize 氷結 (avoid always freezing the king)
+            try:
+                opp_non_king_exists = any(getattr(p, 'color', None) == 'white' and getattr(p, 'name', None) != 'K' for p in chess.pieces)
+            except Exception:
+                opp_non_king_exists = False
+            if not opp_non_king_exists and '氷結' in prefer:
+                # move 氷結 to the end so AI won't pick it unless nothing better
+                prefer = [x for x in prefer if x != '氷結'] + ['氷結']
             # If opponent has a high-value piece, prioritize 氷結
             if highest_opp_val >= 5:
                 if '氷結' in prefer:
                     prefer.remove('氷結')
                     prefer.insert(0, '氷結')
             chosen_idx = None
-            for pref in prefer:
-                if pref in names:
-                    chosen_idx = playable[names.index(pref)]
-                    break
-            if chosen_idx is None:
-                # for higher difficulty prefer deterministic choice (first in prefer that exists)
-                chosen_idx = None
+            # Difficulty-aware selection: for Normal+ use a scoring function to pick the best card
+            if CPU_DIFFICULTY >= 2:
+                scores = {}
+                # helper: estimate added mobility from 暴風 for current board
+                def estimate_jump_added():
+                    try:
+                        before = 0
+                        for p in chess.pieces:
+                            try:
+                                if getattr(p, 'color', None) == 'black':
+                                    before += len(get_valid_moves(p, ignore_check=True))
+                            except Exception:
+                                pass
+                        # toggle jump flag
+                        prev_game_flag = getattr(game, 'ai_next_move_can_jump', None)
+                        prev_global_flag = globals().get('ai_next_move_can_jump', None)
+                        try:
+                            try:
+                                setattr(game, 'ai_next_move_can_jump', True)
+                            except Exception:
+                                globals()['ai_next_move_can_jump'] = True
+                            with_jump = 0
+                            for p in chess.pieces:
+                                try:
+                                    if getattr(p, 'color', None) == 'black':
+                                        with_jump += len(get_valid_moves(p, ignore_check=True))
+                                except Exception:
+                                    pass
+                        finally:
+                            # restore
+                            try:
+                                if prev_game_flag is None:
+                                    try:
+                                        delattr(game, 'ai_next_move_can_jump')
+                                    except Exception:
+                                        globals().pop('ai_next_move_can_jump', None)
+                                else:
+                                    setattr(game, 'ai_next_move_can_jump', prev_game_flag)
+                            except Exception:
+                                try:
+                                    if prev_global_flag is None:
+                                        globals().pop('ai_next_move_can_jump', None)
+                                    else:
+                                        globals()['ai_next_move_can_jump'] = prev_global_flag
+                                except Exception:
+                                    pass
+                        return with_jump - before
+                    except Exception:
+                        return 0
+
+                # precompute some context used in heuristics
+                try:
+                    capture_ops = 0
+                    for p, mv in candidates:
+                        tgt = chess.get_piece_at(mv[0], mv[1])
+                        if tgt is not None and getattr(tgt, 'color', None) == 'white':
+                            capture_ops += 1
+                except Exception:
+                    capture_ops = 0
+
+                for idx in playable:
+                    try:
+                        card = ai_player.hand.cards[idx]
+                        name = card.name
+                        # base score from preference order (higher better)
+                        base = 0
+                        if name in prefer:
+                            base = (len(prefer) - prefer.index(name)) * 10
+                        else:
+                            base = 5
+                        score = base
+                        # heuristics per card
+                        if name == '暴風':
+                            added = estimate_jump_added()
+                            # reward if jump actually increases mobility
+                            score += max(0, added) * 8
+                        elif name == '氷結':
+                            # prefer freezing non-king high-value pieces
+                            try:
+                                best_v = 0
+                                for p in chess.pieces:
+                                    if getattr(p, 'color', None) == 'white' and getattr(p, 'name', '') != 'K':
+                                        v = {'P':1,'N':3,'B':3,'R':5,'Q':9}.get(getattr(p, 'name', ''), 0)
+                                        best_v = max(best_v, v)
+                                score += best_v * 6
+                            except Exception:
+                                pass
+                        elif name == '灼熱':
+                            # useful when opponent mobility >> ours
+                            score += max(0, opp_move_count - my_move_count) * 6
+                        elif name == '迅雷':
+                            # prefer if capture opportunities exist or we have mobility to exploit
+                            score += capture_ops * 8
+                            # also prefer when AI mobility is lower than opponent
+                            if my_move_count < opp_move_count:
+                                score += 6
+                        elif name == '2ドロー':
+                            if len(ai_player.hand.cards) <= 2:
+                                score += 20
+                        elif name == '錬成':
+                            # small preference to generate immediate value
+                            score += 5
+                        scores[idx] = score
+                    except Exception:
+                        scores[idx] = 0
+
+                # pick best according to difficulty randomness
+                if scores:
+                    best_idx = max(scores, key=scores.get)
+                    if CPU_DIFFICULTY == 2:
+                        # Normal: 80% pick best, 20% choose random among playable
+                        if random.random() < 0.8:
+                            chosen_idx = best_idx
+                        else:
+                            chosen_idx = random.choice(playable)
+                    elif CPU_DIFFICULTY == 3:
+                        # Hard: 95% pick best
+                        if random.random() < 0.95:
+                            chosen_idx = best_idx
+                        else:
+                            chosen_idx = random.choice(playable)
+                    else:
+                        # Very-hard: always pick best
+                        chosen_idx = best_idx
+                else:
+                    chosen_idx = random.choice(playable)
+            else:
+                # Easy: keep original simple preference/random behavior
                 for pref in prefer:
                     if pref in names:
                         chosen_idx = playable[names.index(pref)]
@@ -1668,13 +1873,20 @@ def ai_make_move():
             # attempt play via unified resolver so AI follows same rules as player
             try:
                 ok, msg = game.play_card_for(ai_player, chosen_idx)
+                card_name = ai_player.hand.cards[chosen_idx].name if 0 <= chosen_idx < len(ai_player.hand.cards) else None
                 if ok:
                     made_any = True
+                    # record that we've just used this card to avoid repeating it
+                    if card_name:
+                        played_names.add(card_name)
                 else:
                     try:
                         game.log.append(f"AI: カードの使用に失敗しました: {msg}")
                     except Exception:
                         pass
+                    # if failed due to unusable context, avoid retrying same card
+                    if card_name:
+                        played_names.add(card_name)
             except Exception as e:
                 try:
                     game.log.append(f"AI: カード使用中に例外が発生しました: {e}")
@@ -2078,7 +2290,7 @@ def draw_panel():
     info_y += line_height
     
     # 相手の手札表示（クリック可能領域として矩形を保存）
-    opponent_hand_text = f"相手の手札: {opponent_hand_count}枚"
+    opponent_hand_text = f"相手の手札: {get_opponent_hand_count()}枚"
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
@@ -2947,28 +3159,28 @@ def draw_panel():
         
         pygame.draw.rect(screen, (100, 100, 120), (overlay_x, overlay_y, overlay_w, overlay_h), 3)
         
-        draw_text(screen, f"相手の手札 ({opponent_hand_count}枚) [H]で閉じる", overlay_x + 20, overlay_y + 20, (100, 50, 100))
+        draw_text(screen, f"相手の手札 ({get_opponent_hand_count()}枚) [H]で閉じる", overlay_x + 20, overlay_y + 20, (100, 50, 100))
         
         # カード裏面を横並びで表示（画像未実装のため仮の矩形）
         card_back_w = 70
         card_back_h = 95
-        start_x = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count, 7) + 10 * (min(opponent_hand_count, 7) - 1))) // 2
+        start_x = overlay_x + (overlay_w - (card_back_w * min(get_opponent_hand_count(), 7) + 10 * (min(get_opponent_hand_count(), 7) - 1))) // 2
         cy = overlay_y + 80
-        
-        for i in range(opponent_hand_count):
+
+        for i in range(get_opponent_hand_count()):
             if i >= 7:  # 1行に7枚まで
                 cy += card_back_h + 20
-                start_x = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count - 7, 7) + 10 * (min(opponent_hand_count - 7, 7) - 1))) // 2
+                start_x = overlay_x + (overlay_w - (card_back_w * min(get_opponent_hand_count() - 7, 7) + 10 * (min(get_opponent_hand_count() - 7, 7) - 1))) // 2
                 if i == 7:
                     pass  # 2行目の開始位置を再計算済み
-            
+
             row = i // 7
             col = i % 7
             if row > 0:
-                cx = overlay_x + (overlay_w - (card_back_w * min(opponent_hand_count - 7, 7) + 10 * (min(opponent_hand_count - 7, 7) - 1))) // 2 + col * (card_back_w + 10)
+                cx = overlay_x + (overlay_w - (card_back_w * min(get_opponent_hand_count() - 7, 7) + 10 * (min(get_opponent_hand_count() - 7, 7) - 1))) // 2 + col * (card_back_w + 10)
             else:
                 cx = start_x + col * (card_back_w + 10)
-            
+
             actual_cy = overlay_y + 80 + row * (card_back_h + 20)
             
             # カード裏面（仮実装：グレーの矩形とパターン）
@@ -4694,6 +4906,12 @@ def main_loop():
                         setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
                     # keep AI's turn so it moves again
                     chess_current_turn = 'black'
+                    # Mark that the next AI move is a continuation of the '迅雷' extra-turn
+                    # so that start-of-turn effects (draw/PP reset) are skipped.
+                    try:
+                        globals()['ai_continuation'] = True
+                    except Exception:
+                        pass
                     # schedule next AI move after the think delay
                     cpu_wait = True
                     cpu_wait_start = time.time()

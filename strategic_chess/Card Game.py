@@ -4637,11 +4637,11 @@ def main_loop():
             if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
                 game_over = True
                 game_over_winner = 'black'
-                game.log.append("白がチェックメイト！黒の勝利！")
+                game.log.append("YOU LOSE！黒の勝利！")
             elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
                 game_over = True
                 game_over_winner = 'white'
-                game.log.append("黒がチェックメイト！白の勝利！")
+                game.log.append("YOU WIN！白の勝利！")
             # ステイルメイト（合法手がないがチェックでない）の判定（カード効果込み）
             elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
                 game_over = True

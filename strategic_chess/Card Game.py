@@ -1257,7 +1257,517 @@ def show_start_screen():
         clock.tick(30)
 
 
+# === デッキ管理システム ===
+import json
+from datetime import datetime
+
+DECK_SAVE_FILE = os.path.join(os.path.dirname(__file__), 'saved_decks.json')
+
+def load_saved_decks():
+    """保存されたデッキをJSONファイルから読み込む。最大9個。"""
+    if not os.path.exists(DECK_SAVE_FILE):
+        return [None] * 9  # 空の9スロット
+    try:
+        with open(DECK_SAVE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            # 9スロット確保
+            decks = data.get('decks', [])
+            while len(decks) < 9:
+                decks.append(None)
+            return decks[:9]  # 最大9個まで
+    except Exception:
+        return [None] * 9
+
+def save_decks_to_file(decks):
+    """デッキリストをJSONファイルに保存"""
+    try:
+        with open(DECK_SAVE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'decks': decks}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"デッキ保存エラー: {e}")
+
 def show_deck_modal(screen):
+    """デッキリスト画面（3x3グリッド表示）"""
+    decks = load_saved_decks()
+    clock = pygame.time.Clock()
+    
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                
+                # 戻るボタン
+                back_rect = pygame.Rect(20, H - 70, 120, 50)
+                if back_rect.collidepoint(mx, my):
+                    return
+                
+                # 3x3グリッドのクリック判定
+                grid_size = 240
+                spacing = 30
+                start_x = (W - (grid_size * 3 + spacing * 2)) // 2
+                start_y = 120
+                
+                for row in range(3):
+                    for col in range(3):
+                        slot_idx = row * 3 + col
+                        slot_x = start_x + col * (grid_size + spacing)
+                        slot_y = start_y + row * (grid_size + spacing)
+                        slot_rect = pygame.Rect(slot_x, slot_y, grid_size, grid_size)
+                        
+                        if slot_rect.collidepoint(mx, my):
+                            if decks[slot_idx] is None:
+                                # デッキ作成
+                                new_deck = show_deck_editor(screen, None, slot_idx)
+                                if new_deck:
+                                    decks[slot_idx] = new_deck
+                                    save_decks_to_file(decks)
+                            else:
+                                # デッキ編集/削除選択
+                                action = show_deck_options(screen, decks[slot_idx])
+                                if action == 'edit':
+                                    edited = show_deck_editor(screen, decks[slot_idx], slot_idx)
+                                    if edited:
+                                        decks[slot_idx] = edited
+                                        save_decks_to_file(decks)
+                                elif action == 'delete':
+                                    decks[slot_idx] = None
+                                    save_decks_to_file(decks)
+                            break
+        
+        # 背景
+        screen.fill((240, 235, 230))
+        
+        # タイトル
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 36, bold=True)
+        title = title_font.render("デッキリスト", True, (30, 30, 30))
+        screen.blit(title, ((W - title.get_width()) // 2, 40))
+        
+        # 3x3グリッド描画
+        grid_size = 240
+        spacing = 30
+        start_x = (W - (grid_size * 3 + spacing * 2)) // 2
+        start_y = 120
+        
+        slot_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+        for row in range(3):
+            for col in range(3):
+                slot_idx = row * 3 + col
+                slot_x = start_x + col * (grid_size + spacing)
+                slot_y = start_y + row * (grid_size + spacing)
+                
+                # スロット枠
+                slot_rect = pygame.Rect(slot_x, slot_y, grid_size, grid_size)
+                if decks[slot_idx] is None:
+                    # 空きスロット
+                    pygame.draw.rect(screen, (200, 200, 200), slot_rect)
+                    pygame.draw.rect(screen, (100, 100, 100), slot_rect, 3)
+                    text = slot_font.render("デッキ作成", True, (100, 100, 100))
+                    screen.blit(text, (slot_x + (grid_size - text.get_width()) // 2, 
+                                      slot_y + (grid_size - text.get_height()) // 2))
+                else:
+                    # デッキあり
+                    pygame.draw.rect(screen, (220, 240, 255), slot_rect)
+                    pygame.draw.rect(screen, (60, 100, 160), slot_rect, 4)
+                    deck_name = decks[slot_idx].get('name', f'デッキ{slot_idx + 1}')
+                    text = slot_font.render(deck_name, True, (30, 30, 30))
+                    screen.blit(text, (slot_x + (grid_size - text.get_width()) // 2,
+                                      slot_y + 20))
+                    
+                    # カード枚数表示
+                    card_count = len(decks[slot_idx].get('cards', []))
+                    count_text = SMALL.render(f"{card_count}枚", True, (60, 60, 60))
+                    screen.blit(count_text, (slot_x + (grid_size - count_text.get_width()) // 2,
+                                            slot_y + grid_size - 30))
+        
+        # 戻るボタン
+        back_rect = pygame.Rect(20, H - 70, 120, 50)
+        pygame.draw.rect(screen, (200, 200, 200), back_rect)
+        pygame.draw.rect(screen, (80, 80, 80), back_rect, 3)
+        back_text = FONT.render("戻る", True, (30, 30, 30))
+        screen.blit(back_text, (back_rect.x + (back_rect.width - back_text.get_width()) // 2,
+                               back_rect.y + (back_rect.height - back_text.get_height()) // 2))
+        
+        pygame.display.flip()
+        clock.tick(30)
+
+
+def show_deck_options(screen, deck):
+    """デッキの編集/削除選択ダイアログ"""
+    clock = pygame.time.Clock()
+    
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return None
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                
+                dialog_w, dialog_h = 400, 250
+                dialog_x = (W - dialog_w) // 2
+                dialog_y = (H - dialog_h) // 2
+                
+                # 編集ボタン
+                edit_rect = pygame.Rect(dialog_x + 50, dialog_y + 80, 300, 50)
+                if edit_rect.collidepoint(mx, my):
+                    return 'edit'
+                
+                # 削除ボタン
+                delete_rect = pygame.Rect(dialog_x + 50, dialog_y + 140, 300, 50)
+                if delete_rect.collidepoint(mx, my):
+                    return 'delete'
+        
+        # 暗転オーバーレイ
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        screen.blit(overlay, (0, 0))
+        
+        # ダイアログ
+        dialog_w, dialog_h = 400, 250
+        dialog_x = (W - dialog_w) // 2
+        dialog_y = (H - dialog_h) // 2
+        dialog_surf = pygame.Surface((dialog_w, dialog_h))
+        dialog_surf.fill((245, 245, 250))
+        pygame.draw.rect(dialog_surf, (80, 80, 80), (0, 0, dialog_w, dialog_h), 3)
+        
+        # タイトル
+        title = FONT.render("デッキを選択", True, (30, 30, 30))
+        dialog_surf.blit(title, ((dialog_w - title.get_width()) // 2, 20))
+        
+        # 編集ボタン
+        edit_rect = pygame.Rect(50, 80, 300, 50)
+        pygame.draw.rect(dialog_surf, (200, 220, 255), edit_rect)
+        pygame.draw.rect(dialog_surf, (60, 100, 160), edit_rect, 3)
+        edit_text = FONT.render("デッキ編集", True, (30, 30, 30))
+        dialog_surf.blit(edit_text, ((dialog_w - edit_text.get_width()) // 2, 90))
+        
+        # 削除ボタン
+        delete_rect = pygame.Rect(50, 140, 300, 50)
+        pygame.draw.rect(dialog_surf, (255, 200, 200), delete_rect)
+        pygame.draw.rect(dialog_surf, (160, 60, 60), delete_rect, 3)
+        delete_text = FONT.render("デッキ削除", True, (30, 30, 30))
+        dialog_surf.blit(delete_text, ((dialog_w - delete_text.get_width()) // 2, 150))
+        
+        screen.blit(dialog_surf, (dialog_x, dialog_y))
+        pygame.display.flip()
+        clock.tick(30)
+
+
+def show_deck_editor(screen, existing_deck, slot_idx):
+    """デッキ作成/編集画面
+    
+    Args:
+        screen: pygame surface
+        existing_deck: 既存のデッキ（編集時）またはNone（新規作成時）
+        slot_idx: デッキスロット番号（0-8）
+    
+    Returns:
+        作成/編集されたデッキ辞書、またはNone（キャンセル時）
+    """
+    # 利用可能な全カード（ゲーム内で使用されるカードリスト）
+    available_cards = [
+        {'name': '灼熱', 'cost': 2},
+        {'name': '氷結', 'cost': 2},
+        {'name': '暴風', 'cost': 3},
+        {'name': '迅雷', 'cost': 3},
+        {'name': '2ドロー', 'cost': 1},
+        {'name': '錬成', 'cost': 0},
+        {'name': '墓地ルーレット', 'cost': 1},
+        {'name': '摂取', 'cost': 1},
+    ]
+    
+    # 現在のデッキカード
+    if existing_deck:
+        deck_cards = existing_deck.get('cards', []).copy()
+        deck_name = existing_deck.get('name', f'デッキ{slot_idx + 1}')
+    else:
+        deck_cards = []
+        deck_name = f'デッキ{slot_idx + 1}'
+    
+    clock = pygame.time.Clock()
+    scroll_offset = 0
+    input_active = False
+    input_text = deck_name
+    
+    # 日本語入力を有効化
+    pygame.key.start_text_input()
+    
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            
+            # TEXTINPUT イベントで日本語・英数字入力を受け取る（Pygame 2.x以降）
+            if event.type == pygame.TEXTINPUT and input_active:
+                if len(input_text) < 20:
+                    input_text += event.text
+            
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.key.stop_text_input()
+                    return None
+                if input_active:
+                    if event.key == pygame.K_RETURN:
+                        input_active = False
+                    elif event.key == pygame.K_BACKSPACE:
+                        input_text = input_text[:-1]
+            
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                
+                # 保存ボタン
+                save_rect = pygame.Rect(W - 250, H - 70, 120, 50)
+                if save_rect.collidepoint(mx, my):
+                    # デッキ枚数チェック
+                    if len(deck_cards) < 20:
+                        # 警告ダイアログ表示
+                        show_warning = True
+                        while show_warning:
+                            for warn_ev in pygame.event.get():
+                                if warn_ev.type == pygame.QUIT:
+                                    pygame.quit(); sys.exit(0)
+                                if warn_ev.type == pygame.MOUSEBUTTONDOWN and warn_ev.button == 1:
+                                    wmx, wmy = warn_ev.pos
+                                    dialog_w, dialog_h = 500, 200
+                                    dialog_x = (W - dialog_w) // 2
+                                    dialog_y = (H - dialog_h) // 2
+                                    
+                                    # はいボタン
+                                    yes_rect = pygame.Rect(dialog_x + 80, dialog_y + 130, 150, 50)
+                                    if yes_rect.collidepoint(wmx, wmy):
+                                        return None  # デッキリストに戻る
+                                    
+                                    # いいえボタン
+                                    no_rect = pygame.Rect(dialog_x + 270, dialog_y + 130, 150, 50)
+                                    if no_rect.collidepoint(wmx, wmy):
+                                        show_warning = False
+                            
+                            # 警告ダイアログ描画
+                            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+                            overlay.fill((0, 0, 0, 160))
+                            screen.blit(overlay, (0, 0))
+                            
+                            dialog_w, dialog_h = 500, 200
+                            dialog_x = (W - dialog_w) // 2
+                            dialog_y = (H - dialog_h) // 2
+                            dialog_surf = pygame.Surface((dialog_w, dialog_h))
+                            dialog_surf.fill((245, 245, 250))
+                            pygame.draw.rect(dialog_surf, (200, 100, 100), (0, 0, dialog_w, dialog_h), 4)
+                            
+                            # 警告メッセージ
+                            warn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18, bold=True)
+                            msg1 = warn_font.render("20枚未満なのでバトルで使用できません。", True, (30, 30, 30))
+                            msg2 = warn_font.render("変更を破棄しますか？", True, (30, 30, 30))
+                            dialog_surf.blit(msg1, ((dialog_w - msg1.get_width()) // 2, 40))
+                            dialog_surf.blit(msg2, ((dialog_w - msg2.get_width()) // 2, 70))
+                            
+                            # はいボタン
+                            yes_rect = pygame.Rect(80, 130, 150, 50)
+                            pygame.draw.rect(dialog_surf, (255, 200, 200), yes_rect)
+                            pygame.draw.rect(dialog_surf, (160, 60, 60), yes_rect, 3)
+                            yes_text = FONT.render("はい", True, (30, 30, 30))
+                            dialog_surf.blit(yes_text, (yes_rect.x + (yes_rect.width - yes_text.get_width()) // 2,
+                                                        yes_rect.y + (yes_rect.height - yes_text.get_height()) // 2))
+                            
+                            # いいえボタン
+                            no_rect = pygame.Rect(270, 130, 150, 50)
+                            pygame.draw.rect(dialog_surf, (200, 255, 200), no_rect)
+                            pygame.draw.rect(dialog_surf, (60, 160, 60), no_rect, 3)
+                            no_text = FONT.render("いいえ", True, (30, 30, 30))
+                            dialog_surf.blit(no_text, (no_rect.x + (no_rect.width - no_text.get_width()) // 2,
+                                                       no_rect.y + (no_rect.height - no_text.get_height()) // 2))
+                            
+                            screen.blit(dialog_surf, (dialog_x, dialog_y))
+                            pygame.display.flip()
+                            clock.tick(30)
+                        
+                        # いいえを選んだ場合は編集を続ける
+                        continue
+                    
+                    # 20枚以上なら保存
+                    pygame.key.stop_text_input()
+                    return {
+                        'name': input_text if input_text.strip() else f'デッキ{slot_idx + 1}',
+                        'cards': deck_cards,
+                        'created_at': existing_deck.get('created_at', datetime.now().isoformat()) if existing_deck else datetime.now().isoformat()
+                    }
+                
+                # キャンセルボタン
+                cancel_rect = pygame.Rect(W - 140, H - 70, 120, 50)
+                if cancel_rect.collidepoint(mx, my):
+                    pygame.key.stop_text_input()
+                    return None
+                
+                # 名前入力欄
+                name_rect = pygame.Rect(150, 20, 400, 40)
+                if name_rect.collidepoint(mx, my):
+                    input_active = True
+                else:
+                    input_active = False
+                
+                # カードリストクリック（追加）
+                list_start_y = 110  # 描画と同じ位置に修正
+                card_h = 50
+                for i, card in enumerate(available_cards):
+                    card_y = list_start_y + i * card_h - scroll_offset
+                    if 110 <= card_y < H - 100:  # 範囲も修正
+                        card_rect = pygame.Rect(20, card_y, 500, card_h - 5)
+                        if card_rect.collidepoint(mx, my):
+                            # 同じカードが最大3枚まで
+                            count = sum(1 for c in deck_cards if c['name'] == card['name'])
+                            if count < 3:
+                                deck_cards.append(card.copy())
+                            break
+                
+                # デッキカードクリック（削除）- 集計表示に対応
+                deck_start_x = W - 420
+                # カードを集計
+                card_counts = {}
+                for card in deck_cards:
+                    key = card['name']
+                    if key not in card_counts:
+                        card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
+                    card_counts[key]['count'] += 1
+                
+                display_idx = 0
+                for card_info in card_counts.values():
+                    card_y = list_start_y + display_idx * card_h
+                    if 110 <= card_y < H - 100:
+                        card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
+                        if card_rect.collidepoint(mx, my):
+                            # このカードを1枚削除
+                            for i, c in enumerate(deck_cards):
+                                if c['name'] == card_info['name']:
+                                    deck_cards.pop(i)
+                                    break
+                            break
+                    display_idx += 1
+            
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * 30
+                scroll_offset = max(0, min(scroll_offset, len(available_cards) * 50 - 400))
+        
+        # 背景
+        screen.fill((240, 235, 230))
+        
+        # タイトル
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28, bold=True)
+        title = title_font.render("デッキ作成/編集", True, (30, 30, 30))
+        screen.blit(title, (20, 25))
+        
+        # 名前入力欄
+        name_rect = pygame.Rect(150, 20, 400, 40)
+        pygame.draw.rect(screen, (255, 255, 255) if input_active else (240, 240, 240), name_rect)
+        pygame.draw.rect(screen, (100, 150, 255) if input_active else (100, 100, 100), name_rect, 2)
+        # 日本語対応フォントを直接ファイル指定で取得
+        try:
+            # Windowsの標準日本語フォントを直接読み込み
+            import os
+            font_paths = [
+                "C:\\Windows\\Fonts\\msgothic.ttc",  # MSゴシック
+                "C:\\Windows\\Fonts\\meiryo.ttc",    # メイリオ
+                "C:\\Windows\\Fonts\\yugothic.ttf",  # 遊ゴシック
+            ]
+            name_font = None
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    name_font = pygame.font.Font(font_path, 24)
+                    break
+            if name_font is None:
+                # フォールバック: システムフォント
+                name_font = pygame.font.SysFont("msgothic,meiryo", 24)
+        except:
+            # 最終フォールバック
+            name_font = pygame.font.Font(None, 24)
+        
+        name_text = name_font.render(input_text if input_text else "", True, (30, 30, 30))
+        screen.blit(name_text, (name_rect.x + 10, name_rect.y + 8))
+        
+        # カーソル表示（点滅）
+        if input_active:
+            import time
+            if int(time.time() * 2) % 2 == 0:  # 0.5秒ごとに点滅
+                cursor_x = name_rect.x + 10 + name_text.get_width()
+                cursor_y = name_rect.y + 8
+                pygame.draw.line(screen, (30, 30, 30), 
+                               (cursor_x, cursor_y), 
+                               (cursor_x, cursor_y + name_text.get_height()), 2)
+        
+        # 全カードリスト
+        list_title = FONT.render("全カード（クリックで追加）", True, (30, 30, 30))
+        screen.blit(list_title, (20, 70))
+        
+        card_h = 50
+        list_start_y = 110
+        for i, card in enumerate(available_cards):
+            card_y = list_start_y + i * card_h - scroll_offset
+            if 80 <= card_y < H - 100:
+                card_rect = pygame.Rect(20, card_y, 500, card_h - 5)
+                pygame.draw.rect(screen, (220, 240, 255), card_rect)
+                pygame.draw.rect(screen, (100, 120, 180), card_rect, 2)
+                
+                card_text = SMALL.render(f"{card['name']} (コスト: {card['cost']})", True, (30, 30, 30))
+                screen.blit(card_text, (card_rect.x + 10, card_rect.y + 15))
+                
+                # デッキ内の枚数表示
+                count = sum(1 for c in deck_cards if c['name'] == card['name'])
+                if count > 0:
+                    count_text = SMALL.render(f"{count}/3", True, (160, 60, 60) if count >= 3 else (60, 160, 60))
+                    screen.blit(count_text, (card_rect.x + 450, card_rect.y + 15))
+        
+        # デッキ内カードリスト（重複をまとめて表示）
+        deck_start_x = W - 420
+        deck_title = FONT.render(f"デッキ内カード（{len(deck_cards)}枚）", True, (30, 30, 30))
+        screen.blit(deck_title, (deck_start_x, 70))
+        
+        # カードを集計（重複をまとめる）
+        card_counts = {}
+        for card in deck_cards:
+            key = card['name']
+            if key not in card_counts:
+                card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
+            card_counts[key]['count'] += 1
+        
+        # 集計結果を表示
+        display_idx = 0
+        for card_info in card_counts.values():
+            card_y = list_start_y + display_idx * card_h
+            if 110 <= card_y < H - 100:
+                card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
+                
+                pygame.draw.rect(screen, (255, 240, 220), card_rect)
+                pygame.draw.rect(screen, (180, 120, 100), card_rect, 2)
+                
+                card_text = SMALL.render(f"{card_info['name']} (コスト: {card_info['cost']}) ×{card_info['count']}枚", 
+                                        True, (30, 30, 30))
+                screen.blit(card_text, (card_rect.x + 10, card_rect.y + 15))
+            display_idx += 1
+        
+        # ボタン類
+        save_rect = pygame.Rect(W - 250, H - 70, 120, 50)
+        pygame.draw.rect(screen, (200, 255, 200), save_rect)
+        pygame.draw.rect(screen, (60, 160, 60), save_rect, 3)
+        save_text = FONT.render("保存", True, (30, 30, 30))
+        screen.blit(save_text, (save_rect.x + (save_rect.width - save_text.get_width()) // 2,
+                               save_rect.y + (save_rect.height - save_text.get_height()) // 2))
+        
+        cancel_rect = pygame.Rect(W - 140, H - 70, 120, 50)
+        pygame.draw.rect(screen, (255, 200, 200), cancel_rect)
+        pygame.draw.rect(screen, (160, 60, 60), cancel_rect, 3)
+        cancel_text = FONT.render("戻る", True, (30, 30, 30))
+        screen.blit(cancel_text, (cancel_rect.x + (cancel_rect.width - cancel_text.get_width()) // 2,
+                                 cancel_rect.y + (cancel_rect.height - cancel_text.get_height()) // 2))
+        
+        pygame.display.flip()
+        clock.tick(30)
+
+
+def show_deck_modal_old(screen):
     """Simple deck modal - click/touch to close."""
     clock = pygame.time.Clock()
     w, h = 640, 420

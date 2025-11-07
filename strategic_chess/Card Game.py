@@ -74,6 +74,78 @@ bgm_enabled = True
 # BGM ボリューム (0.0 - 1.0)
 bgm_volume = 0.8
 
+# track current logical bgm mode so callers can reapply when toggling
+current_bgm_mode = None
+
+
+# Helper: safely switch BGM. mode is 'title' or 'game' or None to stop.
+def set_bgm_mode(mode: str | None) -> None:
+    """Atomically switch background music according to mode.
+
+    - 'title' -> MusMus-BGM-162.mp3
+    - 'game'  -> MusMus-BGM-173.mp3
+    - None    -> stop music
+
+    This function is defensive: it initializes the mixer if needed and
+    catches exceptions so UI flow is not interrupted.
+    """
+    try:
+        # ensure mixer is initialized
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception:
+                pass
+        # stop any currently playing music first
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+
+        if not bgm_enabled or mode is None:
+            # Ensure volume is muted when disabled
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.set_volume(0.0)
+            except Exception:
+                pass
+            try:
+                globals()['current_bgm_mode'] = None
+            except Exception:
+                pass
+            return
+
+        if mode == 'title':
+            bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-162.mp3')
+        elif mode == 'game':
+            bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-173.mp3')
+        else:
+            # unknown mode -> stop
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+            return
+
+        if os.path.exists(bgm_path):
+            try:
+                pygame.mixer.music.load(bgm_path)
+                pygame.mixer.music.play(-1)
+                try:
+                    pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
+                except Exception:
+                    pass
+            except Exception:
+                # ignore audio errors
+                pass
+            try:
+                globals()['current_bgm_mode'] = mode
+            except Exception:
+                pass
+    except Exception:
+        # swallow any unexpected errors to avoid breaking UI
+        pass
+
 # CPU 難易度 (1=Easy,2=Medium,3=Hard,4=Expert)
 CPU_DIFFICULTY = 2
 
@@ -718,31 +790,7 @@ def show_start_screen():
 
     # Try to play title BGM (non-fatal if audio subsystem or file missing)
     try:
-        # prefer project-local mugic folder
-        bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-162.mp3')
-        if os.path.exists(bgm_path):
-            try:
-                # ensure mixer is initialized
-                if not pygame.mixer.get_init():
-                    try:
-                        pygame.mixer.init()
-                    except Exception:
-                        pass
-                # load BGM; only start playing if bgm_enabled
-                pygame.mixer.music.load(bgm_path)
-                try:
-                    if bgm_enabled:
-                        pygame.mixer.music.play(-1)
-                        pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
-                    else:
-                        # keep volume at 0 if disabled (do not play)
-                        pygame.mixer.music.set_volume(0.0)
-                except Exception:
-                    # ignore set_volume/play errors
-                    pass
-            except Exception:
-                # ignore audio errors silently so UI still works
-                pass
+        set_bgm_mode('title')
     except Exception:
         pass
 
@@ -1016,17 +1064,25 @@ def show_settings_screen(screen):
                 if chk_rect.collidepoint(mx, my):
                     bgm_enabled = not bgm_enabled
                     try:
-                        if pygame.mixer.get_init():
-                            if bgm_enabled:
-                                # restore volume
-                                pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
-                                # if music is loaded but not playing, try to unpause
+                        # Reapply or stop BGM according to the current logical mode
+                        if bgm_enabled:
+                            try:
+                                # reapply the currently selected mode (title/game) so proper file is loaded
+                                set_bgm_mode(current_bgm_mode)
+                            except Exception:
+                                # fallback: just set volume
                                 try:
-                                    pygame.mixer.music.unpause()
+                                    pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
                                 except Exception:
                                     pass
-                            else:
-                                pygame.mixer.music.set_volume(0.0)
+                        else:
+                            try:
+                                set_bgm_mode(None)
+                            except Exception:
+                                try:
+                                    pygame.mixer.music.set_volume(0.0)
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
                 # slider hit check
@@ -4536,33 +4592,9 @@ def main_loop():
                 pygame.mixer.init()
             except Exception:
                 pass
-        # attempt to stop any title music
+        # Switch to gameplay BGM using centralized helper
         try:
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
-
-        # start gameplay BGM if file exists (respecting user setting)
-        try:
-            bgm_game = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-173.mp3')
-            if os.path.exists(bgm_game) and bgm_enabled:
-                try:
-                    pygame.mixer.music.load(bgm_game)
-                    pygame.mixer.music.play(-1)
-                    try:
-                        pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
-                    except Exception:
-                        pass
-                except Exception:
-                    # ignore load/play errors
-                    pass
-            else:
-                # if user disabled BGM, ensure music is not playing and volume is muted
-                try:
-                    pygame.mixer.music.stop()
-                    pygame.mixer.music.set_volume(0.0)
-                except Exception:
-                    pass
+            set_bgm_mode('game')
         except Exception:
             pass
     except Exception:

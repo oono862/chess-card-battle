@@ -2,13 +2,15 @@
 import pygame
 from pygame import Rect
 import sys
+import traceback
 import os
+import json
 
 try:
-    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
+    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction
+    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
@@ -35,16 +37,13 @@ SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 
 # ゲーム状態
-# ルール表のカードを試したい場合は下を使う
-game = new_game_with_rule_deck()
-# --- AI 用のカードプレイヤー状態を作る ---
-ai_player = PlayerState(deck=make_rule_cards_deck())
-# 初期 PP と手札を配る（簡易）
-ai_player.reset_pp()
-for _ in range(4):
-    c = ai_player.deck.draw()
-    if c is not None:
-        ai_player.hand.add(c)
+# NOTE: defer creating the actual game and AI decks until after the
+# user selects difficulty and deck mode in the start flow. We'll
+# initialize `game` and `ai_player` via `new_game_with_mode()` so the
+# deck sizes can match the player's choice (fixed=24 / custom=20).
+game = None
+# AI placeholder; will be created at game start
+ai_player = None
 # ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
 def get_opponent_hand_count():
     try:
@@ -76,6 +75,89 @@ bgm_volume = 0.8
 
 # track current logical bgm mode so callers can reapply when toggling
 current_bgm_mode = None
+
+# Deck selection mode: 'fixed' uses the rule deck (24 cards),
+# 'custom' uses the created deck (20 cards). This is set after the
+# difficulty + deck choice modal.
+DECK_MODE = 'fixed'
+
+
+def _custom_decks_dir():
+    """Return path to custom decks directory (may not exist)."""
+    return os.path.join(os.path.dirname(__file__), 'decks')
+
+
+def list_custom_decks():
+    """Return a list of custom deck basenames (without .json)."""
+    d = _custom_decks_dir()
+    out = []
+    try:
+        if os.path.isdir(d):
+            for fn in sorted(os.listdir(d)):
+                if fn.lower().endswith('.json'):
+                    out.append(os.path.splitext(fn)[0])
+    except Exception:
+        pass
+    return out
+
+
+def load_custom_deck_by_name(name: str):
+    """Load a custom deck (list of card names) from decks/<name>.json.
+
+    Returns list of card names or None on error.
+    """
+    d = _custom_decks_dir()
+    path = os.path.join(d, f"{name}.json")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception:
+        pass
+    return None
+
+
+def build_game_from_card_names(names):
+    """Build a Game whose player's deck contains cards named in `names`.
+
+    This maps names to prototypes from make_rule_cards_deck(); unknown
+    names are skipped. On failure, fall back to new_game_with_mode('custom').
+    """
+    try:
+        proto_deck = make_rule_cards_deck()
+        proto_map = {c.name: c for c in proto_deck.cards}
+
+        pool = []
+        for nm in names:
+            p = proto_map.get(nm)
+            if p is None:
+                continue
+            try:
+                # clone prototype (best-effort)
+                pool.append(Card(p.name, p.cost, p.effect, getattr(p, 'precheck', None)))
+            except Exception:
+                try:
+                    pool.append(Card(p.name, p.cost, p.effect))
+                except Exception:
+                    continue
+
+        if not pool:
+            deck = build_deck_for_mode('custom')
+        else:
+            from .card_core import Deck
+            deck = Deck(pool)
+
+        deck.shuffle()
+        player = PlayerState(deck=deck)
+        g = Game(player=player)
+        try:
+            g.setup_battle()
+        except Exception:
+            pass
+        return g
+    except Exception:
+        return new_game_with_mode('custom')
 
 
 # Helper: safely switch BGM. mode is 'title' or 'game' or None to stop.
@@ -145,6 +227,169 @@ def set_bgm_mode(mode: str | None) -> None:
     except Exception:
         # swallow any unexpected errors to avoid breaking UI
         pass
+
+
+def build_deck_for_mode(mode: str):
+    """Return a Deck object appropriate for the chosen deck mode.
+
+    - 'fixed' -> full rule deck (24 cards)
+    - 'custom' -> trimmed deck (20 cards)
+    """
+    try:
+        deck = make_rule_cards_deck()
+        # make_rule_cards_deck already shuffles its pool; for custom decks
+        # we trim to 20 and reshuffle so randomness is preserved.
+        if mode == 'custom':
+            try:
+                deck.cards = deck.cards[:20]
+                deck.shuffle()
+            except Exception:
+                pass
+        return deck
+    except Exception:
+        # fallback: return whatever rule deck returns or raise
+        try:
+            return make_rule_cards_deck()
+        except Exception:
+            return None
+
+
+def build_ai_player(mode: str):
+    """Create and return a PlayerState for the AI matching the deck mode."""
+    try:
+        deck = build_deck_for_mode(mode)
+        if deck is None:
+            return None
+        p = PlayerState(deck=deck)
+        # initial pp and draw as before
+        try:
+            p.reset_pp()
+            for _ in range(4):
+                c = p.deck.draw()
+                if c is not None:
+                    p.hand.add(c)
+        except Exception:
+            pass
+        return p
+    except Exception:
+        return None
+
+
+def new_game_with_mode(mode: str):
+    """Create a new Game with player's deck and return the Game object.
+
+    This mirrors new_game_with_rule_deck but allows trimming the deck
+    based on the selected mode.
+    """
+    try:
+        deck = build_deck_for_mode(mode)
+        if deck is None:
+            # fallback to rule deck
+            deck = make_rule_cards_deck()
+        deck.shuffle()
+        player = PlayerState(deck=deck)
+        game = Game(player=player)
+        try:
+            game.setup_battle()
+        except Exception:
+            pass
+        return game
+    except Exception:
+        # Last resort, call existing helper
+        try:
+            return new_game_with_rule_deck()
+        except Exception:
+            return None
+
+
+def show_deck_choice_modal(screen):
+    """Show a modal letting the user pick between fixed deck and created deck.
+
+    Sets global `DECK_MODE` to 'fixed' or 'custom'. If user selects the
+    created deck option, opens the deck list modal for inspection.
+    """
+    global DECK_MODE
+    clk = pygame.time.Clock()
+    w, h = 560, 240
+    x = (W - w)//2
+    y = (H - h)//2
+
+    # Button geometry
+    btn_w = 220
+    btn_h = 80
+    left_x = x + 32
+    right_x = x + w - btn_w - 32
+    by = y + 80
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                # default to fixed if user cancels
+                DECK_MODE = 'fixed'
+                return
+            if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1) or ev.type == pygame.FINGERDOWN:
+                if ev.type == pygame.MOUSEBUTTONDOWN:
+                    mx, my = ev.pos
+                else:
+                    mx = int(ev.x * W)
+                    my = int(ev.y * H)
+                # fixed deck
+                if left_x <= mx <= left_x + btn_w and by <= my <= by + btn_h:
+                    DECK_MODE = 'fixed'
+                    return
+                # created deck
+                if right_x <= mx <= right_x + btn_w and by <= my <= by + btn_h:
+                    DECK_MODE = 'custom'
+                    # Open the read-only custom deck selection menu (do not allow editing).
+                    try:
+                        show_custom_deck_selection(screen)
+                    except Exception as e:
+                        # Make exceptions visible so we can debug why the menu
+                        # sometimes doesn't appear. Fall back to the simple list.
+                        print("Error in show_custom_deck_selection:", e, file=sys.stderr)
+                        traceback.print_exc()
+                        try:
+                            show_deck_modal(screen)
+                        except Exception as e2:
+                            print("Error in show_deck_modal fallback:", e2, file=sys.stderr)
+                            traceback.print_exc()
+                    return
+
+        # draw overlay/modal
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0,160))
+        screen.blit(overlay, (0,0))
+
+        surf = pygame.Surface((w, h))
+        surf.fill((245,245,250))
+        pygame.draw.rect(surf, (80,80,80), (0,0,w,h), 3)
+
+        title = FONT.render("デッキを選択してください", True, (30,30,30))
+        surf.blit(title, (20, 12))
+
+        # fixed deck button
+        fixed_rect = pygame.Rect(left_x - x, by - y, btn_w, btn_h)
+        pygame.draw.rect(surf, (220,220,220), fixed_rect)
+        pygame.draw.rect(surf, (70,70,70), fixed_rect, 2)
+        t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
+        t2 = SMALL.render("カード数: 24 / 24", True, (80,80,80))
+        surf.blit(t1, (fixed_rect.x + (btn_w - t1.get_width())//2, fixed_rect.y + 12))
+        surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
+
+        # custom deck button
+        custom_rect = pygame.Rect(right_x - x, by - y, btn_w, btn_h)
+        pygame.draw.rect(surf, (220,220,220), custom_rect)
+        pygame.draw.rect(surf, (70,70,70), custom_rect, 2)
+        c1 = SMALL.render("作成したデッキ（暫定）", True, (30,30,30))
+        c2 = SMALL.render("カード数: 20 / 20", True, (80,80,80))
+        surf.blit(c1, (custom_rect.x + (btn_w - c1.get_width())//2, custom_rect.y + 12))
+        surf.blit(c2, (custom_rect.x + (btn_w - c2.get_width())//2, custom_rect.y + 40))
+
+        screen.blit(surf, (x,y))
+        pygame.display.flip()
+        clk.tick(30)
 
 # CPU 難易度 (1=Easy,2=Medium,3=Hard,4=Expert)
 CPU_DIFFICULTY = 2
@@ -749,8 +994,14 @@ def restart_game():
     cpu_wait = False
     
     # カードゲーム部分もリセット
-    global game
-    game = new_game_with_rule_deck()
+    global game, ai_player
+    # Recreate game and AI according to the chosen deck mode
+    game = new_game_with_mode(DECK_MODE)
+    # ensure ai_player is also rebuilt to match deck size
+    try:
+        ai_player = build_ai_player(DECK_MODE)
+    except Exception:
+        ai_player = None
     log_scroll_offset = 0
     
     game.log.append("=== ゲームを再開しました ===")
@@ -830,6 +1081,17 @@ def show_start_screen():
             if event.type == pygame.KEYDOWN:
                 if pygame.K_1 <= event.key <= pygame.K_4:
                     CPU_DIFFICULTY = event.key - pygame.K_0
+                    # After difficulty selection, let user pick deck mode
+                    try:
+                        show_deck_choice_modal(screen)
+                    except Exception:
+                        pass
+                    # initialize game and AI according to chosen deck mode
+                    try:
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                    except Exception:
+                        pass
                     return
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit(); sys.exit(0)
@@ -850,6 +1112,16 @@ def show_start_screen():
                     by = start_y
                     if bx <= mx <= bx + btn_w and by <= my <= by + btn_h:
                         CPU_DIFFICULTY = val
+                        # deck choice modal
+                        try:
+                            show_deck_choice_modal(screen)
+                        except Exception:
+                            pass
+                        try:
+                            globals()['game'] = new_game_with_mode(DECK_MODE)
+                            globals()['ai_player'] = build_ai_player(DECK_MODE)
+                        except Exception:
+                            pass
                         return
 
                 # deck button (centered below) - match the drawing coordinates used later
@@ -869,8 +1141,11 @@ def show_start_screen():
                     # consume click and continue the main loop (settings handles its own loop)
                     continue
                 if deck_x <= mx <= deck_x + deck_w and deck_y <= my <= deck_y + deck_h:
-                    # show a simple deck modal
-                    show_deck_modal(screen)
+                    # show deck editor (matches difficulty-screen behavior)
+                    try:
+                        show_deck_editor(screen)
+                    except Exception:
+                        show_deck_modal(screen)
 
         # draw background (image if available) - prefer sepia image
         if bg is not None:
@@ -1507,7 +1782,11 @@ def show_deck_modal_old(screen):
     pygame.draw.rect(modal_surf, (80,80,80), (0,0,w,h), 3)
 
     # build a textual list of player's deck
-    lines = [f"{i+1}. {c.name} (cost {c.cost})" for i,c in enumerate(game.player.deck.cards[:20])]
+    try:
+        limit = 20 if globals().get('DECK_MODE') == 'custom' else 24
+    except Exception:
+        limit = 24
+    lines = [f"{i+1}. {c.name} (cost {c.cost})" for i,c in enumerate(game.player.deck.cards[:limit])]
 
     while True:
         for ev in pygame.event.get():
@@ -1534,6 +1813,158 @@ def show_deck_modal_old(screen):
 
         hint = TINY.render("クリック/タッチで閉じる", True, (80,80,80))
         screen.blit(hint, (x + (w - hint.get_width())//2, y + h - 28))
+
+
+def show_custom_deck_selection(screen):
+    """Display a read-only menu of available custom decks; selecting one
+    sets the game's deck to that selection (DECK_MODE='custom').
+    """
+    global DECK_MODE
+    clk = pygame.time.Clock()
+    decks = list_custom_decks() if 'list_custom_decks' in globals() else []
+    if not decks:
+        decks = ["作成デッキ(デフォルト)"]
+
+    # Flush the click/touch that opened the modal so it doesn't immediately
+    # register here and cause an accidental selection.
+    try:
+        pygame.event.get([pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN])
+    except Exception:
+        try:
+            pygame.event.clear()
+        except Exception:
+            pass
+
+    w = 640
+    h = 360
+    x = (W - w)//2
+    y = (H - h)//2
+    entry_h = 56
+    pad = 20
+    start_y = y + 64
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                return
+            if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1) or ev.type == pygame.FINGERDOWN:
+                if ev.type == pygame.MOUSEBUTTONDOWN:
+                    mx, my = ev.pos
+                else:
+                    mx = int(ev.x * W)
+                    my = int(ev.y * H)
+                if not (x <= mx <= x + w and y <= my <= y + h):
+                    continue
+                rel_y = my - start_y
+                idx = rel_y // (entry_h + pad)
+                if 0 <= idx < len(decks):
+                    sel = decks[idx]
+                    if sel == "作成デッキ(デフォルト)":
+                        DECK_MODE = 'custom'
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                        return
+                    names = None
+                    if 'load_custom_deck_by_name' in globals():
+                        names = load_custom_deck_by_name(sel)
+                    if names is None:
+                        DECK_MODE = 'custom'
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                        return
+                    DECK_MODE = 'custom'
+                    try:
+                        if 'build_game_from_card_names' in globals():
+                            globals()['game'] = build_game_from_card_names(names)
+                        else:
+                            globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                    except Exception:
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                    return
+
+        # draw overlay and modal
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0,160))
+        screen.blit(overlay, (0,0))
+
+        surf = pygame.Surface((w, h))
+        surf.fill((245,245,250))
+        pygame.draw.rect(surf, (80,80,80), (0,0,w,h), 3)
+        title = FONT.render("作成デッキを選択してください", True, (30,30,30))
+        surf.blit(title, (20, 12))
+
+        ty = 0
+        for i, name in enumerate(decks):
+            ex = pygame.Rect(pad, start_y - y + ty, w - pad*2, entry_h)
+            pygame.draw.rect(surf, (220,220,220), ex)
+            pygame.draw.rect(surf, (70,70,70), ex, 2)
+            ntxt = SMALL.render(name, True, (30,30,30))
+            surf.blit(ntxt, (ex.x + 12, ex.y + (entry_h - ntxt.get_height())//2))
+            cnt_txt = ""
+            if name != "作成デッキ(デフォルト)":
+                if 'load_custom_deck_by_name' in globals():
+                    nms = load_custom_deck_by_name(name)
+                    if nms is not None:
+                        cnt_txt = f"{len(nms)} 枚"
+            else:
+                cnt_txt = "20 枚"
+            if cnt_txt:
+                ctxt = SMALL.render(cnt_txt, True, (80,80,80))
+                surf.blit(ctxt, (ex.right - ctxt.get_width() - 12, ex.y + (entry_h - ctxt.get_height())//2))
+            ty += entry_h + pad
+
+        screen.blit(surf, (x,y))
+        pygame.display.flip()
+        clk.tick(30)
+
+
+def show_deck_editor(screen):
+    """A simple deck editor placeholder (mirrors the Chess Main placeholder).
+
+    This allows the player to view/edit their created deck. For now it is a
+    simple placeholder with a description and a '戻る' button.
+    """
+    editor_clock = pygame.time.Clock()
+    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)))
+    info_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(18, int(H * 0.03)))
+    btn_font_local = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)))
+    while True:
+        screen.fill((240, 240, 240))
+        win_w, win_h = screen.get_size()
+        title = title_font.render("デッキ作成", True, (30,30,30))
+        screen.blit(title, (win_w//2 - title.get_width()//2, 60))
+
+        # Placeholder explanation
+        info = info_font.render("ここにデッキ編集UIを実装します。戻るには下のボタンを押してください。", True, (30,30,30))
+        screen.blit(info, (win_w//2 - info.get_width()//2, 150))
+
+        # Close button
+        bw, bh = 220, 64
+        bx = win_w//2 - bw//2
+        by = win_h - 140
+        brect = pygame.Rect(bx, by, bw, bh)
+        mx, my = pygame.mouse.get_pos()
+        bcolor = (180,180,180) if brect.collidepoint((mx,my)) else (210,210,210)
+        pygame.draw.rect(screen, bcolor, brect)
+        pygame.draw.rect(screen, (30,30,30), brect, 2)
+        bl = btn_font_local.render("戻る", True, (30,30,30))
+        screen.blit(bl, (bx + bw//2 - bl.get_width()//2, by + bh//2 - bl.get_height()//2))
+
+        pygame.display.flip()
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            elif ev.type == pygame.MOUSEBUTTONDOWN:
+                if brect.collidepoint(ev.pos):
+                    return
+            elif ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return
+        editor_clock.tick(30)
 
 
 def show_settings_screen(screen):
@@ -5513,4 +5944,12 @@ def main_loop():
 if __name__ == "__main__":
     # show start screen to choose AI difficulty before starting
     show_start_screen()
+    # Ensure game/ai_player created according to DECK_MODE (start screen may have set it)
+    try:
+        if globals().get('game') is None:
+            globals()['game'] = new_game_with_mode(DECK_MODE)
+        if globals().get('ai_player') is None:
+            globals()['ai_player'] = build_ai_player(DECK_MODE)
+    except Exception:
+        pass
     main_loop()

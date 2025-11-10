@@ -1781,6 +1781,47 @@ def is_in_check(pcs, color):
                 return True
     return False
 
+
+def can_attack_king_with_cards(pcs, color):
+    """
+    カード効果（迅雷や暴風のジャンプ等）を考慮して、相手が現在の手でキングを攻撃できるかを判定する（表示用）。
+    get_valid_moves(..., ignore_check=True) を用いて、カード付与の特殊手を含めて射程を検査する。
+    """
+    # find king pos
+    king = None
+    for p in pcs:
+        try:
+            if p.name == 'K' and p.color == color:
+                king = p
+                break
+        except Exception:
+            if isinstance(p, dict) and p.get('name') == 'K' and p.get('color') == color:
+                king = p
+                break
+    if not king:
+        return False
+    kr = getattr(king, 'row', None) if hasattr(king, 'row') else king.get('row')
+    kc = getattr(king, 'col', None) if hasattr(king, 'col') else king.get('col')
+    if kr is None or kc is None:
+        return False
+
+    opponent = 'black' if color == 'white' else 'white'
+    try:
+        for p in pcs:
+            pcol = getattr(p, 'color', None) if hasattr(p, 'color') else (p.get('color') if isinstance(p, dict) else None)
+            if pcol != opponent:
+                continue
+            try:
+                moves = get_valid_moves(p, ignore_check=True)
+            except Exception:
+                moves = []
+            for mv in moves:
+                if mv == (kr, kc):
+                    return True
+    except Exception:
+        return False
+    return False
+
 def get_valid_moves(piece, pcs=None, ignore_check=False):
     # pcs: list of piece dicts; if None, use global pieces
     if pcs is None:
@@ -3238,9 +3279,10 @@ def draw_panel():
     if not game_over:
         check_colors = []
         # 表示用には凍結駒も含めた全ての脅威を表示
-        if is_in_check_for_display(chess.pieces, 'white'):
+        # またカード効果（迅雷の追加行動・暴風のジャンプ等）でキングを攻撃可能なら表示する
+        if is_in_check_for_display(chess.pieces, 'white') or can_attack_king_with_cards(chess.pieces, 'white'):
             check_colors.append('white')
-        if is_in_check_for_display(chess.pieces, 'black'):
+        if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
         
         if check_colors:

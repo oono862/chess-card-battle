@@ -1268,7 +1268,11 @@ def show_deck_modal(screen):
     pygame.draw.rect(modal_surf, (80,80,80), (0,0,w,h), 3)
 
     # build a textual list of player's deck
-    lines = [f"{i+1}. {c.name} (cost {c.cost})" for i,c in enumerate(game.player.deck.cards[:20])]
+    try:
+        limit = 20 if globals().get('DECK_MODE') == 'custom' else 24
+    except Exception:
+        limit = 24
+    lines = [f"{i+1}. {c.name} (cost {c.cost})" for i,c in enumerate(game.player.deck.cards[:limit])]
 
     while True:
         for ev in pygame.event.get():
@@ -1345,27 +1349,27 @@ def show_custom_deck_selection(screen):
                     sel = decks[idx]
                     if sel == "作成デッキ(デフォルト)":
                         DECK_MODE = 'custom'
-                        globals()['game'] = new_game_with_mode('custom')
-                        globals()['ai_player'] = build_ai_player('custom')
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
                         return
                     names = None
                     if 'load_custom_deck_by_name' in globals():
                         names = load_custom_deck_by_name(sel)
                     if names is None:
                         DECK_MODE = 'custom'
-                        globals()['game'] = new_game_with_mode('custom')
-                        globals()['ai_player'] = build_ai_player('custom')
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
                         return
                     DECK_MODE = 'custom'
                     try:
                         if 'build_game_from_card_names' in globals():
                             globals()['game'] = build_game_from_card_names(names)
                         else:
-                            globals()['game'] = new_game_with_mode('custom')
-                        globals()['ai_player'] = build_ai_player('custom')
+                            globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
                     except Exception:
-                        globals()['game'] = new_game_with_mode('custom')
-                        globals()['ai_player'] = build_ai_player('custom')
+                        globals()['game'] = new_game_with_mode(DECK_MODE)
+                        globals()['ai_player'] = build_ai_player(DECK_MODE)
                     return
 
         # draw overlay and modal

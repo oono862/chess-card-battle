@@ -1942,49 +1942,9 @@ def show_custom_deck_selection(screen):
         clk.tick(30)
 
 
-def show_deck_editor(screen):
-    """A simple deck editor placeholder (mirrors the Chess Main placeholder).
-
-    This allows the player to view/edit their created deck. For now it is a
-    simple placeholder with a description and a '戻る' button.
-    """
-    editor_clock = pygame.time.Clock()
-    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)))
-    info_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(18, int(H * 0.03)))
-    btn_font_local = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)))
-    while True:
-        screen.fill((240, 240, 240))
-        win_w, win_h = screen.get_size()
-        title = title_font.render("デッキ作成", True, (30,30,30))
-        screen.blit(title, (win_w//2 - title.get_width()//2, 60))
-
-        # Placeholder explanation
-        info = info_font.render("ここにデッキ編集UIを実装します。戻るには下のボタンを押してください。", True, (30,30,30))
-        screen.blit(info, (win_w//2 - info.get_width()//2, 150))
-
-        # Close button
-        bw, bh = 220, 64
-        bx = win_w//2 - bw//2
-        by = win_h - 140
-        brect = pygame.Rect(bx, by, bw, bh)
-        mx, my = pygame.mouse.get_pos()
-        bcolor = (180,180,180) if brect.collidepoint((mx,my)) else (210,210,210)
-        pygame.draw.rect(screen, bcolor, brect)
-        pygame.draw.rect(screen, (30,30,30), brect, 2)
-        bl = btn_font_local.render("戻る", True, (30,30,30))
-        screen.blit(bl, (bx + bw//2 - bl.get_width()//2, by + bh//2 - bl.get_height()//2))
-
-        pygame.display.flip()
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:
-                pygame.quit(); sys.exit(0)
-            elif ev.type == pygame.MOUSEBUTTONDOWN:
-                if brect.collidepoint(ev.pos):
-                    return
-            elif ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE:
-                    return
-        editor_clock.tick(30)
+# Note: the detailed deck editor implementation lives earlier in this file
+# (the function that accepts (screen, existing_deck, slot_idx)).
+# This placeholder definition was removed to avoid shadowing the real editor.
 
 
 def show_settings_screen(screen):

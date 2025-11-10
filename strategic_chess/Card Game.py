@@ -22,8 +22,19 @@ pygame.init()
 # 画面設定
 W, H = 1200, 800
 # Allow the user to resize/minimize/maximize the game window
-screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-pygame.display.set_caption("Chess-Card-Battle β")
+# If another module (e.g. main launcher) already created a display surface,
+# reuse it to avoid creating multiple windows / stealing events when this
+# module is imported rather than executed directly.
+existing_surf = None
+try:
+    existing_surf = pygame.display.get_surface()
+except Exception:
+    existing_surf = None
+if existing_surf:
+    screen = existing_surf
+else:
+    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+    pygame.display.set_caption("Chess-Card-Battle β")
 clock = pygame.time.Clock()
 
 # Base UI resolution used for consistent scaling between windowed and fullscreen
@@ -795,6 +806,9 @@ def show_start_screen():
         pass
 
     while True:
+        # Use the actual current surface size from the passed-in screen so the
+        # UI aligns correctly when this module is used as an imported UI.
+        win_w, win_h = screen.get_size()
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
         btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
@@ -1250,11 +1264,14 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 mx, my = event.pos
                 
                 # 保存ボタン
-                save_rect = pygame.Rect(W - 250, H - 70, 120, 50)
+                save_rect = pygame.Rect(win_w - 250, win_h - 70, 120, 50)
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        # 警告ダイアログ表示
+                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        # 20枚未満でも保存を許可するか確認するダイアログに変更
+                        # 「破棄する」-> 変更を破棄して戻る
+                        # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
                         show_warning = True
                         while show_warning:
                             for warn_ev in pygame.event.get():
@@ -1262,61 +1279,64 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                                     pygame.quit(); sys.exit(0)
                                 if warn_ev.type == pygame.MOUSEBUTTONDOWN and warn_ev.button == 1:
                                     wmx, wmy = warn_ev.pos
-                                    dialog_w, dialog_h = 500, 200
-                                    dialog_x = (W - dialog_w) // 2
-                                    dialog_y = (H - dialog_h) // 2
-                                    
-                                    # はいボタン
-                                    yes_rect = pygame.Rect(dialog_x + 80, dialog_y + 130, 150, 50)
-                                    if yes_rect.collidepoint(wmx, wmy):
-                                        return None  # デッキリストに戻る
-                                    
-                                    # いいえボタン
-                                    no_rect = pygame.Rect(dialog_x + 270, dialog_y + 130, 150, 50)
-                                    if no_rect.collidepoint(wmx, wmy):
-                                        show_warning = False
-                            
+                                    dialog_w, dialog_h = 500, 220
+                                    dialog_x = (win_w - dialog_w) // 2
+                                    dialog_y = (win_h - dialog_h) // 2
+
+                                    # 破棄ボタン
+                                    discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
+                                    if discard_rect.collidepoint(wmx, wmy):
+                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        pygame.key.stop_text_input()
+                                        return None  # 変更破棄してデッキリストへ
+
+                                    # 保存するボタン
+                                    save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
+                                    if save_anyway_rect.collidepoint(wmx, wmy):
+                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        # 20枚未満だが保存して戻る
+                                        pygame.key.stop_text_input()
+                                        return {
+                                            'name': input_text if input_text.strip() else f'デッキ{slot_idx + 1}',
+                                            'cards': deck_cards,
+                                            'created_at': existing_deck.get('created_at', datetime.now().isoformat()) if existing_deck else datetime.now().isoformat()
+                                        }
+
                             # 警告ダイアログ描画
-                            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+                            overlay = pygame.Surface((win_w, win_h), pygame.SRCALPHA)
                             overlay.fill((0, 0, 0, 160))
                             screen.blit(overlay, (0, 0))
-                            
-                            dialog_w, dialog_h = 500, 200
-                            dialog_x = (W - dialog_w) // 2
-                            dialog_y = (H - dialog_h) // 2
+
                             dialog_surf = pygame.Surface((dialog_w, dialog_h))
                             dialog_surf.fill((245, 245, 250))
                             pygame.draw.rect(dialog_surf, (200, 100, 100), (0, 0, dialog_w, dialog_h), 4)
-                            
-                            # 警告メッセージ
+
+                            # メッセージ
                             warn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18, bold=True)
                             msg1 = warn_font.render("20枚未満なのでバトルで使用できません。", True, (30, 30, 30))
-                            msg2 = warn_font.render("変更を破棄しますか？", True, (30, 30, 30))
+                            msg2 = warn_font.render("このまま保存しますか？ (バトルでは使用不可)", True, (30, 30, 30))
                             dialog_surf.blit(msg1, ((dialog_w - msg1.get_width()) // 2, 40))
                             dialog_surf.blit(msg2, ((dialog_w - msg2.get_width()) // 2, 70))
-                            
-                            # はいボタン
-                            yes_rect = pygame.Rect(80, 130, 150, 50)
-                            pygame.draw.rect(dialog_surf, (255, 200, 200), yes_rect)
-                            pygame.draw.rect(dialog_surf, (160, 60, 60), yes_rect, 3)
-                            yes_text = FONT.render("はい", True, (30, 30, 30))
-                            dialog_surf.blit(yes_text, (yes_rect.x + (yes_rect.width - yes_text.get_width()) // 2,
-                                                        yes_rect.y + (yes_rect.height - yes_text.get_height()) // 2))
-                            
-                            # いいえボタン
-                            no_rect = pygame.Rect(270, 130, 150, 50)
-                            pygame.draw.rect(dialog_surf, (200, 255, 200), no_rect)
-                            pygame.draw.rect(dialog_surf, (60, 160, 60), no_rect, 3)
-                            no_text = FONT.render("いいえ", True, (30, 30, 30))
-                            dialog_surf.blit(no_text, (no_rect.x + (no_rect.width - no_text.get_width()) // 2,
-                                                       no_rect.y + (no_rect.height - no_text.get_height()) // 2))
-                            
+
+                            # 破棄ボタン
+                            discard_rect = pygame.Rect(60, 140, 160, 50)
+                            pygame.draw.rect(dialog_surf, (255, 200, 200), discard_rect)
+                            pygame.draw.rect(dialog_surf, (160, 60, 60), discard_rect, 3)
+                            discard_text = FONT.render("破棄する", True, (30, 30, 30))
+                            dialog_surf.blit(discard_text, (discard_rect.x + (discard_rect.width - discard_text.get_width()) // 2,
+                                                            discard_rect.y + (discard_rect.height - discard_text.get_height()) // 2))
+
+                            # 保存するボタン
+                            save_anyway_rect = pygame.Rect(280, 140, 160, 50)
+                            pygame.draw.rect(dialog_surf, (200, 255, 200), save_anyway_rect)
+                            pygame.draw.rect(dialog_surf, (60, 160, 60), save_anyway_rect, 3)
+                            save_anyway_text = FONT.render("保存する", True, (30, 30, 30))
+                            dialog_surf.blit(save_anyway_text, (save_anyway_rect.x + (save_anyway_rect.width - save_anyway_text.get_width()) // 2,
+                                                                save_anyway_rect.y + (save_anyway_rect.height - save_anyway_text.get_height()) // 2))
+
                             screen.blit(dialog_surf, (dialog_x, dialog_y))
                             pygame.display.flip()
                             clock.tick(30)
-                        
-                        # いいえを選んだ場合は編集を続ける
-                        continue
                     
                     # 20枚以上なら保存
                     pygame.key.stop_text_input()
@@ -1327,7 +1347,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                     }
                 
                 # キャンセルボタン
-                cancel_rect = pygame.Rect(W - 140, H - 70, 120, 50)
+                cancel_rect = pygame.Rect(win_w - 140, win_h - 70, 120, 50)
                 if cancel_rect.collidepoint(mx, my):
                     pygame.key.stop_text_input()
                     return None
@@ -1354,7 +1374,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                             break
                 
                 # デッキカードクリック（削除）- 集計表示に対応
-                deck_start_x = W - 420
+                deck_start_x = win_w - 420
                 # カードを集計
                 card_counts = {}
                 for card in deck_cards:
@@ -1366,7 +1386,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 display_idx = 0
                 for card_info in card_counts.values():
                     card_y = list_start_y + display_idx * card_h
-                    if 110 <= card_y < H - 100:
+                    if 110 <= card_y < win_h - 100:
                         card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
                         if card_rect.collidepoint(mx, my):
                             # このカードを1枚削除

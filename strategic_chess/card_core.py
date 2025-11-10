@@ -817,6 +817,61 @@ def eff_leech_pp2(game: Game, player: PlayerState) -> str:
     return f"PP+2（{before}→{player.pp_current}）。"
 
 
+def eff_risky_gamble(game: Game, player: PlayerState) -> str:
+    """命がけのギャンブル(3): 25%の確率で自分のルーク・キング以外の駒がクイーンに変わる。外れたら相手側が変わる。自ターンスキップ。"""
+    import random
+    success = random.random() < 0.25  # 25%の確率
+    
+    if success:
+        # 当たり: 自分のルークとキング以外の駒をクイーンに変更
+        game.pending = PendingAction(
+            kind="gamble_promote",
+            info={
+                "target_color": "white",  # プレイヤー側
+                "success": True,
+            }
+        )
+        return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
+    else:
+        # 外れ: 相手のルークとキング以外の駒をクイーンに変更
+        game.pending = PendingAction(
+            kind="gamble_promote",
+            info={
+                "target_color": "black",  # AI側
+                "success": False,
+            }
+        )
+        return "25%の確率に失敗...相手のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
+
+
+def eff_no_lose(game: Game, player: PlayerState) -> str:
+    """負けるわけないだろwww(4): 3PPあって手札に「摂取」あり自分が負けるとき自動発動。盤面を最初の状態にする。"""
+    # この効果は自動発動なので、実際の発動処理はゲームロジック側で行う
+    # ここでは効果の説明のみ返す
+    return "負けるとき自動発動の準備完了（3PP+手札に摂取が必要）"
+
+
+def eff_iron_wall(game: Game, player: PlayerState) -> str:
+    """鉄壁(2): 一度だけ相手の攻撃や妨害を防御できる（相手の効果を受けるまで解除されない）"""
+    # プレイヤーに防御フラグを立てる
+    if not hasattr(player, 'iron_wall_active'):
+        player.iron_wall_active = False
+    player.iron_wall_active = True
+    return "鉄壁発動！次に受ける相手の効果を1回だけ防御します。"
+
+
+def eff_hand_discard(game: Game, player: PlayerState) -> str:
+    """ハンです☆(2): 相手のカードをランダムで一枚墓地に送る"""
+    # pending actionで相手の手札を捨てる処理を保留
+    game.pending = PendingAction(
+        kind="discard_opponent_hand",
+        info={
+            "note": "相手の手札からランダムで1枚墓地に送ります",
+        }
+    )
+    return "相手の手札からランダムで1枚墓地に送ります。"
+
+
 # ---- name normalization to avoid legacy/encoding variants ----
 def _normalize_card_name(name: str) -> str:
     """Normalize legacy or variant names to canonical ones.
@@ -837,10 +892,15 @@ def make_rule_cards_deck() -> Deck:
         Card("暴風", 3, eff_storm_jump_once),
         Card("迅雷", 3, eff_lightning_two_actions),
         Card("2ドロー", 1, eff_draw2),
-    Card("錬成", 0, eff_alchemy),
-    # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
-    Card("墓地ルーレット", 1, eff_graveyard_roulette),
+        Card("錬成", 0, eff_alchemy),
+        # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
+        Card("墓地ルーレット", 1, eff_graveyard_roulette),
         Card("\u6442\u53d6", 1, eff_leech_pp2),
+        # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
+        # Card("命がけのギャンブル", 3, eff_risky_gamble),
+        # Card("負けるわけないだろwww", 4, eff_no_lose),
+        # Card("鉄壁", 2, eff_iron_wall),
+        # Card("ハンです☆", 2, eff_hand_discard),
     ]
     pool = []
     for c in kinds:

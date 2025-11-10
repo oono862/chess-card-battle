@@ -1145,6 +1145,10 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         {'name': '錬成', 'cost': 0},
         {'name': '墓地ルーレット', 'cost': 1},
         {'name': '摂取', 'cost': 1},
+        {'name': '命がけのギャンブル', 'cost': 3},
+        {'name': '負けるわけないだろwww', 'cost': 4},
+        {'name': '鉄壁', 'cost': 2},
+        {'name': 'ハンです☆', 'cost': 2},
     ]
     
     # 現在のデッキカード
@@ -3536,6 +3540,10 @@ def draw_panel():
             instruction_text = "凍結する相手コマを選択してください"
         elif game.pending.kind == 'heat_choice':
             instruction_text = "灼熱: 自分の凍結駒を解除するか、3マス封鎖をするか選択してください。"
+        elif game.pending.kind == 'discard_opponent_hand':
+            instruction_text = "相手の手札からランダムで1枚墓地に送ります..."
+        elif game.pending.kind == 'gamble_promote':
+            instruction_text = "命がけのギャンブル発動中..."
         else:
             instruction_text = "選択を完了してください"
         
@@ -5157,6 +5165,46 @@ def main_loop():
                 game_over = True
                 game_over_winner = 'draw'
                 game.log.append("ステイルメイト（引き分け）")
+
+        # === 自動処理されるpending ===
+        if getattr(game, 'pending', None) is not None:
+            # ハンです☆: 相手の手札をランダムで墓地に送る
+            if game.pending.kind == 'discard_opponent_hand':
+                import random
+                if ai_player.hand.cards:
+                    idx = random.randrange(len(ai_player.hand.cards))
+                    discarded_card = ai_player.hand.cards[idx]
+                    ai_player.hand.remove_at(idx)
+                    ai_player.graveyard.append(discarded_card)
+                    game.log.append(f"『ハンです☆』: 相手の手札から『{discarded_card.name}』をランダムで墓地に送りました。")
+                else:
+                    game.log.append("『ハンです☆』: 相手の手札が空です。")
+                game.pending = None
+            
+            # 命がけのギャンブル: ルーク・キング以外の駒をクイーンに変える
+            elif game.pending.kind == 'gamble_promote':
+                target_color = game.pending.info.get('target_color', 'white')
+                success = game.pending.info.get('success', False)
+                
+                promoted_count = 0
+                for piece in chess.pieces:
+                    if piece.color == target_color and piece.kind not in ['K', 'R']:
+                        piece.kind = 'Q'  # クイーンに昇格
+                        promoted_count += 1
+                
+                if success:
+                    game.log.append(f"『命がけのギャンブル』成功！自分の{promoted_count}個の駒がクイーンに昇格しました！")
+                else:
+                    game.log.append(f"『命がけのギャンブル』失敗...相手の{promoted_count}個の駒がクイーンに昇格しました...")
+                
+                # ターンスキップ（プレイヤーの手番を終了）
+                if chess_current_turn == 'white':
+                    chess_current_turn = 'black'
+                    cpu_wait = True
+                    cpu_wait_start = _ct_time.time()
+                    game.log.append("自ターンをスキップします。")
+                
+                game.pending = None
 
         draw_panel()
         pygame.display.flip()

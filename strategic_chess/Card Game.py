@@ -46,6 +46,8 @@ BASE_UI_H = 800
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
+# Help/operation text: slightly bolder and with more spacing for readability
+HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
 # ゲーム状態
 # NOTE: defer creating the actual game and AI decks until after the
@@ -3319,11 +3321,21 @@ def draw_panel():
     # 右パネル: ヘルプ（簡潔に） - use right panel x so help stays grouped
     help_x = layout['right_panel_x'] + 12
     help_y = layout['board_top']
-    draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
-    help_y += 24
+    # Operation/help header (use bolder font)
+    try:
+        header_s = HELP_FONT.render("操作:", True, (60, 60, 100))
+        screen.blit(header_s, (help_x, help_y))
+    except Exception:
+        draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
+    # increase spacing to improve readability
+    help_y += 28
     for hl in HELP_LINES:  # 全ての操作を表示
-        draw_text(screen, hl, help_x, help_y, (30, 30, 90))
-        help_y += 20
+        try:
+            line_s = HELP_FONT.render(hl, True, (30, 30, 90))
+            screen.blit(line_s, (help_x, help_y))
+        except Exception:
+            draw_text(screen, hl, help_x, help_y, (30, 30, 90))
+        help_y += 26
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']

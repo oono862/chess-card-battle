@@ -5,18 +5,30 @@ import sys
 import traceback
 import os
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 try:
     from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    try:
+        from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    except Exception:
+        logger.exception("Failed to import card_core module")
+        raise
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
     from . import chess_engine as chess
 except Exception:
-    import chess_engine as chess
+    try:
+        import chess_engine as chess
+    except Exception:
+        logger.exception("Failed to import chess_engine module")
+        raise
 
 
 pygame.init()
@@ -31,6 +43,7 @@ existing_surf = None
 try:
     existing_surf = pygame.display.get_surface()
 except Exception:
+    logger.debug('pygame.display.get_surface() failed, creating new display surface', exc_info=True)
     existing_surf = None
 if existing_surf:
     screen = existing_surf
@@ -46,6 +59,25 @@ BASE_UI_H = 800
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
+# Help/operation text: slightly bolder and with more spacing for readability
+HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+
+# ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
+gimmick_activation_mode = 'number_key'
+# When top-level "カードをクリックして発動" is selected we keep a submode
+# which is either 'click_enlarged' or 'double_click'. The effective
+# `gimmick_activation_mode` mirrors this submode when click-top is active.
+gimmick_click_submode = 'click_enlarged'
+# double click support
+last_click_time = 0.0
+last_click_pos = (0, 0)
+# Track the last logical card index that was clicked (None when click wasn't on a hand card)
+last_clicked_card_index = None
+# Increase interval slightly to make double-click detection more forgiving for slower users
+DOUBLE_CLICK_INTERVAL = 0.60
+# Maximum pixel distance between clicks to be considered a double-click
+DOUBLE_CLICK_DIST = 36  # pixels
+DOUBLE_CLICK_DIST_SQ = DOUBLE_CLICK_DIST * DOUBLE_CLICK_DIST
 
 # ゲーム状態
 # NOTE: defer creating the actual game and AI decks until after the
@@ -55,6 +87,21 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 game = None
 # AI placeholder; will be created at game start
 ai_player = None
+
+# Convenience fallback for test imports: when this module is imported by
+# lightweight test scripts (not run as the full UI), some tests expect a
+# `game` object to exist so they can call methods like `start_turn()`.
+# Create a minimal sample game here if one hasn't been created already.
+try:
+    if game is None:
+        try:
+            game = new_game_with_sample_deck()
+        except Exception:
+            # best-effort fallback: leave game as None if creation fails
+            game = None
+except Exception:
+    # swallow any import-time errors to avoid breaking consumers
+    pass
 # ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
 def get_opponent_hand_count():
     try:
@@ -108,7 +155,7 @@ def list_custom_decks():
                 if fn.lower().endswith('.json'):
                     out.append(os.path.splitext(fn)[0])
     except Exception:
-        pass
+        logger.exception("Error while listing custom decks")
     return out
 
 
@@ -125,7 +172,7 @@ def load_custom_deck_by_name(name: str):
             if isinstance(data, list):
                 return [str(x) for x in data]
     except Exception:
-        pass
+        logger.exception("Failed to load custom deck: %s", path)
     return None
 
 
@@ -168,6 +215,7 @@ def build_game_from_card_names(names):
             pass
         return g
     except Exception:
+        logger.exception("Failed to build game from card names, falling back to custom deck")
         return new_game_with_mode('custom')
 
 
@@ -333,6 +381,8 @@ def show_deck_choice_modal(screen):
     by = y + 80
 
     while True:
+        # get current window size each frame so UI components position correctly
+        win_w, win_h = screen.get_size()
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -420,6 +470,7 @@ play_bg_surf = None     # 現在のウィンドウサイズに合わせたスケ
 # クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
 confirm_yes_rect = None
 confirm_no_rect = None
+start_turn_rect = None
 grave_label_rect = None
 opponent_hand_rect = None
 grave_card_rects = []
@@ -1306,6 +1357,8 @@ def show_deck_modal(screen):
     clock = pygame.time.Clock()
     
     while True:
+        # keep current window size in local variables for positioning dialogs/buttons
+        win_w, win_h = screen.get_size()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -1514,6 +1567,8 @@ def show_deck_editor(screen, existing_deck, slot_idx):
     
     # 日本語入力を有効化
     pygame.key.start_text_input()
+    # initialize local window size variables (static analyzer friendly)
+    win_w, win_h = screen.get_size()
     
     while True:
         for event in pygame.event.get():
@@ -1959,15 +2014,15 @@ def show_settings_screen(screen):
     dragging = False
     drag_offset = 0
 
-    # layout
-    w = 640
-    h = 280
+    # layout (enlarged to give more space for options)
+    w = 760
+    h = 360
     x = (W - w) // 2
     y = (H - h) // 2
 
     # slider geometry
     slider_x = x + 40
-    slider_y = y + 120
+    slider_y = y + 140
     slider_w = w - 80
     slider_h = 6
 
@@ -2022,6 +2077,56 @@ def show_settings_screen(screen):
                             pygame.mixer.music.set_volume(bgm_volume)
                     except Exception:
                         pass
+                # Gimmick activation option click areas (relative to modal)
+                gimm_x = x + 40
+                gimm_y = y + 220
+                opt_w = w - 80
+                opt_h = 28
+                # top-level options
+                top_num_rect = pygame.Rect(gimm_x, gimm_y, opt_w, opt_h)
+                top_click_rect = pygame.Rect(gimm_x, gimm_y + opt_h + 8, opt_w, opt_h)
+                # nested options (shown only when top-click is selected)
+                nested_x = gimm_x + 20
+                nested_y = top_click_rect.y + opt_h + 8
+                nested_rect_1 = pygame.Rect(nested_x, nested_y, opt_w - 20, opt_h)
+                nested_rect_2 = pygame.Rect(nested_x, nested_y + (opt_h + 8), opt_w - 20, opt_h)
+
+                if top_num_rect.collidepoint(mx, my):
+                    globals()['gimmick_activation_mode'] = 'number_key'
+                    try:
+                        globals()['notice_msg'] = "発動方法: 数字キー"
+                        globals()['notice_until'] = _ct_time.time() + 1.5
+                    except Exception:
+                        pass
+                elif top_click_rect.collidepoint(mx, my):
+                    # Select the click-top mode but keep the chosen submode
+                    # If a submode hasn't been chosen yet, default to click_enlarged
+                    sub = globals().get('gimmick_click_submode', 'click_enlarged')
+                    globals()['gimmick_click_submode'] = sub
+                    globals()['gimmick_activation_mode'] = sub
+                    try:
+                        globals()['notice_msg'] = "発動方法: カードをクリックして発動"
+                        globals()['notice_until'] = _ct_time.time() + 1.5
+                    except Exception:
+                        pass
+                else:
+                    # handle nested option clicks when the click-top area is shown
+                    if nested_rect_1.collidepoint(mx, my):
+                        globals()['gimmick_click_submode'] = 'click_enlarged'
+                        globals()['gimmick_activation_mode'] = 'click_enlarged'
+                        try:
+                            globals()['notice_msg'] = "発動方法: 拡大クリック"
+                            globals()['notice_until'] = _ct_time.time() + 1.5
+                        except Exception:
+                            pass
+                    elif nested_rect_2.collidepoint(mx, my):
+                        globals()['gimmick_click_submode'] = 'double_click'
+                        globals()['gimmick_activation_mode'] = 'double_click'
+                        try:
+                            globals()['notice_msg'] = "発動方法: ダブルクリック"
+                            globals()['notice_until'] = _ct_time.time() + 1.5
+                        except Exception:
+                            pass
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
                 dragging = False
             elif ev.type == pygame.MOUSEMOTION and dragging:
@@ -2033,6 +2138,7 @@ def show_settings_screen(screen):
                         pygame.mixer.music.set_volume(bgm_volume)
                 except Exception:
                     pass
+                
 
         # draw modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -2081,7 +2187,8 @@ def show_settings_screen(screen):
             ky = sy
             pygame.draw.circle(surf, (80,80,80), (kx, ky), 10)
             vol_txt = SMALL.render(f"音量: {int(bgm_volume*100)}%", True, (30,30,30))
-            surf.blit(vol_txt, (40, sy + 24))
+            # move the volume text slightly upward for better spacing
+            surf.blit(vol_txt, (40, sy + 8))
         except Exception:
             pass
 
@@ -2092,6 +2199,56 @@ def show_settings_screen(screen):
         back_txt = SMALL.render("戻る", True, (30,30,30))
         surf.blit(back_txt, (back_rect.x + (back_rect.w - back_txt.get_width())//2, back_rect.y + (back_rect.h - back_txt.get_height())//2))
 
+        # Gimmick activation method description and options
+        try:
+            opt_title = SMALL.render("ギミック発動方法", True, (30,30,30))
+            # place title a bit lower to avoid overlapping the volume label
+            surf.blit(opt_title, (40, 180))
+            gimm_x = 40
+            gimm_y = 220
+            opt_h = 28
+            opt_w = w - 80
+
+            # Top-level options: 1) 数字キーで発動  2) カードをクリックして発動
+            # Draw top-level radios
+            # Top 1: 数字キーで発動
+            chk_x = gimm_x
+            chk_y = gimm_y
+            pygame.draw.circle(surf, (200,200,200), (chk_x+10, chk_y+opt_h//2), 10)
+            if gimmick_activation_mode == 'number_key':
+                pygame.draw.circle(surf, (80,80,80), (chk_x+10, chk_y+opt_h//2), 6)
+            txt1 = SMALL.render("数字キーで発動", True, (30,30,30))
+            surf.blit(txt1, (chk_x + 28, chk_y + (opt_h - txt1.get_height())//2))
+
+            # Top 2: カードをクリックして発動
+            chk_y2 = gimm_y + opt_h + 8
+            pygame.draw.circle(surf, (200,200,200), (chk_x+10, chk_y2+opt_h//2), 10)
+            # top-click is considered selected when effective mode is not number_key
+            if gimmick_activation_mode != 'number_key':
+                pygame.draw.circle(surf, (80,80,80), (chk_x+10, chk_y2+opt_h//2), 6)
+            txt2 = SMALL.render("カードをクリックして発動", True, (30,30,30))
+            surf.blit(txt2, (chk_x + 28, chk_y2 + (opt_h - txt2.get_height())//2))
+
+            # If click-top is selected, draw nested options indented
+            if gimmick_activation_mode != 'number_key':
+                nested_x = gimm_x + 20
+                nested_y = chk_y2 + opt_h + 8
+                # nested 1: 拡大カードをクリックで発動
+                pygame.draw.circle(surf, (200,200,200), (nested_x+10, nested_y+opt_h//2), 10)
+                if globals().get('gimmick_click_submode', 'click_enlarged') == 'click_enlarged':
+                    pygame.draw.circle(surf, (80,80,80), (nested_x+10, nested_y+opt_h//2), 6)
+                ntxt1 = SMALL.render("拡大カードをクリックして発動", True, (30,30,30))
+                surf.blit(ntxt1, (nested_x + 28, nested_y + (opt_h - ntxt1.get_height())//2))
+
+                # nested 2: ダブルクリックで発動
+                nested_y2 = nested_y + (opt_h + 8)
+                pygame.draw.circle(surf, (200,200,200), (nested_x+10, nested_y2+opt_h//2), 10)
+                if globals().get('gimmick_click_submode', 'click_enlarged') == 'double_click':
+                    pygame.draw.circle(surf, (80,80,80), (nested_x+10, nested_y2+opt_h//2), 6)
+                ntxt2 = SMALL.render("ダブルクリックで発動", True, (30,30,30))
+                surf.blit(ntxt2, (nested_x + 28, nested_y2 + (opt_h - ntxt2.get_height())//2))
+        except Exception:
+            pass
         # クレジット表示（モーダル左下）
         try:
             credit_text = "フリーBGM・音楽素材:MusMus様"
@@ -2103,8 +2260,9 @@ def show_settings_screen(screen):
             outline_color = (30, 30, 30)
             credit_surf = credit_font.render(credit_text, True, fill_color)
             outline = credit_font.render(credit_text, True, outline_color)
-            cx = 12
-            cy = h - credit_surf.get_height() - 12
+            # Place credit at the modal's top-right with a small inset
+            cx = w - credit_surf.get_width() - 12
+            cy = 12
             # draw outline slightly offset then main text
             surf.blit(outline, (cx + 1, cy + 1))
             surf.blit(credit_surf, (cx, cy))
@@ -2117,6 +2275,8 @@ def show_settings_screen(screen):
 
         pygame.display.flip()
         clock.tick(30)
+
+
 
 def get_piece_at(row, col):
     # 後方互換のための薄いラッパー
@@ -2273,6 +2433,47 @@ def is_in_check(pcs, color):
                 
             if king_pos in m:
                 return True
+    return False
+
+
+def can_attack_king_with_cards(pcs, color):
+    """
+    カード効果（迅雷や暴風のジャンプ等）を考慮して、相手が現在の手でキングを攻撃できるかを判定する（表示用）。
+    get_valid_moves(..., ignore_check=True) を用いて、カード付与の特殊手を含めて射程を検査する。
+    """
+    # find king pos
+    king = None
+    for p in pcs:
+        try:
+            if p.name == 'K' and p.color == color:
+                king = p
+                break
+        except Exception:
+            if isinstance(p, dict) and p.get('name') == 'K' and p.get('color') == color:
+                king = p
+                break
+    if not king:
+        return False
+    kr = getattr(king, 'row', None) if hasattr(king, 'row') else king.get('row')
+    kc = getattr(king, 'col', None) if hasattr(king, 'col') else king.get('col')
+    if kr is None or kc is None:
+        return False
+
+    opponent = 'black' if color == 'white' else 'white'
+    try:
+        for p in pcs:
+            pcol = getattr(p, 'color', None) if hasattr(p, 'color') else (p.get('color') if isinstance(p, dict) else None)
+            if pcol != opponent:
+                continue
+            try:
+                moves = get_valid_moves(p, ignore_check=True)
+            except Exception:
+                moves = []
+            for mv in moves:
+                if mv == (kr, kc):
+                    return True
+    except Exception:
+        return False
     return False
 
 def get_valid_moves(piece, pcs=None, ignore_check=False):
@@ -3303,11 +3504,23 @@ def draw_panel():
     # 右パネル: ヘルプ（簡潔に） - use right panel x so help stays grouped
     help_x = layout['right_panel_x'] + 12
     help_y = layout['board_top']
-    draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
-    help_y += 24
+    # Operation/help header (use bolder font)
+    try:
+        header_s = HELP_FONT.render("操作:", True, (60, 60, 100))
+        screen.blit(header_s, (help_x, help_y))
+    except Exception:
+        draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
+    # increase spacing to improve readability
+    # Use slightly larger line spacing so each help item is easier to read.
+    help_y += 44
     for hl in HELP_LINES:  # 全ての操作を表示
-        draw_text(screen, hl, help_x, help_y, (30, 30, 90))
-        help_y += 20
+        try:
+            line_s = HELP_FONT.render(hl, True, (30, 30, 90))
+            screen.blit(line_s, (help_x, help_y))
+        except Exception:
+            draw_text(screen, hl, help_x, help_y, (30, 30, 90))
+        # add more vertical gap between items for improved readability
+        help_y += 40
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']
@@ -3732,9 +3945,10 @@ def draw_panel():
     if not game_over:
         check_colors = []
         # 表示用には凍結駒も含めた全ての脅威を表示
-        if is_in_check_for_display(chess.pieces, 'white'):
+        # またカード効果（迅雷の追加行動・暴風のジャンプ等）でキングを攻撃可能なら表示する
+        if is_in_check_for_display(chess.pieces, 'white') or can_attack_king_with_cards(chess.pieces, 'white'):
             check_colors.append('white')
-        if is_in_check_for_display(chess.pieces, 'black'):
+        if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
         
         if check_colors:
@@ -3980,7 +4194,13 @@ def draw_panel():
             scrollbar_rect = None
     else:
         # ログ非表示時のヒント (右パネルに寄せる)
-        draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
+        # Make the label more visible by using a bolder font if available.
+        try:
+            lbl_font = HELP_FONT if HELP_FONT else pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+            lbl_s = lbl_font.render("[L] ログ表示", True, (80, 80, 110))
+            screen.blit(lbl_s, (layout['right_panel_x'] + 12, board_area_top + board_area_height - 30))
+        except Exception:
+            draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
     # === 下部エリア: 手札（左から横並び最大7枚） ===
     # ボードの下に左詰めで横並びで表示
@@ -4048,28 +4268,29 @@ def draw_panel():
             # 外側にもう一層、少し濃い金色
             pygame.draw.rect(screen, (218, 165, 32), rect.inflate(4, 4), 3)
         
-        # カード下部にボタン番号を表示
-        button_number = f"[{i+1}]"
-        # 背景ボックス
-        button_bg_width = 35
-        button_bg_height = 30
-        button_bg_x = x + (card_w - button_bg_width) // 2
-        button_bg_y = card_y + card_h - button_bg_height - 5
-        
-        # PP足りるかで色を変える
-        if c.cost <= game.player.pp_current:
-            bg_color = (100, 200, 100)  # 緑（使用可能）
-        else:
-            bg_color = (200, 100, 100)  # 赤（PP不足）
-        
-        pygame.draw.rect(screen, bg_color, (button_bg_x, button_bg_y, button_bg_width, button_bg_height))
-        pygame.draw.rect(screen, (255, 255, 255), (button_bg_x, button_bg_y, button_bg_width, button_bg_height), 2)
-        
-        # 番号テキスト
-        num_surf = FONT.render(button_number, True, (255, 255, 255))
-        num_x = button_bg_x + (button_bg_width - num_surf.get_width()) // 2
-        num_y = button_bg_y + (button_bg_height - num_surf.get_height()) // 2
-        screen.blit(num_surf, (num_x, num_y))
+        # カード下部にボタン番号を表示（数字キーで発動が有効なときのみ）
+        if globals().get('gimmick_activation_mode', 'number_key') == 'number_key':
+            button_number = f"[{i+1}]"
+            # 背景ボックス
+            button_bg_width = 35
+            button_bg_height = 30
+            button_bg_x = x + (card_w - button_bg_width) // 2
+            button_bg_y = card_y + card_h - button_bg_height - 5
+            
+            # PP足りるかで色を変える
+            if c.cost <= game.player.pp_current:
+                bg_color = (100, 200, 100)  # 緑（使用可能）
+            else:
+                bg_color = (200, 100, 100)  # 赤（PP不足）
+            
+            pygame.draw.rect(screen, bg_color, (button_bg_x, button_bg_y, button_bg_width, button_bg_height))
+            pygame.draw.rect(screen, (255, 255, 255), (button_bg_x, button_bg_y, button_bg_width, button_bg_height), 2)
+            
+            # 番号テキスト
+            num_surf = FONT.render(button_number, True, (255, 255, 255))
+            num_x = button_bg_x + (button_bg_width - num_surf.get_width()) // 2
+            num_y = button_bg_y + (button_bg_height - num_surf.get_height()) // 2
+            screen.blit(num_surf, (num_x, num_y))
 
 
     # === 状態表示（右下）===
@@ -4507,6 +4728,28 @@ def draw_panel():
         draw_panel.quit_rect = quit_rect
 
 
+def start_player_turn():
+    """Centralized helper that starts a player's card-game turn and shows the YOUR TURN telop.
+
+    Use this wrapper instead of calling `game.start_turn()` directly from the UI so
+    the visual telop is always displayed when a turn begins (manual or automatic).
+    """
+    global turn_telop_msg, turn_telop_until, log_scroll_offset
+    try:
+        # start_turn handles PP reset and the 1-card draw
+        game.start_turn()
+    except Exception:
+        return
+    try:
+        turn_telop_msg = "YOUR TURN"
+        turn_telop_until = _ct_time.time() + 1.0
+    except Exception:
+        pass
+    try:
+        log_scroll_offset = 0
+    except Exception:
+        pass
+
 
 def attempt_start_turn():
     """[T]と同等のターン開始処理をUIやマウスからも呼べるように関数化。"""
@@ -4534,13 +4777,7 @@ def attempt_start_turn():
             pass
         return
     # 開始
-    game.start_turn()
-    try:
-        turn_telop_msg = "YOUR TURN"
-        turn_telop_until = _ct_time.time() + 1.0
-    except Exception:
-        pass
-    log_scroll_offset = 0
+    start_player_turn()
 
 
 def handle_keydown(key):
@@ -4623,6 +4860,22 @@ def handle_keydown(key):
     # 1-9 キーでカード使用
     if pygame.K_1 <= key <= pygame.K_9:
         idx = key - pygame.K_1
+        # If player chose "カードをクリックして発動" (i.e. not number_key top-mode),
+        # disable numeric-key activation for normal play. Permit numeric keys for
+        # promotion selection or when a pending 'discard' selection is active.
+        if globals().get('gimmick_activation_mode', 'number_key') != 'number_key':
+            # allow promotion/discard flows to still use numeric keys
+            if not (chess.promotion_pending is not None and 0 <= idx <= 3) and not (
+                getattr(game, 'pending', None) is not None and getattr(game.pending, 'kind', None) == 'discard'
+            ):
+                msg = "カードをクリックで発動"
+                game.log.append(msg)
+                try:
+                    notice_msg = msg
+                    notice_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
+                return
         # プロモーション選択中ならカード使用を抑止して昇格選択に使う
         if chess.promotion_pending is not None and 0 <= idx <= 3:
             opts = ['Q','R','B','N']
@@ -4820,8 +5073,106 @@ def handle_mouse_click(pos):
             sys.exit(0)
         return
 
-    # 1) 最優先: カード拡大の解除（他の操作より先に判定して閉じる）
-    if enlarged_card_index is not None or enlarged_card_name is not None:
+    # Click timing for double-click detection
+    # We use a combination of index-based detection (same logical card index
+    # clicked twice within the interval) and the previous position-based
+    # distance test as a fallback. This makes double-clicks robust when the
+    # first click toggles an enlarged overlay which can move pixel coords.
+    global last_click_time, last_click_pos, last_clicked_card_index
+    now = _ct_time.time()
+    is_double = False
+
+    # Determine if this click hit a thumbnail card and capture its index
+    clicked_target_index = None
+    try:
+        for rect, idx in card_rects:
+            if rect.collidepoint(pos):
+                clicked_target_index = idx
+                break
+    except Exception:
+        # card_rects may not be initialized yet; ignore
+        clicked_target_index = None
+
+    try:
+        dx = pos[0] - last_click_pos[0]
+        dy = pos[1] - last_click_pos[1]
+        dist = dx*dx + dy*dy
+        time_ok = (now - last_click_time) <= DOUBLE_CLICK_INTERVAL
+        # Double-click if within time AND either the same logical card index
+        # was clicked twice, or the pixel distance between clicks is small.
+        if time_ok and ((clicked_target_index is not None and clicked_target_index == last_clicked_card_index) or dist <= DOUBLE_CLICK_DIST_SQ):
+            is_double = True
+    except Exception:
+        is_double = False
+
+    # Update last click info for next time
+    last_click_time = now
+    last_click_pos = pos
+    last_clicked_card_index = clicked_target_index
+
+    # 1) 最優先: カード拡大の解除または(拡大クリックでの発動)
+    if enlarged_card_index is not None and 0 <= enlarged_card_index < len(getattr(game, 'player').hand.cards):
+        # compute enlarged rect same as drawing
+        enlarged_w = 300
+        enlarged_h = 420
+        enlarged_x = (W - enlarged_w) // 2
+        enlarged_y = (H - enlarged_h) // 2
+        er = pygame.Rect(enlarged_x, enlarged_y, enlarged_w, enlarged_h)
+        if er.collidepoint(pos):
+            # Clicking inside enlarged card: activation behavior depends on selected mode.
+            # - 'click_enlarged': single click activates
+            # - 'double_click': only a double-click activates
+            should_activate = False
+            if gimmick_activation_mode == 'click_enlarged':
+                should_activate = True
+            elif gimmick_activation_mode == 'double_click' and is_double:
+                should_activate = True
+
+            if should_activate:
+                idx = enlarged_card_index
+                # try to play card idx (reuse key-press logic)
+                # pending/promote checks are done in play_card; but guard similar to key handler
+                if chess.promotion_pending is not None:
+                    # ignore; promotion selection shouldn't be triggered here
+                    pass
+                else:
+                    if getattr(game, 'pending', None) is not None:
+                        game.log.append("操作待ち: 先に保留中の選択を完了してください。")
+                    elif not getattr(game, 'turn_active', False):
+                        msg = "ターンが開始されていませんTキーでターンを開始してください"
+                        game.log.append(msg)
+                        try:
+                            notice_msg = msg
+                            notice_until = _ct_time.time() + 1.0
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            ok, m = game.play_card(idx)
+                            if not ok:
+                                game.log.append(m)
+                            else:
+                                _debug_mark_card_played()
+                                try:
+                                    log_scroll_offset = 0
+                                except Exception:
+                                    pass
+                        except Exception:
+                            game.log.append("カード使用に失敗しました。")
+                # close enlarged after activation/click
+                enlarged_card_index = None
+                return
+            else:
+                # Not activating (e.g. double-click mode but this was a single click): just close overlay
+                enlarged_card_index = None
+                enlarged_card_name = None
+                return
+        # clicking anywhere when enlarged closes it
+        enlarged_card_index = None
+        enlarged_card_name = None
+        return
+    elif enlarged_card_name is not None:
+        # for non-hand enlarged name (grave, etc.), a click closes the overlay
         enlarged_card_index = None
         enlarged_card_name = None
         return
@@ -5020,6 +5371,38 @@ def handle_mouse_click(pos):
     # カードのクリック判定（優先）
     for rect, idx in card_rects:
         if rect.collidepoint(pos):
+            # If double-click activation mode is selected, a double-click on the small card
+            # should attempt to play it immediately. Otherwise, toggle enlarged view.
+            if gimmick_activation_mode == 'double_click' and is_double:
+                # Attempt to play the card directly
+                if chess.promotion_pending is not None:
+                    # ignore activation during promotion selection
+                    pass
+                else:
+                    if getattr(game, 'pending', None) is not None:
+                        game.log.append("操作待ち: 先に保留中の選択を完了してください。")
+                    elif not getattr(game, 'turn_active', False):
+                        msg = "ターンが開始されていませんTキーでターンを開始してください"
+                        game.log.append(msg)
+                        try:
+                            notice_msg = msg
+                            notice_until = _ct_time.time() + 1.0
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            ok, m = game.play_card(idx)
+                            if not ok:
+                                game.log.append(m)
+                            else:
+                                _debug_mark_card_played()
+                                try:
+                                    log_scroll_offset = 0
+                                except Exception:
+                                    pass
+                        except Exception:
+                            game.log.append("カード使用に失敗しました。")
+                return
             # 閲覧（拡大表示）はターン開始前でも許可する
             if enlarged_card_index == idx:
                 enlarged_card_index = None
@@ -5280,6 +5663,16 @@ def handle_mouse_click(pos):
                         play_ic_gif_at(row, col)
                     except Exception:
                         pass
+                    # Show short telop informing player the piece is frozen (same area as other notices)
+                    try:
+                        msg = "凍結しているため動けません"
+                        game.log.append(msg)
+                        notice_msg = msg
+                        notice_until = _ct_time.time() + 1.0
+                    except Exception:
+                        pass
+                    # Do not select a frozen piece
+                    return
             except Exception:
                 pass
             if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
@@ -5443,12 +5836,28 @@ def handle_mouse_click(pos):
                                     game.log.append("⚠ 黒キングがチェック状態です！")
                             except Exception:
                                 pass
+                            # 白の手番が終了したため、白に適用されている時間制限付き状態を減衰させる
+                            # （例: 氷結や封鎖などのターン消費をここで進める）
+                            try:
+                                game.decay_statuses('white')
+                            except Exception:
+                                pass
                     else:
                         chess_current_turn = 'white'
                         # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）
                         try:
                             if is_in_check_for_display(chess.pieces, 'white'):
                                 game.log.append("⚠ 白キングがチェック状態です！")
+                        except Exception:
+                            pass
+                        # 2ターン目以降: プレイヤーの手番になったらテロップ表示（Tキー不要でテロップのみ）
+                        try:
+                            if getattr(game, 'turn', 0) >= 1 and not getattr(game, 'turn_active', False) and getattr(game, 'pending', None) is None:
+                                try:
+                                    turn_telop_msg = "YOUR TURN"
+                                    turn_telop_until = _ct_time.time() + 1.0
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                     # クリア
@@ -5461,6 +5870,23 @@ def handle_mouse_click(pos):
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:
+                # If the player clicked a square that is blocked for their color, show a notice
+                try:
+                    bmap = getattr(game, 'blocked_tiles', {}) or {}
+                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                    if (row, col) in bmap:
+                        owner = bowner.get((row, col))
+                        if owner == chess_current_turn:
+                            msg = "灼熱状態なので通れません"
+                            game.log.append(msg)
+                            try:
+                                notice_msg = msg
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
+                            return
+                except Exception:
+                    pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel
                 def _same_piece(a, b):
                     if a is None or b is None:
@@ -5606,6 +6032,20 @@ def main_loop():
             else:
                 globals()['black_turn_index'] = globals().get('black_turn_index', 0) + 1
             globals()['last_turn_color'] = chess_current_turn
+
+            # --- 追加: 白番に戻った際のテロップ表示（2ターン目以降） ---
+            try:
+                # 条件: 色が白に変わった、プレイヤーが既に1ターン以上開始している、
+                # プロモーション選択や保留中のUIが無く、テロップを出すべきタイミング
+                if chess_current_turn == 'white' and getattr(game, 'turn', 0) >= 1:
+                    if getattr(chess, 'promotion_pending', None) is None and getattr(game, 'pending', None) is None:
+                        try:
+                            turn_telop_msg = "YOUR TURN"
+                            turn_telop_until = _ct_time.time() + 1.0
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
             # 同時チェック中なら、その色の期限判定を行う
             if globals().get('simul_check_active', False):
@@ -5915,6 +6355,28 @@ def main_loop():
                     # from being decremented immediately when the AI finishes its move.
                     try:
                         game.decay_statuses('black')
+                    except Exception:
+                        pass
+
+                    # 自動ターン開始（2ターン目以降）
+                    # プレイヤーが既に1ターン以上開始している場合、AIの手が終わったら
+                    # 自動でプレイヤーのターン開始とドローを行います（Tキー不要）。
+                    try:
+                        # game.turn は start_turn() が呼ばれると 1,2,... と増えるため
+                        # ここでは既にプレイヤーが1ターン以上開始している場合のみ自動開始する。
+                        if getattr(game, 'turn', 0) >= 1:
+                            # pending がある、または既に turn_active の場合は自動開始しない
+                            if getattr(game, 'pending', None) is None and not getattr(game, 'turn_active', False):
+                                try:
+                                    # Use the centralized helper so telop is shown consistently
+                                    start_player_turn()
+                                    try:
+                                        game.log.append("AI終了: 自動でターン開始と1枚ドローを行いました。")
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    # 失敗してもゲームループを壊さない
+                                    pass
                     except Exception:
                         pass
 

@@ -6408,7 +6408,13 @@ def main_loop():
                 import random
                 # Check for iron wall on the target (ai_player) which blocks one incoming effect
                 try:
-                    if getattr(ai_player, 'iron_wall_active', False):
+                    source_color = game.pending.info.get('source_color') if game.pending and isinstance(game.pending.info, dict) else None
+                    # Only block if the effect is incoming (source != target)
+                    if source_color is not None and source_color == 'black':
+                        # effect originated from AI targeting AI -> shouldn't happen, but skip blocking
+                        pass
+                    # target is ai_player (black)
+                    if getattr(ai_player, 'iron_wall_active', False) and source_color != 'black':
                         ai_player.iron_wall_active = False
                         game.log.append("『鉄壁』が効果を防いだ（相手の『ハンです☆』）。")
                         game.pending = None
@@ -6442,7 +6448,9 @@ def main_loop():
 
                 # If target has iron_wall_active, block the effect entirely
                 try:
-                    if target_player is not None and getattr(target_player, 'iron_wall_active', False):
+                    source_color = game.pending.info.get('source_color') if game.pending and isinstance(game.pending.info, dict) else None
+                    if target_player is not None and getattr(target_player, 'iron_wall_active', False) and source_color != target_color:
+                        # Only consume iron_wall if the effect is incoming (origin color != target color)
                         target_player.iron_wall_active = False
                         game.log.append("『鉄壁』が効果を防いだ（命がけのギャンブル）。")
                         game.pending = None

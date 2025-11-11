@@ -24,19 +24,8 @@ pygame.init()
 # 画面設定
 W, H = 1200, 800
 # Allow the user to resize/minimize/maximize the game window
-# If another module (e.g. main launcher) already created a display surface,
-# reuse it to avoid creating multiple windows / stealing events when this
-# module is imported rather than executed directly.
-existing_surf = None
-try:
-    existing_surf = pygame.display.get_surface()
-except Exception:
-    existing_surf = None
-if existing_surf:
-    screen = existing_surf
-else:
-    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-    pygame.display.set_caption("Chess-Card-Battle β")
+screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+pygame.display.set_caption("Chess-Card-Battle β")
 clock = pygame.time.Clock()
 
 # Base UI resolution used for consistent scaling between windowed and fullscreen
@@ -69,15 +58,13 @@ ai_consecutive_turns = 0
 # When True, the next ai_make_move() call is a continuation of an existing AI
 # '迅雷' extra-turn and should NOT perform start-of-turn effects (draw/PP reset).
 ai_continuation = False
+
 show_grave = False
 show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
-# （注意）従来の固定変数 `opponent_hand_count` は使わず、
-# UI 表示時に `get_opponent_hand_count()` を呼んで実際の枚数を参照します。
-
 # ---- BGM 設定 (UI から変更可能) ----
 # BGM を再生するかどうか (設定画面で切替)
 bgm_enabled = True
@@ -138,11 +125,61 @@ def build_game_from_card_names(names):
     try:
         proto_deck = make_rule_cards_deck()
         proto_map = {c.name: c for c in proto_deck.cards}
+        # build a normalization map for prototypes to improve matching robustness
+        def _norm_key(s: str) -> str:
+            try:
+                ss = str(s)
+            except Exception:
+                ss = s
+            ss = ss.replace('\u3000', ' ')
+            ss = ' '.join(ss.split())
+            return ss
+        proto_map_norm = {}
+        for c in proto_deck.cards:
+            k = _norm_key(c.name)
+            proto_map_norm[k] = c
+            proto_map_norm[k.replace(' ', '')] = c
 
         pool = []
+        # allow some cards that are build-only (not included in make_rule_cards_deck)
+        extra_map = {}
+        try:
+            import card_core as cc
+            extra_map = {
+                '命がけのギャンブル': getattr(cc, 'eff_risky_gamble', None),
+                '負けるわけないだろwww': getattr(cc, 'eff_no_lose', None),
+                '鉄壁': getattr(cc, 'eff_iron_wall', None),
+                'ハンです☆': getattr(cc, 'eff_hand_discard', None),
+            }
+        except Exception:
+            extra_map = {}
+
+        def _norm(n: str) -> str:
+            # normalize whitespace and common fullwidth space variants
+            try:
+                s = str(n)
+            except Exception:
+                s = n
+            s = s.replace('\u3000', ' ')  # fullwidth space -> normal
+            # collapse multiple whitespace and strip ends
+            s = ' '.join(s.split())
+            return s
+
+        unmatched = []
         for nm in names:
-            p = proto_map.get(nm)
+            norm_nm = _norm(nm)
+            # prefer normalized prototype lookup to avoid mismatch
+            p = proto_map.get(nm) or proto_map.get(norm_nm) or proto_map.get(norm_nm.replace(' ', '')) or proto_map_norm.get(norm_nm) or proto_map_norm.get(norm_nm.replace(' ', ''))
             if p is None:
+                # try extra_map fallback with normalized keys
+                eff = extra_map.get(nm) or extra_map.get(norm_nm) or extra_map.get(norm_nm.replace(' ', ''))
+                if eff:
+                    try:
+                        pool.append(Card(norm_nm, 3 if norm_nm == '命がけのギャンブル' else (4 if norm_nm == '負けるわけないだろwww' else 2), eff))
+                        continue
+                    except Exception:
+                        pass
+                unmatched.append(nm)
                 continue
             try:
                 # clone prototype (best-effort)
@@ -153,11 +190,48 @@ def build_game_from_card_names(names):
                 except Exception:
                     continue
 
+        # debug: report unmatched names and how many matched
+        try:
+            print(f"DEBUG: build_game_from_card_names - unmatched={unmatched}, matched_count={len(pool)}")
+            print(f"DEBUG: pool sample names={[getattr(c,'name',None) for c in pool[:20]]}")
+        except Exception:
+            pass
+
         if not pool:
+            print(f"DEBUG: build_game_from_card_names - no pool built from names, unmatched={unmatched if 'unmatched' in locals() else []}")
             deck = build_deck_for_mode('custom')
         else:
-            from .card_core import Deck
+            # Import Deck robustly: prefer absolute import (script mode),
+            # fall back to relative import (package mode).
+            try:
+                from card_core import Deck
+            except Exception:
+                try:
+                    from .card_core import Deck
+                except Exception as imp_e:
+                    print(f"DEBUG: failed to import Deck from card_core: {imp_e}")
+                    raise
+            try:
+                types_info = [type(c).__name__ for c in pool[:8]]
+                print(f"DEBUG: pool types sample={types_info}")
+            except Exception:
+                pass
             deck = Deck(pool)
+            try:
+                deck_names_before = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                print(f"DEBUG: deck names before shuffle={deck_names_before}")
+                sys.stdout.flush()
+            except Exception:
+                pass
+            try:
+                deck.shuffle()
+                deck_names_after = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                print(f"DEBUG: deck names after shuffle={deck_names_after}")
+                sys.stdout.flush()
+            except Exception:
+                # if shuffle fails, continue with unshuffled deck
+                pass
+            # debug dump to file disabled by request — do not write debug_deck_dump.txt
 
         deck.shuffle()
         player = PlayerState(deck=deck)
@@ -166,8 +240,26 @@ def build_game_from_card_names(names):
             g.setup_battle()
         except Exception:
             pass
+        # debug: print initial hand and deck top after setup_battle
+        try:
+            hand_names = [c.name for c in g.player.hand.cards]
+            deck_cards = getattr(g.player.deck, 'cards', [])
+            deck_count = len(deck_cards)
+            top_names = [c.name for c in deck_cards[:8]]
+            print(f"DEBUG: after setup_battle hand={hand_names} deck_remaining={deck_count} top={top_names}")
+        except Exception:
+            pass
         return g
-    except Exception:
+    except Exception as e:
+        # If anything unexpected happens during custom-game construction,
+        # print the full traceback so we can see why the builder fell back
+        try:
+            import traceback
+            print(f"DEBUG: build_game_from_card_names unexpected exception: {e}")
+            traceback.print_exc()
+        except Exception:
+            # best-effort: still return a safe fallback game
+            print(f"DEBUG: build_game_from_card_names unexpected exception (no traceback available): {e}")
         return new_game_with_mode('custom')
 
 
@@ -337,40 +429,34 @@ def show_deck_choice_modal(screen):
             if ev.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                # default to fixed if user cancels
-                DECK_MODE = 'fixed'
-                return
+                # ユーザーがEscを押したら、前の画面に戻る（何も選択しない）
+                return False
             if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1) or ev.type == pygame.FINGERDOWN:
                 if ev.type == pygame.MOUSEBUTTONDOWN:
                     mx, my = ev.pos
                 else:
                     mx = int(ev.x * W)
                     my = int(ev.y * H)
+                # close icon (top-right of modal) — screen coordinates
+                close_rect = pygame.Rect(x + w - 34, y + 8, 26, 26)
+                if close_rect.collidepoint(mx, my):
+                    return False
                 # fixed deck
                 if left_x <= mx <= left_x + btn_w and by <= my <= by + btn_h:
                     DECK_MODE = 'fixed'
-                    return
+                    return True
                 # created deck
                 if right_x <= mx <= right_x + btn_w and by <= my <= by + btn_h:
+                    # User chose created decks. Do not open the extra modal overlay;
+                    # instead mark DECK_MODE as 'custom' and return so the main
+                    # deck-list screen remains interactive and in front.
                     DECK_MODE = 'custom'
-                    # Open the read-only custom deck selection menu (do not allow editing).
-                    try:
-                        show_custom_deck_selection(screen)
-                    except Exception as e:
-                        # Make exceptions visible so we can debug why the menu
-                        # sometimes doesn't appear. Fall back to the simple list.
-                        print("Error in show_custom_deck_selection:", e, file=sys.stderr)
-                        traceback.print_exc()
-                        try:
-                            show_deck_modal(screen)
-                        except Exception as e2:
-                            print("Error in show_deck_modal fallback:", e2, file=sys.stderr)
-                            traceback.print_exc()
-                    return
+                    return True
 
         # draw overlay/modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,160))
+        # make overlay darker so underlying UI (前の画面) is not visible/clickable
+        overlay.fill((0,0,0,220))
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
@@ -397,6 +483,14 @@ def show_deck_choice_modal(screen):
         c2 = SMALL.render("カード数: 20 / 20", True, (80,80,80))
         surf.blit(c1, (custom_rect.x + (btn_w - c1.get_width())//2, custom_rect.y + 12))
         surf.blit(c2, (custom_rect.x + (btn_w - c2.get_width())//2, custom_rect.y + 40))
+
+        # close icon at top-right of modal
+        pygame.draw.rect(surf, (200,200,200), (w-34, 8, 26, 26))
+        pygame.draw.rect(surf, (80,80,80), (w-34, 8, 26, 26), 1)
+        try:
+            surf.blit(SMALL.render("×", True, (60,60,60)), (w-30, 6))
+        except Exception:
+            pass
 
         screen.blit(surf, (x,y))
         pygame.display.flip()
@@ -1097,13 +1191,23 @@ def show_start_screen():
                     CPU_DIFFICULTY = event.key - pygame.K_0
                     # After difficulty selection, let user pick deck mode
                     try:
-                        show_deck_choice_modal(screen)
+                        selected = show_deck_choice_modal(screen)
                     except Exception:
-                        pass
-                    # initialize game and AI according to chosen deck mode
+                        selected = False
+                    # if the user canceled (Esc/×), don't start the game; keep showing menu
+                    if not selected:
+                        continue
+                    # if custom decks were selected, show deck list to pick which deck to use
                     try:
-                        globals()['game'] = new_game_with_mode(DECK_MODE)
-                        globals()['ai_player'] = build_ai_player(DECK_MODE)
+                        if DECK_MODE == 'custom':
+                            started = show_deck_modal(screen, battle_select_mode=True)
+                            if started:
+                                return
+                            else:
+                                continue
+                        else:
+                            globals()['game'] = new_game_with_mode(DECK_MODE)
+                            globals()['ai_player'] = build_ai_player(DECK_MODE)
                     except Exception:
                         pass
                     return
@@ -1128,12 +1232,26 @@ def show_start_screen():
                         CPU_DIFFICULTY = val
                         # deck choice modal
                         try:
-                            show_deck_choice_modal(screen)
+                            selected = show_deck_choice_modal(screen)
                         except Exception:
-                            pass
+                            selected = False
+                        if not selected:
+                            continue
                         try:
-                            globals()['game'] = new_game_with_mode(DECK_MODE)
-                            globals()['ai_player'] = build_ai_player(DECK_MODE)
+                            if DECK_MODE == 'custom':
+                                started = show_deck_modal(screen, battle_select_mode=True)
+                                if started:
+                                    return
+                                else:
+                                    continue
+                            else:
+                                globals()['game'] = new_game_with_mode(DECK_MODE)
+                                globals()['ai_player'] = build_ai_player(DECK_MODE)
+                                try:
+                                    gtmp = globals().get('game')
+                                    print(f"DEBUG: global game set (start_screen) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                         return
@@ -1297,113 +1415,148 @@ def save_decks_to_file(decks):
     except Exception as e:
         print(f"デッキ保存エラー: {e}")
 
-def show_deck_modal(screen):
-    """デッキリスト画面（3x3グリッド表示）"""
-    decks = load_saved_decks()
-    clock = pygame.time.Clock()
-    
+def show_deck_modal(screen, battle_select_mode=False):
+    """デッキリスト画面（3x3グリッド表示）。
+    既存の saved_decks.json を読み込み、9スロットを表示します。
+    空スロットは「作成」ボタンでデッキ作成へ移動。既存デッキをクリックすると
+    小さなアクションモーダルを開きます。
+    """
+    # Present the deck-selection screen as a fullscreen view (non-blocking overlay)
+    clk = pygame.time.Clock()
     while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+        decks = load_saved_decks()
+
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                mx, my = event.pos
-                
-                # 戻るボタン
-                back_rect = pygame.Rect(20, H - 70, 120, 50)
-                if back_rect.collidepoint(mx, my):
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # Back button click (画面下部の「戻る」)
+                back_chk = pygame.Rect(20, H - 70, 120, 50)
+                if back_chk.collidepoint(mx, my):
                     return
-                
-                # 3x3グリッドのクリック判定
-                grid_size = 240
-                spacing = 30
-                start_x = (W - (grid_size * 3 + spacing * 2)) // 2
-                start_y = 120
-                
-                for row in range(3):
-                    for col in range(3):
-                        slot_idx = row * 3 + col
-                        slot_x = start_x + col * (grid_size + spacing)
-                        slot_y = start_y + row * (grid_size + spacing)
-                        slot_rect = pygame.Rect(slot_x, slot_y, grid_size, grid_size)
-                        
-                        if slot_rect.collidepoint(mx, my):
-                            if decks[slot_idx] is None:
-                                # デッキ作成
-                                new_deck = show_deck_editor(screen, None, slot_idx)
-                                if new_deck:
-                                    decks[slot_idx] = new_deck
-                                    save_decks_to_file(decks)
-                            else:
-                                # デッキ編集/削除選択
-                                action = show_deck_options(screen, decks[slot_idx])
-                                if action == 'edit':
-                                    edited = show_deck_editor(screen, decks[slot_idx], slot_idx)
-                                    if edited:
-                                        decks[slot_idx] = edited
-                                        save_decks_to_file(decks)
-                                elif action == 'delete':
-                                    decks[slot_idx] = None
-                                    save_decks_to_file(decks)
-                            break
-        
-        # 背景
-        screen.fill((240, 235, 230))
-        
-        # タイトル
-        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 36, bold=True)
-        title = title_font.render("デッキリスト", True, (30, 30, 30))
-        screen.blit(title, ((W - title.get_width()) // 2, 40))
-        
-        # 3x3グリッド描画
-        grid_size = 240
-        spacing = 30
-        start_x = (W - (grid_size * 3 + spacing * 2)) // 2
-        start_y = 120
-        
-        slot_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
-        for row in range(3):
-            for col in range(3):
-                slot_idx = row * 3 + col
-                slot_x = start_x + col * (grid_size + spacing)
-                slot_y = start_y + row * (grid_size + spacing)
-                
-                # スロット枠
-                slot_rect = pygame.Rect(slot_x, slot_y, grid_size, grid_size)
-                if decks[slot_idx] is None:
-                    # 空きスロット
-                    pygame.draw.rect(screen, (200, 200, 200), slot_rect)
-                    pygame.draw.rect(screen, (100, 100, 100), slot_rect, 3)
-                    text = slot_font.render("デッキ作成", True, (100, 100, 100))
-                    screen.blit(text, (slot_x + (grid_size - text.get_width()) // 2, 
-                                      slot_y + (grid_size - text.get_height()) // 2))
+                # compute grid geometry (centered)
+                w = 720; h = 480
+                x = (W - w)//2; y = (H - h)//2
+                slot_w = (w - 40) // 3
+                slot_h = (h - 80) // 3
+                rel_x = mx - x - 10
+                rel_y = my - y - 40
+                if rel_x < 0 or rel_y < 0:
+                    continue
+                col = rel_x // (slot_w + 10)
+                row = rel_y // (slot_h + 10)
+                if col < 0 or col > 2 or row < 0 or row > 2:
+                    continue
+                slot_idx = int(row * 3 + col)
+                if slot_idx < 0 or slot_idx >= len(decks):
+                    continue
+                if decks[slot_idx]:
+                    # existing deck -> either action modal or battle-select flow
+                    if battle_select_mode:
+                        # ask user to confirm starting battle with this deck
+                        start = show_deck_battle_confirm(screen, decks[slot_idx], slot_idx)
+                        # reload decks in case of edits
+                        decks = load_saved_decks()
+                        if start:
+                            # user chose to start battle with this deck
+                            names = []
+                            if decks[slot_idx]:
+                                cards_field = decks[slot_idx].get('cards', [])
+                                # saved format may be list of card-name strings or list of dicts
+                                if isinstance(cards_field, list):
+                                    if cards_field and isinstance(cards_field[0], dict):
+                                        names = [str(c.get('name')) for c in cards_field if c and 'name' in c]
+                                    else:
+                                        names = [str(x) for x in cards_field]
+                            try:
+                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                if names and 'build_game_from_card_names' in globals():
+                                    globals()['game'] = build_game_from_card_names(names)
+                                else:
+                                    globals()['game'] = new_game_with_mode('custom')
+                                globals()['ai_player'] = build_ai_player('custom')
+                                # debug: print resulting deck composition if possible
+                                try:
+                                    g = globals().get('game')
+                                    if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
+                                        cards = getattr(g.player.deck, 'cards', None)
+                                        if cards is not None:
+                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                except Exception as _e:
+                                    print(f"DEBUG: error inspecting created game: {_e}")
+                            except Exception as e:
+                                print(f"DEBUG: exception when creating game from names: {e}")
+                                # fallback to a safe default
+                                globals()['game'] = new_game_with_mode('custom')
+                                globals()['ai_player'] = build_ai_player('custom')
+                            return True
+                        continue
+                    else:
+                        # normal browsing: show small action modal
+                        res = show_deck_action_modal(screen, decks[slot_idx], slot_idx)
+                        decks = load_saved_decks()
+                        continue
                 else:
-                    # デッキあり
-                    pygame.draw.rect(screen, (220, 240, 255), slot_rect)
-                    pygame.draw.rect(screen, (60, 100, 160), slot_rect, 4)
-                    deck_name = decks[slot_idx].get('name', f'デッキ{slot_idx + 1}')
-                    text = slot_font.render(deck_name, True, (30, 30, 30))
-                    screen.blit(text, (slot_x + (grid_size - text.get_width()) // 2,
-                                      slot_y + 20))
-                    
-                    # カード枚数表示
-                    card_count = len(decks[slot_idx].get('cards', []))
-                    count_text = SMALL.render(f"{card_count}枚", True, (60, 60, 60))
-                    screen.blit(count_text, (slot_x + (grid_size - count_text.get_width()) // 2,
-                                            slot_y + grid_size - 30))
-        
-        # 戻るボタン
+                    # empty slot -> open editor to create new deck
+                    new_deck = show_deck_editor(screen, None, slot_idx)
+                    if new_deck:
+                        decks[slot_idx] = new_deck
+                        save_decks_to_file(decks)
+                    continue
+
+        # draw full-screen deck grid
+        screen.fill((240, 235, 230))
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 36, bold=True)
+        title = title_font.render("作成デッキを選択してください", True, (30,30,30))
+        screen.blit(title, ((W - title.get_width()) // 2, 24))
+
+        w = 720; h = 480
+        x = (W - w)//2; y = (H - h)//2
+        slot_w = (w - 40) // 3
+        slot_h = (h - 80) // 3
+        sx = x + 10
+        sy = y + 40
+        idx = 0
+        slot_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+        for r in range(3):
+            for c in range(3):
+                rx = sx + c * (slot_w + 10)
+                ry = sy + r * (slot_h + 10)
+                rect = pygame.Rect(rx, ry, slot_w, slot_h)
+                # 既存デッキは青系で、未作成スロットはグレーで表示
+                deck = decks[idx] if idx < len(decks) else None
+                if deck:
+                    # 背景は薄い青、枠は濃い青
+                    pygame.draw.rect(screen, (220, 240, 255), rect)
+                    pygame.draw.rect(screen, (60, 100, 160), rect, 4)
+                    nm = deck.get('name', f'デッキ{idx+1}')
+                    txt = SMALL.render(nm, True, (30,30,30))
+                    screen.blit(txt, (rect.x + 12, rect.y + 12))
+                    cnt = ''
+                    if 'cards' in deck:
+                        cnt = f"{len(deck['cards'])} 枚"
+                    if cnt:
+                        ctxt = SMALL.render(cnt, True, (60,60,60))
+                        screen.blit(ctxt, (rect.right - ctxt.get_width() - 8, rect.y + 12))
+                else:
+                    pygame.draw.rect(screen, (245,245,250), rect)
+                    pygame.draw.rect(screen, (80,80,80), rect, 3)
+                    screen.blit(SMALL.render("デッキ作成", True, (100,100,100)), (rect.x + (rect.w - 100)//2, rect.y + (rect.h - 24)//2))
+                idx += 1
+
+        # back button
         back_rect = pygame.Rect(20, H - 70, 120, 50)
         pygame.draw.rect(screen, (200, 200, 200), back_rect)
         pygame.draw.rect(screen, (80, 80, 80), back_rect, 3)
         back_text = FONT.render("戻る", True, (30, 30, 30))
         screen.blit(back_text, (back_rect.x + (back_rect.width - back_text.get_width()) // 2,
                                back_rect.y + (back_rect.height - back_text.get_height()) // 2))
-        
+
         pygame.display.flip()
-        clock.tick(30)
+        clk.tick(30)
 
 
 def show_deck_options(screen, deck):
@@ -1467,6 +1620,91 @@ def show_deck_options(screen, deck):
         screen.blit(dialog_surf, (dialog_x, dialog_y))
         pygame.display.flip()
         clock.tick(30)
+
+
+def show_deck_battle_confirm(screen, deck, slot_idx):
+    """Confirm dialog: ask the user whether to start battle with this deck.
+
+    Returns True if user chose to start battle, False otherwise.
+    """
+    clk = pygame.time.Clock()
+    w, h = 560, 240
+    x = (W - w)//2
+    y = (H - h)//2
+    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return False
+                if ev.key == pygame.K_y:
+                    return True
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # compute local coords
+                if not (x <= mx <= x + w and y <= my <= y + h):
+                    return False
+                lx = mx - x
+                ly = my - y
+                # buttons
+                btn_w = 160
+                btn_h = 48
+                gap = 24
+                bx = (w - (btn_w*2 + gap)) // 2
+                by = h - 80
+                confirm_rect = pygame.Rect(bx, by, btn_w, btn_h)
+                start_rect = pygame.Rect(bx + btn_w + gap, by, btn_w, btn_h)
+                # close icon (inside modal, top-right)
+                close_rect = pygame.Rect(w-34, 8, 26, 26)
+                if confirm_rect.collidepoint(lx, ly):
+                    # show deck contents
+                    show_deck_contents_overlay(screen, deck)
+                    continue
+                if close_rect.collidepoint(lx, ly):
+                    return False
+                if start_rect.collidepoint(lx, ly):
+                    return True
+
+        # draw
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0,160))
+        screen.blit(overlay, (0,0))
+        box = pygame.Surface((w, h))
+        box.fill((245,245,250))
+        pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
+        title = title_font.render("このデッキでバトルしますか？", True, (30,30,30))
+        box.blit(title, (20, 18))
+
+        # buttons: デッキ確認, バトルスタート
+        btn_w = 160
+        btn_h = 48
+        gap = 24
+        bx = (w - (btn_w*2 + gap)) // 2
+        by = h - 80
+        confirm_rect = pygame.Rect(bx, by, btn_w, btn_h)
+        start_rect = pygame.Rect(bx + btn_w + gap, by, btn_w, btn_h)
+        pygame.draw.rect(box, (200,220,255), confirm_rect)
+        pygame.draw.rect(box, (200,255,200), start_rect)
+        # close icon at top-right of modal
+        pygame.draw.rect(box, (200,200,200), (w-34, 8, 26, 26))
+        pygame.draw.rect(box, (80,80,80), (w-34, 8, 26, 26), 1)
+        try:
+            box.blit(SMALL.render("×", True, (60,60,60)), (w-30, 6))
+        except Exception:
+            pass
+        pygame.draw.rect(box, (80,80,80), confirm_rect, 2)
+        pygame.draw.rect(box, (80,80,80), start_rect, 2)
+        t_confirm = SMALL.render("デッキ確認", True, (30,30,30))
+        t_start = SMALL.render("バトルスタート", True, (30,30,30))
+        box.blit(t_confirm, (confirm_rect.x + (btn_w - t_confirm.get_width())//2, confirm_rect.y + (btn_h - t_confirm.get_height())//2))
+        box.blit(t_start, (start_rect.x + (btn_w - t_start.get_width())//2, start_rect.y + (btn_h - t_start.get_height())//2))
+
+        screen.blit(box, (x, y))
+        pygame.display.flip()
+        clk.tick(30)
 
 
 def show_deck_editor(screen, existing_deck, slot_idx):
@@ -1835,14 +2073,25 @@ def show_deck_modal_old(screen):
 
 
 def show_custom_deck_selection(screen):
-    """Display a read-only menu of available custom decks; selecting one
-    sets the game's deck to that selection (DECK_MODE='custom').
+    """保存された作成デッキを一覧表示して選択する画面。
+    saved_decks.json に保存されたデッキ（存在するもの）を表示し、
+    選択されるとそのデッキでゲームを開始します。
+    作成済みデッキがない場合は「作る」ボタンでデッキ作成画面へ移動できます。
     """
+    # Per UX request: do not show the old blocking custom-deck selection modal.
+    # Keep the background deck list interactive and topmost.
+    return
+
     global DECK_MODE
     clk = pygame.time.Clock()
-    decks = list_custom_decks() if 'list_custom_decks' in globals() else []
-    if not decks:
-        decks = ["作成デッキ(デフォルト)"]
+
+    # saved_decks に格納されたデッキ群（9スロット）を読み込む
+    saved = load_saved_decks()
+    # 表示用の (slot_idx, name) リストを作る（None のスロットは除外）
+    choices = []
+    for i, d in enumerate(saved):
+        if d:
+            choices.append((i, d.get('name', f'デッキ{i+1}')))
 
     # Flush the click/touch that opened the modal so it doesn't immediately
     # register here and cause an accidental selection.
@@ -1878,32 +2127,64 @@ def show_custom_deck_selection(screen):
                     continue
                 rel_y = my - start_y
                 idx = rel_y // (entry_h + pad)
-                if 0 <= idx < len(decks):
-                    sel = decks[idx]
-                    if sel == "作成デッキ(デフォルト)":
+                if 0 <= idx < max(1, len(choices)):
+                    # choices が空ならメッセージ領域のボタン（作る/戻る）を処理
+                    if not choices:
+                        # ボタン領域を計算
+                        btn_w = 120
+                        make_rect = pygame.Rect(x + 80, y + h - 90, btn_w, 50)
+                        back_rect = pygame.Rect(x + w - 200, y + h - 90, btn_w, 50)
+                        if make_rect.collidepoint(mx, my):
+                            # デッキ作成画面（グリッド）へ移動
+                            show_deck_modal(screen)
+                            # 再読み込み
+                            saved = load_saved_decks()
+                            choices = [(i, d.get('name', f'デッキ{i+1}')) for i, d in enumerate(saved) if d]
+                            continue
+                        if back_rect.collidepoint(mx, my):
+                            return
+                        continue
+
+                    # choices から選択されたスロットを特定
+                    if idx < len(choices):
+                        slot_idx = choices[idx][0]
+                        deck = saved[slot_idx]
+                        # deck のカード名リストを取得。保存形式がオブジェクト一覧の場合は名前列に変換する
+                        names = None
+                        if deck:
+                            cards_field = deck.get('cards')
+                            if isinstance(cards_field, list):
+                                if cards_field and isinstance(cards_field[0], dict):
+                                    names = [str(c.get('name')) for c in cards_field if c and 'name' in c]
+                                else:
+                                    names = [str(x) for x in cards_field]
                         DECK_MODE = 'custom'
-                        globals()['game'] = new_game_with_mode(DECK_MODE)
-                        globals()['ai_player'] = build_ai_player(DECK_MODE)
-                        return
-                    names = None
-                    if 'load_custom_deck_by_name' in globals():
-                        names = load_custom_deck_by_name(sel)
-                    if names is None:
-                        DECK_MODE = 'custom'
-                        globals()['game'] = new_game_with_mode(DECK_MODE)
-                        globals()['ai_player'] = build_ai_player(DECK_MODE)
-                        return
-                    DECK_MODE = 'custom'
-                    try:
-                        if 'build_game_from_card_names' in globals():
-                            globals()['game'] = build_game_from_card_names(names)
-                        else:
+                        # ゲーム作成ロジックは既存の関数を再利用（存在確認）
+                        try:
+                            print(f"DEBUG: selection modal starting battle, names={names}")
+                            if names and 'build_game_from_card_names' in globals():
+                                globals()['game'] = build_game_from_card_names(names)
+                            else:
+                                globals()['game'] = new_game_with_mode(DECK_MODE)
+                                globals()['ai_player'] = build_ai_player(DECK_MODE)
+                                try:
+                                    gtmp = globals().get('game')
+                                    print(f"DEBUG: global game set (mouse_start) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                except Exception:
+                                    pass
+                            try:
+                                g = globals().get('game')
+                                if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
+                                    cards = getattr(g.player.deck, 'cards', None)
+                                    if cards is not None:
+                                        print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                            except Exception as _e:
+                                print(f"DEBUG: error inspecting created game: {_e}")
+                        except Exception as e:
+                            print(f"DEBUG: exception when creating game from names: {e}")
                             globals()['game'] = new_game_with_mode(DECK_MODE)
-                        globals()['ai_player'] = build_ai_player(DECK_MODE)
-                    except Exception:
-                        globals()['game'] = new_game_with_mode(DECK_MODE)
-                        globals()['ai_player'] = build_ai_player(DECK_MODE)
-                    return
+                            globals()['ai_player'] = build_ai_player(DECK_MODE)
+                        return
 
         # draw overlay and modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -1917,26 +2198,326 @@ def show_custom_deck_selection(screen):
         surf.blit(title, (20, 12))
 
         ty = 0
-        for i, name in enumerate(decks):
-            ex = pygame.Rect(pad, start_y - y + ty, w - pad*2, entry_h)
-            pygame.draw.rect(surf, (220,220,220), ex)
-            pygame.draw.rect(surf, (70,70,70), ex, 2)
-            ntxt = SMALL.render(name, True, (30,30,30))
-            surf.blit(ntxt, (ex.x + 12, ex.y + (entry_h - ntxt.get_height())//2))
-            cnt_txt = ""
-            if name != "作成デッキ(デフォルト)":
-                if 'load_custom_deck_by_name' in globals():
-                    nms = load_custom_deck_by_name(name)
-                    if nms is not None:
-                        cnt_txt = f"{len(nms)} 枚"
-            else:
-                cnt_txt = "20 枚"
-            if cnt_txt:
-                ctxt = SMALL.render(cnt_txt, True, (80,80,80))
-                surf.blit(ctxt, (ex.right - ctxt.get_width() - 12, ex.y + (entry_h - ctxt.get_height())//2))
-            ty += entry_h + pad
+        if not choices:
+            # 作成済みデッキがない場合の案内表示
+            info = SMALL.render("作成済みのデッキがありません。デッキ作成で新しいデッキを作成してください。", True, (60,60,60))
+            surf.blit(info, (20, 80))
+            # 作る / 戻る ボタン
+            make_rect = pygame.Rect(80, h - 90, 120, 50)
+            back_rect = pygame.Rect(w - 200, h - 90, 120, 50)
+            pygame.draw.rect(surf, (200, 240, 200), make_rect)
+            pygame.draw.rect(surf, (80, 120, 80), make_rect, 3)
+            pygame.draw.rect(surf, (240, 200, 200), back_rect)
+            pygame.draw.rect(surf, (120, 80, 80), back_rect, 3)
+            surf.blit(SMALL.render("作る", True, (30,30,30)), (make_rect.x + 36, make_rect.y + 14))
+            surf.blit(SMALL.render("戻る", True, (30,30,30)), (back_rect.x + 36, back_rect.y + 14))
+        else:
+            for i, (slot_idx, name) in enumerate(choices):
+                ex = pygame.Rect(pad, start_y - y + ty, w - pad*2, entry_h)
+                pygame.draw.rect(surf, (220,220,220), ex)
+                pygame.draw.rect(surf, (70,70,70), ex, 2)
+                ntxt = SMALL.render(name, True, (30,30,30))
+                surf.blit(ntxt, (ex.x + 12, ex.y + (entry_h - ntxt.get_height())//2))
+                # 枚数表示
+                deck = saved[slot_idx]
+                cnt_txt = ""
+                if deck and 'cards' in deck:
+                    cnt_txt = f"{len(deck['cards'])} 枚"
+                if cnt_txt:
+                    ctxt = SMALL.render(cnt_txt, True, (80,80,80))
+                    surf.blit(ctxt, (ex.right - ctxt.get_width() - 12, ex.y + (entry_h - ctxt.get_height())//2))
+                ty += entry_h + pad
 
         screen.blit(surf, (x,y))
+        pygame.display.flip()
+        clk.tick(30)
+
+
+def show_deck_action_modal(screen, deck, slot_idx):
+    """小さな選択モーダルを表示して 'confirm'|'view'|'edit'|None を返す。"""
+    clk = pygame.time.Clock()
+    w, h = 420, 200
+    x = (W - w) // 2
+    y = (H - h) // 2
+    # Use Japanese-capable fonts to avoid tofu (□) when rendering deck names
+    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+    btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 22)
+    deck_name = deck.get('name', f'デッキ{slot_idx+1}')
+
+    # build short preview lines for the deck (first few card names)
+    preview_lines = []
+    for c in deck.get('cards', [])[:8]:
+        if isinstance(c, dict):
+            preview_lines.append(str(c.get('name', '不明')))
+        else:
+            preview_lines.append(str(c))
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return None
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # outside click closes
+                if not (x <= mx <= x + w and y <= my <= y + h):
+                    return None
+
+                # close (×) button
+                close_rect = pygame.Rect(x + w - 34, y + 8, 26, 26)
+                if close_rect.collidepoint(mx, my):
+                    return None
+
+                # buttons: left=edit, mid=view, right=delete
+                btn_w = 110
+                gap = 20
+                bx = x + (w - (btn_w*3 + gap*2)) // 2
+                by = y + h - 70
+                edit_rect = pygame.Rect(bx, by, btn_w, 40)
+                view_rect = pygame.Rect(bx + btn_w + gap, by, btn_w, 40)
+                delete_rect = pygame.Rect(bx + (btn_w + gap)*2, by, btn_w, 40)
+
+                if edit_rect.collidepoint(mx, my):
+                    # open deck editor and save if edited
+                    try:
+                        decks = load_saved_decks()
+                    except Exception:
+                        decks = None
+                    if decks is not None:
+                        edited = show_deck_editor(screen, decks[slot_idx], slot_idx)
+                        if edited:
+                            decks[slot_idx] = edited
+                            save_decks_to_file(decks)
+                    return None
+
+                if view_rect.collidepoint(mx, my):
+                    show_deck_contents_overlay(screen, deck)
+                    continue
+
+                if delete_rect.collidepoint(mx, my):
+                    # confirmation loop
+                    while True:
+                        # draw confirm dialog
+                        confirm_w, confirm_h = 420, 160
+                        cx = x + (w - confirm_w)//2
+                        cy = y + (h - confirm_h)//2
+                        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+                        # darken fully so the background deck list is not visible
+                        overlay.fill((0,0,0,220))
+                        screen.blit(overlay, (0,0))
+
+                        # redraw modal box under confirm
+                        box = pygame.Surface((w, h))
+                        box.fill((250,250,250))
+                        pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
+                        title = title_font.render(deck_name, True, (30,30,30))
+                        box.blit(title, (20, 18))
+                        info = SMALL.render("このデッキをどうしますか？", True, (60,60,60))
+                        box.blit(info, (20,56))
+
+                        # プレビューはこの画面では表示しない（要望により削除）
+
+                        # buttons under modal — ensure they fit inside the box and center text
+                        btn_h = 40
+                        padding = 20
+                        gap2 = 20
+                        max_btn_w = (w - padding*2 - gap2*2) // 3
+                        btn_w2 = min(140, max_btn_w)
+                        bx2 = (w - (btn_w2*3 + gap2*2)) // 2
+                        by2 = h - padding - btn_h
+                        edit_rect_local = pygame.Rect(bx2, by2, btn_w2, btn_h)
+                        view_rect_local = pygame.Rect(bx2 + btn_w2 + gap2, by2, btn_w2, btn_h)
+                        delete_rect_local = pygame.Rect(bx2 + (btn_w2 + gap2)*2, by2, btn_w2, btn_h)
+                        pygame.draw.rect(box, (220,220,255), edit_rect_local)
+                        pygame.draw.rect(box, (200,240,200), view_rect_local)
+                        pygame.draw.rect(box, (255,200,200), delete_rect_local)
+                        pygame.draw.rect(box, (80,80,80), edit_rect_local, 2)
+                        pygame.draw.rect(box, (80,80,80), view_rect_local, 2)
+                        pygame.draw.rect(box, (80,80,80), delete_rect_local, 2)
+                        # center button labels
+                        et = btn_font.render("デッキ編集", True, (30,30,30))
+                        vt = btn_font.render("デッキ詳細", True, (30,30,30))
+                        dt = btn_font.render("デッキ削除", True, (30,30,30))
+                        box.blit(et, (edit_rect_local.x + (btn_w2 - et.get_width())//2, edit_rect_local.y + (btn_h - et.get_height())//2))
+                        box.blit(vt, (view_rect_local.x + (btn_w2 - vt.get_width())//2, view_rect_local.y + (btn_h - vt.get_height())//2))
+                        box.blit(dt, (delete_rect_local.x + (btn_w2 - dt.get_width())//2, delete_rect_local.y + (btn_h - dt.get_height())//2))
+
+                        # draw confirm box
+                        confirm_surf = pygame.Surface((confirm_w, confirm_h))
+                        confirm_surf.fill((250,250,250))
+                        pygame.draw.rect(confirm_surf, (80,80,80), (0,0,confirm_w,confirm_h), 3)
+                        q_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
+                        qtxt = q_font.render("本当にこのデッキを削除しますか？", True, (30,30,30))
+                        confirm_surf.blit(qtxt, ((confirm_w - qtxt.get_width())//2, 20))
+                        yes_rect = pygame.Rect(60, confirm_h - 64, 120, 44)
+                        no_rect = pygame.Rect(confirm_w - 180, confirm_h - 64, 120, 44)
+                        pygame.draw.rect(confirm_surf, (200,255,200), yes_rect)
+                        pygame.draw.rect(confirm_surf, (255,200,200), no_rect)
+                        pygame.draw.rect(confirm_surf, (80,80,80), yes_rect, 2)
+                        pygame.draw.rect(confirm_surf, (80,80,80), no_rect, 2)
+                        confirm_surf.blit(q_font.render("はい (Y)", True, (30,30,30)), (yes_rect.x + 16, yes_rect.y + 10))
+                        confirm_surf.blit(q_font.render("いいえ (N)", True, (30,30,30)), (no_rect.x + 16, no_rect.y + 10))
+
+                        screen.blit(box, (x,y))
+                        screen.blit(confirm_surf, (cx, cy))
+                        pygame.display.flip()
+
+                        # wait for confirm events
+                        done = False
+                        for cev in pygame.event.get():
+                            if cev.type == pygame.QUIT:
+                                pygame.quit(); sys.exit(0)
+                            if cev.type == pygame.KEYDOWN:
+                                if cev.key == pygame.K_y:
+                                    try:
+                                        decks = load_saved_decks()
+                                        decks[slot_idx] = None
+                                        save_decks_to_file(decks)
+                                    except Exception:
+                                        pass
+                                    return None
+                                if cev.key == pygame.K_n or cev.key == pygame.K_ESCAPE:
+                                    done = True
+                                    break
+                            if cev.type == pygame.MOUSEBUTTONDOWN and cev.button == 1:
+                                mx2, my2 = cev.pos
+                                if cx <= mx2 <= cx + confirm_w and cy <= my2 <= cy + confirm_h:
+                                    rx = mx2 - cx
+                                    ry = my2 - cy
+                                    if yes_rect.collidepoint(rx, ry):
+                                        try:
+                                            decks = load_saved_decks()
+                                            decks[slot_idx] = None
+                                            save_decks_to_file(decks)
+                                        except Exception:
+                                            pass
+                                        return None
+                                    if no_rect.collidepoint(rx, ry):
+                                        done = True
+                                        break
+                        if done:
+                            break
+                    # end confirmation loop
+
+        # 描画
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        screen.blit(overlay, (0, 0))
+        box = pygame.Surface((w, h))
+        box.fill((250, 250, 250))
+        pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
+        title = title_font.render(deck_name, True, (30,30,30))
+        box.blit(title, (20, 18))
+        info = SMALL.render("このデッキをどうしますか？", True, (60,60,60))
+        box.blit(info, (20, 56))
+
+        # close icon
+        pygame.draw.rect(box, (200,200,200), (w-34, 8, 26, 26))
+        pygame.draw.rect(box, (80,80,80), (w-34, 8, 26, 26), 1)
+        box.blit(btn_font.render("×", True, (60,60,60)), (w-30, 6))
+
+        # プレビューはこの画面では表示しない（要望により削除）
+
+        # ボタン: 左=デッキ編集, 中=デッキ詳細, 右=デッキ削除（ボタンが箱からはみ出さないように調整）
+        btn_h = 40
+        padding = 20
+        gap = 20
+        max_btn_w = (w - padding*2 - gap*2) // 3
+        btn_w = min(140, max_btn_w)
+        bx = (w - (btn_w*3 + gap*2)) // 2
+        by = h - padding - btn_h
+        edit_rect_local = pygame.Rect(bx, by, btn_w, btn_h)
+        view_rect_local = pygame.Rect(bx + btn_w + gap, by, btn_w, btn_h)
+        delete_rect_local = pygame.Rect(bx + (btn_w + gap)*2, by, btn_w, btn_h)
+        pygame.draw.rect(box, (220, 220, 255), edit_rect_local)
+        pygame.draw.rect(box, (200, 240, 200), view_rect_local)
+        pygame.draw.rect(box, (255, 200, 200), delete_rect_local)
+        pygame.draw.rect(box, (80,80,80), edit_rect_local, 2)
+        pygame.draw.rect(box, (80,80,80), view_rect_local, 2)
+        pygame.draw.rect(box, (80,80,80), delete_rect_local, 2)
+        # center labels
+        et = btn_font.render("デッキ編集", True, (30,30,30))
+        vt = btn_font.render("デッキ詳細", True, (30,30,30))
+        dt = btn_font.render("デッキ削除", True, (30,30,30))
+        box.blit(et, (edit_rect_local.x + (btn_w - et.get_width())//2, edit_rect_local.y + (btn_h - et.get_height())//2))
+        box.blit(vt, (view_rect_local.x + (btn_w - vt.get_width())//2, view_rect_local.y + (btn_h - vt.get_height())//2))
+        box.blit(dt, (delete_rect_local.x + (btn_w - dt.get_width())//2, delete_rect_local.y + (btn_h - dt.get_height())//2))
+
+        screen.blit(box, (x, y))
+        pygame.display.flip()
+        clk.tick(30)
+
+
+def show_deck_contents_overlay(screen, deck):
+    """デッキのカード一覧をダークオーバーレイで表示。外側をクリックすると閉じる。"""
+    clk = pygame.time.Clock()
+    w = min(720, W - 120)
+    h = min(520, H - 120)
+    x = (W - w)//2
+    y = (H - h)//2
+    # Use a Japanese-capable font for the title to avoid garbled text
+    try:
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+    except Exception:
+        title_font = pygame.font.SysFont(None, 28)
+
+    # build card name lines
+    lines = []
+    for c in deck.get('cards', []):
+        if isinstance(c, dict):
+            lines.append(str(c.get('name', '不明')))
+        else:
+            lines.append(str(c))
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # クリックがモーダル外なら閉じる
+                if not (x <= mx <= x + w and y <= my <= y + h):
+                    return
+                # 内部クリック -> ローカル座標で閉じるボタンをチェック
+                lx = mx - x
+                ly = my - y
+                # close icon rect (same as drawn below)
+                if (w - 34) <= lx <= (w - 8) and 8 <= ly <= 34:
+                    return
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                return
+
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        screen.blit(overlay, (0,0))
+
+        box = pygame.Surface((w, h))
+        box.fill((245,245,250))
+        pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
+        title = title_font.render(deck.get('name', 'デッキ'), True, (30,30,30))
+        box.blit(title, (20, 12))
+
+        # close icon inside the modal (top-right)
+        pygame.draw.rect(box, (200,200,200), (w-34, 8, 26, 26))
+        pygame.draw.rect(box, (80,80,80), (w-34, 8, 26, 26), 1)
+        try:
+            box.blit(SMALL.render("×", True, (60,60,60)), (w-30, 6))
+        except Exception:
+            pass
+
+        ty = 48
+        for ln in lines:
+            txt = SMALL.render(ln, True, (30,30,30))
+            box.blit(txt, (20, ty))
+            ty += 24
+            if ty > h - 40:
+                break
+
+        hint = TINY.render("外側をクリックすると閉じる", True, (80,80,80))
+        box.blit(hint, (w - hint.get_width() - 12, h - 28))
+        screen.blit(box, (x, y))
         pygame.display.flip()
         clk.tick(30)
 
@@ -5825,39 +6406,110 @@ def main_loop():
             # ハンです☆: 相手の手札をランダムで墓地に送る
             if game.pending.kind == 'discard_opponent_hand':
                 import random
-                if ai_player.hand.cards:
-                    idx = random.randrange(len(ai_player.hand.cards))
-                    discarded_card = ai_player.hand.cards[idx]
-                    ai_player.hand.remove_at(idx)
-                    ai_player.graveyard.append(discarded_card)
-                    game.log.append(f"『ハンです☆』: 相手の手札から『{discarded_card.name}』をランダムで墓地に送りました。")
-                else:
-                    game.log.append("『ハンです☆』: 相手の手札が空です。")
-                game.pending = None
+                # Check for iron wall on the target (ai_player) which blocks one incoming effect
+                try:
+                    if getattr(ai_player, 'iron_wall_active', False):
+                        ai_player.iron_wall_active = False
+                        game.log.append("『鉄壁』が効果を防いだ（相手の『ハンです☆』）。")
+                        game.pending = None
+                    else:
+                        if ai_player.hand.cards:
+                            idx = random.randrange(len(ai_player.hand.cards))
+                            discarded_card = ai_player.hand.cards[idx]
+                            ai_player.hand.remove_at(idx)
+                            ai_player.graveyard.append(discarded_card)
+                            game.log.append(f"『ハンです☆』: 相手の手札から『{discarded_card.name}』をランダムで墓地に送りました。")
+                        else:
+                            game.log.append("『ハンです☆』: 相手の手札が空です。")
+                        game.pending = None
+                except Exception:
+                    # on error, clear pending to avoid locking UI
+                    game.pending = None
             
             # 命がけのギャンブル: ルーク・キング以外の駒をクイーンに変える
             elif game.pending.kind == 'gamble_promote':
                 target_color = game.pending.info.get('target_color', 'white')
                 success = game.pending.info.get('success', False)
-                
+
                 promoted_count = 0
-                for piece in chess.pieces:
-                    if piece.color == target_color and piece.kind not in ['K', 'R']:
-                        piece.kind = 'Q'  # クイーンに昇格
-                        promoted_count += 1
-                
+                pieces = getattr(chess, 'pieces', []) or []
+
+                # Determine the target player object so we can honor iron_wall
+                try:
+                    target_player = game.player if target_color == 'white' else ai_player
+                except Exception:
+                    target_player = None
+
+                # If target has iron_wall_active, block the effect entirely
+                try:
+                    if target_player is not None and getattr(target_player, 'iron_wall_active', False):
+                        target_player.iron_wall_active = False
+                        game.log.append("『鉄壁』が効果を防いだ（命がけのギャンブル）。")
+                        game.pending = None
+                        # Skip promotion processing
+                        promoted_count = 0
+                    else:
+                        for piece in pieces:
+                            try:
+                                if isinstance(piece, dict):
+                                    p_color = piece.get('color')
+                                    p_kind = piece.get('kind') or piece.get('name')
+                                    if p_color == target_color and p_kind not in ['K', 'R']:
+                                        # update both name and kind for consistency
+                                        piece['kind'] = 'Q'
+                                        piece['name'] = 'Q'
+                                        promoted_count += 1
+                                else:
+                                    p_color = getattr(piece, 'color', None)
+                                    # some codebase uses .name for piece type
+                                    p_kind = getattr(piece, 'kind', None) or getattr(piece, 'name', None)
+                                    if p_color == target_color and p_kind not in ['K', 'R']:
+                                        # set both attributes where possible so rendering and checks pick it up
+                                        try:
+                                            setattr(piece, 'name', 'Q')
+                                        except Exception:
+                                            pass
+                                        try:
+                                            setattr(piece, 'kind', 'Q')
+                                        except Exception:
+                                            try:
+                                                piece.kind = 'Q'
+                                            except Exception:
+                                                pass
+                                        promoted_count += 1
+                            except Exception as perr:
+                                # log per-piece errors but continue
+                                try:
+                                    import traceback
+                                    print('DEBUG: error promoting piece in gamble_promote:')
+                                    traceback.print_exc()
+                                except Exception:
+                                    print(f'DEBUG: error promoting piece: {perr}')
+                                continue
+                except Exception as e:
+                    # If anything unexpected happens during promotion handling, log and clear pending
+                    try:
+                        import traceback
+                        print('DEBUG: exception during gamble_promote overall handling:')
+                        traceback.print_exc()
+                    except Exception:
+                        print(f'DEBUG: exception during gamble_promote overall handling: {e}')
+                    game.pending = None
+                # end of promotion loop / iron_wall handling
+
                 if success:
                     game.log.append(f"『命がけのギャンブル』成功！自分の{promoted_count}個の駒がクイーンに昇格しました！")
                 else:
                     game.log.append(f"『命がけのギャンブル』失敗...相手の{promoted_count}個の駒がクイーンに昇格しました...")
-                
-                # ターンスキップ（プレイヤーの手番を終了）
-                if chess_current_turn == 'white':
-                    chess_current_turn = 'black'
-                    cpu_wait = True
-                    cpu_wait_start = _ct_time.time()
-                    game.log.append("自ターンをスキップします。")
-                
+
+                # ターンスキップは失敗時のみ（要求に基づく変更）
+                if not success:
+                    if chess_current_turn == 'white':
+                        chess_current_turn = 'black'
+                        cpu_wait = True
+                        cpu_wait_start = _ct_time.time()
+                        game.log.append("自ターンをスキップします。")
+
                 game.pending = None
 
         draw_panel()

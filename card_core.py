@@ -831,7 +831,8 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
                 "success": True,
             }
         )
-        return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
+        # 成功時はターンスキップを行わない（UI側で判定）
+        return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。"
     else:
         # 外れ: 相手のルークとキング以外の駒をクイーンに変更
         game.pending = PendingAction(
@@ -841,6 +842,7 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
                 "success": False,
             }
         )
+        # 失敗時はターンスキップ
         return "25%の確率に失敗...相手のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
 
 

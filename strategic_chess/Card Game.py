@@ -4987,6 +4987,11 @@ def handle_mouse_click(pos):
                                     game.log.append("⚠ 黒キングがチェック状態です！")
                             except Exception:
                                 pass
+                            # 白の手番が終了したので、白にかかっている時限効果（氷結など）を減衰させる
+                            try:
+                                game.decay_statuses('white')
+                            except Exception:
+                                pass
                     else:
                         chess_current_turn = 'white'
                         # 黒の手番終了後、白キングがチェック状態か確認（表示用なので凍結駒も含む）

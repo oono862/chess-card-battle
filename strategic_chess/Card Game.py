@@ -71,6 +71,8 @@ gimmick_click_submode = 'click_enlarged'
 # double click support
 last_click_time = 0.0
 last_click_pos = (0, 0)
+# Track the last logical card index that was clicked (None when click wasn't on a hand card)
+last_clicked_card_index = None
 # Increase interval slightly to make double-click detection more forgiving for slower users
 DOUBLE_CLICK_INTERVAL = 0.60
 # Maximum pixel distance between clicks to be considered a double-click
@@ -5072,21 +5074,41 @@ def handle_mouse_click(pos):
         return
 
     # Click timing for double-click detection
-    global last_click_time, last_click_pos
+    # We use a combination of index-based detection (same logical card index
+    # clicked twice within the interval) and the previous position-based
+    # distance test as a fallback. This makes double-clicks robust when the
+    # first click toggles an enlarged overlay which can move pixel coords.
+    global last_click_time, last_click_pos, last_clicked_card_index
     now = _ct_time.time()
     is_double = False
+
+    # Determine if this click hit a thumbnail card and capture its index
+    clicked_target_index = None
+    try:
+        for rect, idx in card_rects:
+            if rect.collidepoint(pos):
+                clicked_target_index = idx
+                break
+    except Exception:
+        # card_rects may not be initialized yet; ignore
+        clicked_target_index = None
+
     try:
         dx = pos[0] - last_click_pos[0]
         dy = pos[1] - last_click_pos[1]
         dist = dx*dx + dy*dy
-        # Use <= for time and distance to be slightly more permissive
-        if now - last_click_time <= DOUBLE_CLICK_INTERVAL and dist <= DOUBLE_CLICK_DIST_SQ:
+        time_ok = (now - last_click_time) <= DOUBLE_CLICK_INTERVAL
+        # Double-click if within time AND either the same logical card index
+        # was clicked twice, or the pixel distance between clicks is small.
+        if time_ok and ((clicked_target_index is not None and clicked_target_index == last_clicked_card_index) or dist <= DOUBLE_CLICK_DIST_SQ):
             is_double = True
     except Exception:
         is_double = False
+
     # Update last click info for next time
     last_click_time = now
     last_click_pos = pos
+    last_clicked_card_index = clicked_target_index
 
     # 1) 最優先: カード拡大の解除または(拡大クリックでの発動)
     if enlarged_card_index is not None and 0 <= enlarged_card_index < len(getattr(game, 'player').hand.cards):

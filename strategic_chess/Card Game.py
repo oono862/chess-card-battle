@@ -43,7 +43,10 @@ existing_surf = None
 try:
     existing_surf = pygame.display.get_surface()
 except Exception:
+<<<<<<< HEAD
     logger.debug('pygame.display.get_surface() failed, creating new display surface', exc_info=True)
+=======
+>>>>>>> origin/fix/gimmick-duration
     existing_surf = None
 if existing_surf:
     screen = existing_surf
@@ -59,6 +62,8 @@ BASE_UI_H = 800
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
+# Help/operation text: slightly bolder and with more spacing for readability
+HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
 # ゲーム状態
 # NOTE: defer creating the actual game and AI decks until after the
@@ -68,6 +73,21 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 game = None
 # AI placeholder; will be created at game start
 ai_player = None
+
+# Convenience fallback for test imports: when this module is imported by
+# lightweight test scripts (not run as the full UI), some tests expect a
+# `game` object to exist so they can call methods like `start_turn()`.
+# Create a minimal sample game here if one hasn't been created already.
+try:
+    if game is None:
+        try:
+            game = new_game_with_sample_deck()
+        except Exception:
+            # best-effort fallback: leave game as None if creation fails
+            game = None
+except Exception:
+    # swallow any import-time errors to avoid breaking consumers
+    pass
 # ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
 def get_opponent_hand_count():
     try:
@@ -434,6 +454,7 @@ play_bg_surf = None     # 現在のウィンドウサイズに合わせたスケ
 # クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
 confirm_yes_rect = None
 confirm_no_rect = None
+start_turn_rect = None
 grave_label_rect = None
 opponent_hand_rect = None
 grave_card_rects = []
@@ -3358,11 +3379,21 @@ def draw_panel():
     # 右パネル: ヘルプ（簡潔に） - use right panel x so help stays grouped
     help_x = layout['right_panel_x'] + 12
     help_y = layout['board_top']
-    draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
-    help_y += 24
+    # Operation/help header (use bolder font)
+    try:
+        header_s = HELP_FONT.render("操作:", True, (60, 60, 100))
+        screen.blit(header_s, (help_x, help_y))
+    except Exception:
+        draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
+    # increase spacing to improve readability
+    help_y += 36
     for hl in HELP_LINES:  # 全ての操作を表示
-        draw_text(screen, hl, help_x, help_y, (30, 30, 90))
-        help_y += 20
+        try:
+            line_s = HELP_FONT.render(hl, True, (30, 30, 90))
+            screen.blit(line_s, (help_x, help_y))
+        except Exception:
+            draw_text(screen, hl, help_x, help_y, (30, 30, 90))
+        help_y += 32
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']
@@ -5336,6 +5367,16 @@ def handle_mouse_click(pos):
                         play_ic_gif_at(row, col)
                     except Exception:
                         pass
+                    # Show short telop informing player the piece is frozen (same area as other notices)
+                    try:
+                        msg = "凍結しているため動けません"
+                        game.log.append(msg)
+                        notice_msg = msg
+                        notice_until = _ct_time.time() + 1.0
+                    except Exception:
+                        pass
+                    # Do not select a frozen piece
+                    return
             except Exception:
                 pass
             if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
@@ -5499,7 +5540,12 @@ def handle_mouse_click(pos):
                                     game.log.append("⚠ 黒キングがチェック状態です！")
                             except Exception:
                                 pass
+<<<<<<< HEAD
                             # 白の手番が終了したので、白にかかっている時限効果（氷結など）を減衰させる
+=======
+                            # 白の手番が終了したため、白に適用されている時間制限付き状態を減衰させる
+                            # これがないと、AIが白側に付与した封鎖/凍結のターン数が減らず残り続けてしまう。
+>>>>>>> origin/fix/gimmick-duration
                             try:
                                 game.decay_statuses('white')
                             except Exception:
@@ -5522,6 +5568,23 @@ def handle_mouse_click(pos):
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:
+                # If the player clicked a square that is blocked for their color, show a notice
+                try:
+                    bmap = getattr(game, 'blocked_tiles', {}) or {}
+                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                    if (row, col) in bmap:
+                        owner = bowner.get((row, col))
+                        if owner == chess_current_turn:
+                            msg = "灼熱状態なので通れません"
+                            game.log.append(msg)
+                            try:
+                                notice_msg = msg
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
+                            return
+                except Exception:
+                    pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel
                 def _same_piece(a, b):
                     if a is None or b is None:

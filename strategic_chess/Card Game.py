@@ -43,10 +43,7 @@ existing_surf = None
 try:
     existing_surf = pygame.display.get_surface()
 except Exception:
-<<<<<<< HEAD
     logger.debug('pygame.display.get_surface() failed, creating new display surface', exc_info=True)
-=======
->>>>>>> origin/fix/gimmick-duration
     existing_surf = None
 if existing_surf:
     screen = existing_surf
@@ -367,6 +364,8 @@ def show_deck_choice_modal(screen):
     by = y + 80
 
     while True:
+        # get current window size each frame so UI components position correctly
+        win_w, win_h = screen.get_size()
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -1341,6 +1340,8 @@ def show_deck_modal(screen):
     clock = pygame.time.Clock()
     
     while True:
+        # keep current window size in local variables for positioning dialogs/buttons
+        win_w, win_h = screen.get_size()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -1549,6 +1550,8 @@ def show_deck_editor(screen, existing_deck, slot_idx):
     
     # 日本語入力を有効化
     pygame.key.start_text_input()
+    # initialize local window size variables (static analyzer friendly)
+    win_w, win_h = screen.get_size()
     
     while True:
         for event in pygame.event.get():
@@ -3386,14 +3389,16 @@ def draw_panel():
     except Exception:
         draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
     # increase spacing to improve readability
-    help_y += 36
+    # Use slightly larger line spacing so each help item is easier to read.
+    help_y += 44
     for hl in HELP_LINES:  # 全ての操作を表示
         try:
             line_s = HELP_FONT.render(hl, True, (30, 30, 90))
             screen.blit(line_s, (help_x, help_y))
         except Exception:
             draw_text(screen, hl, help_x, help_y, (30, 30, 90))
-        help_y += 32
+        # add more vertical gap between items for improved readability
+        help_y += 40
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']
@@ -4067,7 +4072,13 @@ def draw_panel():
             scrollbar_rect = None
     else:
         # ログ非表示時のヒント (右パネルに寄せる)
-        draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
+        # Make the label more visible by using a bolder font if available.
+        try:
+            lbl_font = HELP_FONT if HELP_FONT else pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+            lbl_s = lbl_font.render("[L] ログ表示", True, (80, 80, 110))
+            screen.blit(lbl_s, (layout['right_panel_x'] + 12, board_area_top + board_area_height - 30))
+        except Exception:
+            draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
     # === 下部エリア: 手札（左から横並び最大7枚） ===
     # ボードの下に左詰めで横並びで表示
@@ -5540,12 +5551,8 @@ def handle_mouse_click(pos):
                                     game.log.append("⚠ 黒キングがチェック状態です！")
                             except Exception:
                                 pass
-<<<<<<< HEAD
-                            # 白の手番が終了したので、白にかかっている時限効果（氷結など）を減衰させる
-=======
                             # 白の手番が終了したため、白に適用されている時間制限付き状態を減衰させる
-                            # これがないと、AIが白側に付与した封鎖/凍結のターン数が減らず残り続けてしまう。
->>>>>>> origin/fix/gimmick-duration
+                            # （例: 氷結や封鎖などのターン消費をここで進める）
                             try:
                                 game.decay_statuses('white')
                             except Exception:

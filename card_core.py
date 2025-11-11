@@ -389,7 +389,14 @@ class Game:
         msg = card.effect(self, self.player)
         # If the effect created a pending action, remember which card caused it
         if self.pending is not None:
+            # mark which side originated this pending action so resolution can
+            # distinguish incoming vs self-inflicted effects (important for
+            # '鉄壁' behavior)
             self.pending.info.setdefault('source_card_name', card.name)
+            try:
+                self.pending.info.setdefault('source_color', 'white')
+            except Exception:
+                self.pending.info['source_color'] = 'white'
         # After resolution, move the used card to graveyard
         self.player.graveyard.append(card)
         msg_full = f"『{card.name}』（コスト{card.cost}）を使用。{msg} PPは{self.player.pp_current}/{self.player.pp_max}。"
@@ -451,6 +458,21 @@ class Game:
         msg = card.effect(self, player)
         # If effect created pending (unlikely for AI), try to auto-resolve simple kinds
         if self.pending is not None:
+            # ensure pending knows which side caused it
+            try:
+                self.pending.info.setdefault('source_card_name', card.name)
+            except Exception:
+                try:
+                    self.pending.info['source_card_name'] = card.name
+                except Exception:
+                    pass
+            try:
+                self.pending.info.setdefault('source_color', 'white' if player is self.player else 'black')
+            except Exception:
+                try:
+                    self.pending.info['source_color'] = 'white' if player is self.player else 'black'
+                except Exception:
+                    pass
             # Auto-resolve pending actions for AI in sensible ways
             try:
                 from . import chess_engine as chess
@@ -831,7 +853,8 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
                 "success": True,
             }
         )
-        return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
+        # 成功時はターンスキップを行わない（UI側で判定）
+        return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。"
     else:
         # 外れ: 相手のルークとキング以外の駒をクイーンに変更
         game.pending = PendingAction(
@@ -841,6 +864,7 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
                 "success": False,
             }
         )
+        # 失敗時はターンスキップ
         return "25%の確率に失敗...相手のルークとキング以外の駒がクイーンに変わります。自ターンスキップ。"
 
 

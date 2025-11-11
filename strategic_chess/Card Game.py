@@ -62,6 +62,10 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 # Help/operation text: slightly bolder and with more spacing for readability
 HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
+# Left panel emphasized base font size for better readability (scaled in fullscreen)
+LEFT_FONT_BASE_SIZE = 22
+LEFT_FONT_NAME = "Noto Sans JP, Meiryo, MS Gothic"
+
 # ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
 gimmick_activation_mode = 'number_key'
 # When top-level "カードをクリックして発動" is selected we keep a submode
@@ -3239,6 +3243,34 @@ def draw_text(surf, text, x, y, color=(20, 20, 20)):
     return rect
 
 
+def draw_left_text(surf, text, x, y, color=(20, 20, 20), spacing=0, ui_scale=1.0):
+    """Draw emphasized left-panel text using LEFT_FONT.
+    If spacing>0, draw each character with extra horizontal spacing to
+    avoid characters visually colliding when bolded.
+    Returns a pygame.Rect of the drawn area (for click targets).
+    """
+    try:
+        # create a scale-aware font each frame so fullscreen scaling is
+        # respected. Keep a minimal size to avoid too-small fonts.
+        size = max(10, int(LEFT_FONT_BASE_SIZE * ui_scale))
+        font = pygame.font.SysFont(LEFT_FONT_NAME, size, bold=True)
+        if not spacing:
+            img = font.render(text, True, color)
+            return surf.blit(img, (x, y))
+        # Draw per-character with spacing
+        ox = x
+        for ch in text:
+            ch_surf = font.render(ch, True, color)
+            surf.blit(ch_surf, (ox, y))
+            ox += ch_surf.get_width() + spacing
+        total_w = max(0, ox - x - spacing)
+        rect = pygame.Rect(x, y, total_w, font.get_height())
+        return rect
+    except Exception:
+        # Fallback to normal draw_text on any error
+        return draw_text(surf, text, x, y, color)
+
+
 def wrap_text(text: str, max_width: int):
     """Return list of lines wrapped to fit max_width using FONT metrics."""
     lines = []
@@ -3426,11 +3458,12 @@ def draw_panel():
     line_height = 35
     
     # ターン数
-    draw_text(screen, f"ターン: {game.turn}", info_x, info_y)
+    # Emphasized left-panel text for readability
+    draw_left_text(screen, f"ターン: {game.turn}", info_x, info_y, (20,20,20), spacing=1, ui_scale=layout.get('scale', 1.0))
     info_y += line_height
     
     # PP
-    draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
+    draw_left_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y, (20,20,20), spacing=1, ui_scale=layout.get('scale', 1.0))
     info_y += line_height
     # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
     # PPの下の表示を非表示（下部に表示されるため）
@@ -3462,20 +3495,23 @@ def draw_panel():
     info_y += line_height
     
     # 山札
-    draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90))
+    draw_left_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90), spacing=1, ui_scale=layout.get('scale', 1.0))
     info_y += line_height
     
     # 墓地表示（クリック可能領域として矩形を保存）
     grave_text = f"墓地: {len(game.player.graveyard)}枚"
     global grave_label_rect
-    grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    grave_label_rect = draw_left_text(screen, grave_text, info_x, info_y, (90,40,40), spacing=1, ui_scale=layout.get('scale', 1.0))
     info_y += line_height
     
     # 相手の手札表示（クリック可能領域として矩形を保存）
     opponent_hand_text = f"相手の手札: {get_opponent_hand_count()}枚"
     global opponent_hand_rect
-    opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    opponent_hand_rect = draw_left_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), spacing=1, ui_scale=layout.get('scale', 1.0))
     info_y += line_height
+
+    # 少し余白を入れて、テキストとボタンが近づきすぎないようにする
+    info_y += 12
 
     # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
     global start_turn_rect

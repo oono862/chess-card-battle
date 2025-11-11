@@ -4605,6 +4605,28 @@ def draw_panel():
         draw_panel.quit_rect = quit_rect
 
 
+def start_player_turn():
+    """Centralized helper that starts a player's card-game turn and shows the YOUR TURN telop.
+
+    Use this wrapper instead of calling `game.start_turn()` directly from the UI so
+    the visual telop is always displayed when a turn begins (manual or automatic).
+    """
+    global turn_telop_msg, turn_telop_until, log_scroll_offset
+    try:
+        # start_turn handles PP reset and the 1-card draw
+        game.start_turn()
+    except Exception:
+        return
+    try:
+        turn_telop_msg = "YOUR TURN"
+        turn_telop_until = _ct_time.time() + 1.0
+    except Exception:
+        pass
+    try:
+        log_scroll_offset = 0
+    except Exception:
+        pass
+
 
 def attempt_start_turn():
     """[T]と同等のターン開始処理をUIやマウスからも呼べるように関数化。"""
@@ -4632,13 +4654,7 @@ def attempt_start_turn():
             pass
         return
     # 開始
-    game.start_turn()
-    try:
-        turn_telop_msg = "YOUR TURN"
-        turn_telop_until = _ct_time.time() + 1.0
-    except Exception:
-        pass
-    log_scroll_offset = 0
+    start_player_turn()
 
 
 def handle_keydown(key):
@@ -5565,6 +5581,16 @@ def handle_mouse_click(pos):
                                 game.log.append("⚠ 白キングがチェック状態です！")
                         except Exception:
                             pass
+                        # 2ターン目以降: プレイヤーの手番になったらテロップ表示（Tキー不要でテロップのみ）
+                        try:
+                            if getattr(game, 'turn', 0) >= 1 and not getattr(game, 'turn_active', False) and getattr(game, 'pending', None) is None:
+                                try:
+                                    turn_telop_msg = "YOUR TURN"
+                                    turn_telop_until = _ct_time.time() + 1.0
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                     # クリア
                     selected_piece = None
                 highlight_squares = []
@@ -5737,6 +5763,20 @@ def main_loop():
             else:
                 globals()['black_turn_index'] = globals().get('black_turn_index', 0) + 1
             globals()['last_turn_color'] = chess_current_turn
+
+            # --- 追加: 白番に戻った際のテロップ表示（2ターン目以降） ---
+            try:
+                # 条件: 色が白に変わった、プレイヤーが既に1ターン以上開始している、
+                # プロモーション選択や保留中のUIが無く、テロップを出すべきタイミング
+                if chess_current_turn == 'white' and getattr(game, 'turn', 0) >= 1:
+                    if getattr(chess, 'promotion_pending', None) is None and getattr(game, 'pending', None) is None:
+                        try:
+                            turn_telop_msg = "YOUR TURN"
+                            turn_telop_until = _ct_time.time() + 1.0
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
             # 同時チェック中なら、その色の期限判定を行う
             if globals().get('simul_check_active', False):
@@ -6046,6 +6086,28 @@ def main_loop():
                     # from being decremented immediately when the AI finishes its move.
                     try:
                         game.decay_statuses('black')
+                    except Exception:
+                        pass
+
+                    # 自動ターン開始（2ターン目以降）
+                    # プレイヤーが既に1ターン以上開始している場合、AIの手が終わったら
+                    # 自動でプレイヤーのターン開始とドローを行います（Tキー不要）。
+                    try:
+                        # game.turn は start_turn() が呼ばれると 1,2,... と増えるため
+                        # ここでは既にプレイヤーが1ターン以上開始している場合のみ自動開始する。
+                        if getattr(game, 'turn', 0) >= 1:
+                            # pending がある、または既に turn_active の場合は自動開始しない
+                            if getattr(game, 'pending', None) is None and not getattr(game, 'turn_active', False):
+                                try:
+                                    # Use the centralized helper so telop is shown consistently
+                                    start_player_turn()
+                                    try:
+                                        game.log.append("AI終了: 自動でターン開始と1枚ドローを行いました。")
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    # 失敗してもゲームループを壊さない
+                                    pass
                     except Exception:
                         pass
 

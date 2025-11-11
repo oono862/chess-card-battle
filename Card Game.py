@@ -1155,11 +1155,8 @@ def show_start_screen():
                     # consume click and continue the main loop (settings handles its own loop)
                     continue
                 if deck_x <= mx <= deck_x + deck_w and deck_y <= my <= deck_y + deck_h:
-                    # show deck editor (matches difficulty-screen behavior)
-                    try:
-                        show_deck_editor(screen)
-                    except Exception:
-                        show_deck_modal(screen)
+                    # open deck selection modal (deck editor requires slot context)
+                    show_deck_modal(screen)
 
         # draw background (image if available) - prefer sepia image
         if bg is not None:
@@ -1516,6 +1513,8 @@ def show_deck_editor(screen, existing_deck, slot_idx):
     pygame.key.start_text_input()
     
     while True:
+        # update current window size each frame (used for layout)
+        win_w, win_h = screen.get_size()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)

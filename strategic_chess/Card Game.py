@@ -55,6 +55,21 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 game = None
 # AI placeholder; will be created at game start
 ai_player = None
+
+# Convenience fallback for test imports: when this module is imported by
+# lightweight test scripts (not run as the full UI), some tests expect a
+# `game` object to exist so they can call methods like `start_turn()`.
+# Create a minimal sample game here if one hasn't been created already.
+try:
+    if game is None:
+        try:
+            game = new_game_with_sample_deck()
+        except Exception:
+            # best-effort fallback: leave game as None if creation fails
+            game = None
+except Exception:
+    # swallow any import-time errors to avoid breaking consumers
+    pass
 # ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
 def get_opponent_hand_count():
     try:
@@ -420,6 +435,7 @@ play_bg_surf = None     # 現在のウィンドウサイズに合わせたスケ
 # クリックターゲットなどのグローバル初期値（未定義参照による例外を防止）
 confirm_yes_rect = None
 confirm_no_rect = None
+start_turn_rect = None
 grave_label_rect = None
 opponent_hand_rect = None
 grave_card_rects = []
@@ -5441,6 +5457,12 @@ def handle_mouse_click(pos):
                             try:
                                 if is_in_check_for_display(chess.pieces, 'black'):
                                     game.log.append("⚠ 黒キングがチェック状態です！")
+                            except Exception:
+                                pass
+                            # 白の手番が終了したため、白に適用されている時間制限付き状態を減衰させる
+                            # これがないと、AIが白側に付与した封鎖/凍結のターン数が減らず残り続けてしまう。
+                            try:
+                                game.decay_statuses('white')
                             except Exception:
                                 pass
                     else:

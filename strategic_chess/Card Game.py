@@ -5296,6 +5296,16 @@ def handle_mouse_click(pos):
                         play_ic_gif_at(row, col)
                     except Exception:
                         pass
+                    # Show short telop informing player the piece is frozen (same area as other notices)
+                    try:
+                        msg = "凍結しているため動けません"
+                        game.log.append(msg)
+                        notice_msg = msg
+                        notice_until = _ct_time.time() + 1.0
+                    except Exception:
+                        pass
+                    # Do not select a frozen piece
+                    return
             except Exception:
                 pass
             if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
@@ -5483,6 +5493,23 @@ def handle_mouse_click(pos):
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:
+                # If the player clicked a square that is blocked for their color, show a notice
+                try:
+                    bmap = getattr(game, 'blocked_tiles', {}) or {}
+                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                    if (row, col) in bmap:
+                        owner = bowner.get((row, col))
+                        if owner == chess_current_turn:
+                            msg = "灼熱状態なので通れません"
+                            game.log.append(msg)
+                            try:
+                                notice_msg = msg
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
+                            return
+                except Exception:
+                    pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel
                 def _same_piece(a, b):
                     if a is None or b is None:

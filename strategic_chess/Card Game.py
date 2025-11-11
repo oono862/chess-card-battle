@@ -3328,14 +3328,14 @@ def draw_panel():
     except Exception:
         draw_text(screen, "操作:", help_x, help_y, (60, 60, 100))
     # increase spacing to improve readability
-    help_y += 28
+    help_y += 36
     for hl in HELP_LINES:  # 全ての操作を表示
         try:
             line_s = HELP_FONT.render(hl, True, (30, 30, 90))
             screen.blit(line_s, (help_x, help_y))
         except Exception:
             draw_text(screen, hl, help_x, help_y, (30, 30, 90))
-        help_y += 26
+        help_y += 32
 
     # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']

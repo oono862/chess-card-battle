@@ -5,18 +5,30 @@ import sys
 import traceback
 import os
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 try:
     from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
     # 直接実行用パス解決（フォルダ直接実行時）
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    try:
+        from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    except Exception:
+        logger.exception("Failed to import card_core module")
+        raise
 
 # チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
     from . import chess_engine as chess
 except Exception:
-    import chess_engine as chess
+    try:
+        import chess_engine as chess
+    except Exception:
+        logger.exception("Failed to import chess_engine module")
+        raise
 
 
 pygame.init()
@@ -31,6 +43,7 @@ existing_surf = None
 try:
     existing_surf = pygame.display.get_surface()
 except Exception:
+    logger.debug('pygame.display.get_surface() failed, creating new display surface', exc_info=True)
     existing_surf = None
 if existing_surf:
     screen = existing_surf
@@ -108,7 +121,7 @@ def list_custom_decks():
                 if fn.lower().endswith('.json'):
                     out.append(os.path.splitext(fn)[0])
     except Exception:
-        pass
+        logger.exception("Error while listing custom decks")
     return out
 
 
@@ -125,7 +138,7 @@ def load_custom_deck_by_name(name: str):
             if isinstance(data, list):
                 return [str(x) for x in data]
     except Exception:
-        pass
+        logger.exception("Failed to load custom deck: %s", path)
     return None
 
 
@@ -168,6 +181,7 @@ def build_game_from_card_names(names):
             pass
         return g
     except Exception:
+        logger.exception("Failed to build game from card names, falling back to custom deck")
         return new_game_with_mode('custom')
 
 

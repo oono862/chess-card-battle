@@ -7303,6 +7303,16 @@ def main_loop():
                         chess_current_turn = 'black'
                         cpu_wait = True
                         cpu_wait_start = _ct_time.time()
+                        # mark the player's card-game turn as consumed so the
+                        # automatic player-turn start will occur after the AI finishes.
+                        try:
+                            game.turn_active = False
+                            game.player_moved_this_turn = True
+                            # force the auto-start after AI finishes in case
+                            # turn accounting elsewhere prevents the normal check
+                            game._force_start_player_after_ai = True
+                        except Exception:
+                            pass
                         game.log.append("自ターンをスキップします。")
 
                 game.pending = None
@@ -7381,16 +7391,25 @@ def main_loop():
                     try:
                         # game.turn は start_turn() が呼ばれると 1,2,... と増えるため
                         # ここでは既にプレイヤーが1ターン以上開始している場合のみ自動開始する。
-                        if getattr(game, 'turn', 0) >= 1:
+                        # auto-start if either the player already had at least one
+                        # started turn OR a caller requested forcing the start after AI
+                        should_auto = getattr(game, 'turn', 0) >= 1 or getattr(game, '_force_start_player_after_ai', False)
+                        if should_auto:
                             # pending がある、または既に turn_active の場合は自動開始しない
                             if getattr(game, 'pending', None) is None and not getattr(game, 'turn_active', False):
                                 try:
-                                    # Use the centralized helper so telop is shown consistently
-                                    # Pass the AI-end message so it is appended after the
-                                    # player's start-turn logs (ensures correct ordering).
                                     start_player_turn("AI終了: 自動でターン開始と1枚ドローを行いました。")
                                 except Exception:
-                                    # 失敗してもゲームループを壊さない
+                                    pass
+                            # Clear the force-start flag so it doesn't persist
+                            try:
+                                if getattr(game, '_force_start_player_after_ai', False):
+                                    delattr(game, '_force_start_player_after_ai')
+                            except Exception:
+                                try:
+                                    if '_force_start_player_after_ai' in game.__dict__:
+                                        del game.__dict__['_force_start_player_after_ai']
+                                except Exception:
                                     pass
                     except Exception:
                         pass

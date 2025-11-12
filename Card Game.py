@@ -60,6 +60,25 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 # Help/operation text: slightly bolder and with more spacing for readability
 HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
+# Simple cache for pygame fonts to avoid repeated SysFont calls each frame.
+# Keyed by (family, size, bold).
+FONT_CACHE = {}
+def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
+    key = (family, int(size), bool(bold))
+    f = FONT_CACHE.get(key)
+    if f is not None:
+        return f
+    try:
+        f = pygame.font.SysFont(family, int(size), bold=bold)
+    except Exception:
+        # fallback to default font object
+        try:
+            f = pygame.font.Font(None, int(size))
+        except Exception:
+            f = FONT
+    FONT_CACHE[key] = f
+    return f
+
 # ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
 gimmick_activation_mode = 'number_key'
 # When top-level "カードをクリックして発動" is selected we keep a submode
@@ -471,6 +490,28 @@ def show_deck_choice_modal(screen):
     """
     global DECK_MODE
     clk = pygame.time.Clock()
+    # Debounce: prevent immediate re-entry from multiple callers/clicks
+    try:
+        global _last_deck_choice_open_time
+    except Exception:
+        _last_deck_choice_open_time = None
+    try:
+        now = _ct_time.time()
+        if _last_deck_choice_open_time and (now - _last_deck_choice_open_time) < 0.5:
+            return False
+        _last_deck_choice_open_time = now
+    except Exception:
+        pass
+    # Flush any pending click/touch events that opened this modal so the
+    # same event doesn't immediately trigger inner buttons (prevents
+    # duplicate modal/action when called from click handlers).
+    try:
+        pygame.event.get([pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN])
+    except Exception:
+        try:
+            pygame.event.clear()
+        except Exception:
+            pass
     w, h = 560, 240
     x = (W - w)//2
     y = (H - h)//2
@@ -1161,17 +1202,112 @@ def restart_game():
     
     # カードゲーム部分もリセット
     global game, ai_player
-    # Recreate game and AI according to the chosen deck mode
-    game = new_game_with_mode(DECK_MODE)
-    # ensure ai_player is also rebuilt to match deck size
+    # Prompt the user to choose deck mode for the rematch so they can
+    # pick between fixed or created decks each time. This mirrors the
+    # start-screen flow but keeps the restart UX quick and explicit.
     try:
-        ai_player = build_ai_player(DECK_MODE)
+        selected = False
+        try:
+            selected = show_deck_choice_modal(screen)
+        except Exception:
+            selected = False
+
+        if not selected:
+            # User cancelled deck re-selection; fall back to previous DECK_MODE
+            game = new_game_with_mode(DECK_MODE)
+            try:
+                ai_player = build_ai_player(DECK_MODE)
+            except Exception:
+                ai_player = None
+        else:
+            # If user selected custom, open deck list to pick which custom deck to use
+            if DECK_MODE == 'custom':
+                try:
+                    started = show_deck_modal(screen, battle_select_mode=True)
+                except Exception:
+                    started = False
+                if not started:
+                    # user cancelled deck pick after choosing custom; fallback
+                    game = new_game_with_mode(DECK_MODE)
+                    try:
+                        ai_player = build_ai_player(DECK_MODE)
+                    except Exception:
+                        ai_player = None
+            else:
+                # fixed deck chosen
+                game = new_game_with_mode('fixed')
+                try:
+                    ai_player = build_ai_player('fixed')
+                except Exception:
+                    ai_player = None
     except Exception:
-        ai_player = None
+        # On any error, ensure we still create a playable game
+        try:
+            game = new_game_with_mode(DECK_MODE)
+            ai_player = build_ai_player(DECK_MODE)
+        except Exception:
+            game = new_game_with_mode('fixed')
+            try:
+                ai_player = build_ai_player('fixed')
+            except Exception:
+                ai_player = None
     log_scroll_offset = 0
     
     game.log.append("=== ゲームを再開しました ===")
     game.log.append("白のターンです。")
+
+
+def _prepare_new_battle_after_deck_already_selected():
+    """Reset board/UI state when a new Game object has already been
+    created (for example, show_start_screen() created globals()['game']).
+
+    This mirrors the non-deck parts of restart_game() but does NOT prompt
+    the user for deck selection; it assumes `game` and `ai_player` are
+    already set to the desired values.
+    """
+    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
+    global log_scroll_offset, game, ai_player
+
+    # Reset chess board state
+    try:
+        chess.pieces[:] = chess.create_pieces()
+    except Exception:
+        pass
+    try:
+        chess.en_passant_target = None
+    except Exception:
+        pass
+    try:
+        chess.promotion_pending = None
+    except Exception:
+        pass
+
+    # Reset UI/flow flags
+    game_over = False
+    game_over_winner = None
+    chess_current_turn = 'white'
+    selected_piece = None
+    highlight_squares = []
+    cpu_wait = False
+
+    # Ensure game/ai_player exist; do not recreate them here
+    try:
+        if game is not None:
+            try:
+                game.turn_active = True
+                game.player_moved_this_turn = False
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    log_scroll_offset = 0
+    try:
+        if game is not None:
+            game.log.append("=== ゲームを再開しました ===")
+            game.log.append("白のターンです。")
+    except Exception:
+        pass
 
 def create_pieces():
     # 互換のためのエイリアス（将来的に削除予定）
@@ -1216,8 +1352,8 @@ def show_start_screen():
         # UI aligns correctly when this module is used as an imported UI.
         win_w, win_h = screen.get_size()
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
-        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
-        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
+        title_font = get_font(max(32, int(H * 0.05)), bold=True)
+        btn_font = get_font(max(20, int(H * 0.03)), bold=True)
         options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
         # ボタン幅を広げてテキストが見切れないようにする
         btn_w = 240
@@ -1484,6 +1620,28 @@ def show_deck_modal(screen, battle_select_mode=False):
     """
     # Present the deck-selection screen as a fullscreen view (non-blocking overlay)
     clk = pygame.time.Clock()
+    
+    # Debounce: prevent immediate re-entry when called twice by the same click
+    try:
+        global _last_deck_modal_open_time
+    except Exception:
+        _last_deck_modal_open_time = None
+    try:
+        now = _ct_time.time()
+        if _last_deck_modal_open_time and (now - _last_deck_modal_open_time) < 0.5:
+            return False
+        _last_deck_modal_open_time = now
+    except Exception:
+        pass
+    # Flush the click/touch that opened the modal to avoid immediate
+    # double-activation of the selected slot (same rationale as above).
+    try:
+        pygame.event.get([pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN])
+    except Exception:
+        try:
+            pygame.event.clear()
+        except Exception:
+            pass
     while True:
         # keep current window size in local variables for positioning dialogs/buttons
         win_w, win_h = screen.get_size()
@@ -1536,6 +1694,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                         names = [str(x) for x in cards_field]
                             try:
                                 print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                # Remember that user explicitly chose a custom deck so future
+                                # rematches or returning to menus should preserve this choice.
+                                global DECK_MODE
+                                DECK_MODE = 'custom'
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -1555,6 +1717,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
+                            # cleanly exit; outer finally will clear in-progress flag
                             return True
                         continue
                     else:
@@ -1572,7 +1735,7 @@ def show_deck_modal(screen, battle_select_mode=False):
 
         # draw full-screen deck grid
         screen.fill((240, 235, 230))
-        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 36, bold=True)
+        title_font = get_font(36, bold=True)
         title = title_font.render("作成デッキを選択してください", True, (30,30,30))
         screen.blit(title, ((W - title.get_width()) // 2, 24))
 
@@ -1583,7 +1746,7 @@ def show_deck_modal(screen, battle_select_mode=False):
         sx = x + 10
         sy = y + 40
         idx = 0
-        slot_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+        slot_font = get_font(20, bold=True)
         for r in range(3):
             for c in range(3):
                 rx = sx + c * (slot_w + 10)
@@ -1620,6 +1783,7 @@ def show_deck_modal(screen, battle_select_mode=False):
 
         pygame.display.flip()
         clk.tick(30)
+    # end of modal
 
 
 def show_deck_options(screen, deck):
@@ -1694,7 +1858,7 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
     w, h = 560, 240
     x = (W - w)//2
     y = (H - h)//2
-    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+    title_font = get_font(28)
 
     while True:
         for ev in pygame.event.get():
@@ -1982,7 +2146,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         screen.fill((240, 235, 230))
         
         # タイトル
-        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28, bold=True)
+        title_font = get_font(28, bold=True)
         title = title_font.render("デッキ作成/編集", True, (30, 30, 30))
         screen.blit(title, (20, 25))
         
@@ -2145,6 +2309,9 @@ def show_custom_deck_selection(screen):
     """
     # Per UX request: do not show the old blocking custom-deck selection modal.
     # Keep the background deck list interactive and topmost.
+    # Declare global here so any future use of this function that assigns
+    # to DECK_MODE will correctly update the module-level variable.
+    global DECK_MODE
     return
 
     global DECK_MODE
@@ -3135,6 +3302,15 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
     def is_blocked_tile(rr, cc, color):
         # If a blocked tile applies to this color, disallow moving there
         try:
+            # Prefer model helper if available (handles multi-entry representation)
+            if getattr(game, 'is_tile_blocked_for', None) is not None:
+                try:
+                    # game.is_tile_blocked_for(tile, color) -> True if blocked for that color
+                    if game.is_tile_blocked_for((rr, cc), color):
+                        return True
+                except Exception:
+                    pass
+            # Fallback to legacy single-owner mapping
             if getattr(game, 'blocked_tiles_owner', None) is not None:
                 owner = game.blocked_tiles_owner.get((rr, cc))
                 if owner == color:
@@ -3842,8 +4018,8 @@ def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0
         # choose a font for rendering; scale the base FONT height by 'scale'
         base_size = max(10, FONT.get_height())
         size = max(10, int(base_size * float(scale)))
-        # Try to reuse same family list as initial FONT creation
-        font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=bold)
+        # Use cached font to avoid repeated SysFont invocations
+        font = get_font(size, bold=bold)
 
         if letter_spacing <= 0:
             img = font.render(text, True, color)
@@ -4214,16 +4390,43 @@ def draw_panel():
     # --- カード効果の視覚化オーバーレイ ---
     # 表示: 封鎖マス (赤の半透明)、凍結駒 (青の半透明に「凍」マーク)
     try:
-        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+            # raw may be legacy int or new list of entries
+            try:
+                if isinstance(raw, list):
+                    entries = raw
+                elif isinstance(raw, dict):
+                    entries = [raw]
+                else:
+                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+            except Exception:
+                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+
+            # only show overlay if any entry has turns > 0
+            any_active = False
+            for e in entries:
+                try:
+                    if int(e.get('turns', 0)) > 0:
+                        any_active = True
+                        break
+                except Exception:
+                    continue
+            if not any_active:
+                continue
+
             bx = board_left + bc * square_w
             by = board_top + br * square_h
             s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
             s.fill((200, 30, 30, 120))
             screen.blit(s, (bx, by))
-            # ターン数を小さく表示
-            ttxt = TINY.render(str(turns), True, (255,255,255))
+            # ターン数を小さく表示 (join multiple turns if present)
+            try:
+                turns_text = ','.join(str(int(e.get('turns', 0))) for e in entries if int(e.get('turns', 0)) > 0)
+            except Exception:
+                turns_text = str(getattr(game, 'blocked_tiles_owner', {}).get((br, bc)) or '')
+            ttxt = TINY.render(turns_text, True, (255,255,255))
             screen.blit(ttxt, (bx + 4, by + 4))
-            # 所有者表示（白/黒の頭文字）
+            # 所有者表示（白/黒の頭文字） - use legacy owner mapping for display
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             if owner:
                 ot = TINY.render(owner[0].upper(), True, (255,255,255))
@@ -4355,14 +4558,34 @@ def draw_panel():
         # We'll compute per-variant total_ms as needed
         now_ms = int(_ct_time.time() * 1000)
 
-        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
-            # only show while turns > 0
-            if not turns:
+        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+            # raw may be legacy int or new list of entries
+            try:
+                if isinstance(raw, list):
+                    entries = raw
+                elif isinstance(raw, dict):
+                    entries = [raw]
+                else:
+                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+            except Exception:
+                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+
+            # only show while any turns > 0
+            any_active = False
+            for e in entries:
+                try:
+                    if int(e.get('turns', 0)) > 0:
+                        any_active = True
+                        break
+                except Exception:
+                    continue
+            if not any_active:
                 continue
+
             bx = board_left + bc * square_w
             by = board_top + br * square_h
 
-            # select which gif variant to use based on blocked_tiles_owner
+            # select which gif variant to use based on blocked_tiles_owner (legacy first-owner)
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             use_2p = False
             try:
@@ -5740,7 +5963,17 @@ def handle_mouse_click(pos):
                 show_start_screen()
             except Exception:
                 pass
-            restart_game()
+            # After show_start_screen() returns it may have created a new
+            # `game`/`ai_player`. Reset board/UI state without prompting
+            # for deck selection again.
+            try:
+                _prepare_new_battle_after_deck_already_selected()
+            except Exception:
+                # fallback to full restart which will prompt if necessary
+                try:
+                    restart_game()
+                except Exception:
+                    pass
             return
         if hasattr(draw_panel, 'quit_rect') and draw_panel.quit_rect.collidepoint(pos):
             pygame.quit()
@@ -6138,11 +6371,15 @@ def handle_mouse_click(pos):
                     # assume card used by player -> applies to opponent color
                     applies_to = game.pending.info.get('for_color', 'black')
                     try:
-                        game.blocked_tiles[(row, col)] = turns
-                        game.blocked_tiles_owner[(row, col)] = applies_to
+                        # append a blocked-tile entry (new representation)
+                        game.add_blocked_tile((row, col), applies_to, turns)
                     except Exception:
-                        # Fallback to simple int-only mapping
-                        game.blocked_tiles[(row, col)] = turns
+                        # Fallback to legacy behavior: overwrite single int mapping
+                        try:
+                            game.blocked_tiles[(row, col)] = turns
+                            game.blocked_tiles_owner[(row, col)] = applies_to
+                        except Exception:
+                            game.blocked_tiles[(row, col)] = turns
                     try:
                         play_heat_gif_at(row, col)
                     except Exception:
@@ -6182,10 +6419,13 @@ def handle_mouse_click(pos):
                             applies_to = game.pending.info.get('for_color', 'black')
                             for (r, c) in sel:
                                 try:
-                                    game.blocked_tiles[(r, c)] = turns
-                                    game.blocked_tiles_owner[(r, c)] = applies_to
+                                    game.add_blocked_tile((r, c), applies_to, turns)
                                 except Exception:
-                                    game.blocked_tiles[(r, c)] = turns
+                                    try:
+                                        game.blocked_tiles[(r, c)] = turns
+                                        game.blocked_tiles_owner[(r, c)] = applies_to
+                                    except Exception:
+                                        game.blocked_tiles[(r, c)] = turns
                             game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
@@ -6546,11 +6786,9 @@ def handle_mouse_click(pos):
             else:
                 # If the player clicked a square that is blocked for their color, show a notice
                 try:
-                    bmap = getattr(game, 'blocked_tiles', {}) or {}
-                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
-                    if (row, col) in bmap:
-                        owner = bowner.get((row, col))
-                        if owner == chess_current_turn:
+                    # Use centralized tile-blocked check so owner-aware logic applies
+                    try:
+                        if getattr(game, 'is_tile_blocked_for', None) is not None and game.is_tile_blocked_for((row, col), chess_current_turn):
                             msg = "灼熱状態なので通れません"
                             game.log.append(msg)
                             try:
@@ -6559,6 +6797,21 @@ def handle_mouse_click(pos):
                             except Exception:
                                 pass
                             return
+                    except Exception:
+                        # Fallback to legacy mapping
+                        bmap = getattr(game, 'blocked_tiles', {}) or {}
+                        bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                        if (row, col) in bmap:
+                            owner = bowner.get((row, col))
+                            if owner == chess_current_turn:
+                                msg = "灼熱状態なので通れません"
+                                game.log.append(msg)
+                                try:
+                                    notice_msg = msg
+                                    notice_until = _ct_time.time() + 1.0
+                                except Exception:
+                                    pass
+                                return
                 except Exception:
                     pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel

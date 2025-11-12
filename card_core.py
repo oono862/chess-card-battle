@@ -127,9 +127,11 @@ class Game:
     log: List[str] = field(default_factory=list)
     pending: Optional[PendingAction] = None
     # Placeholders for chess integration
-    blocked_tiles: Dict[Any, int] = field(default_factory=dict)  # tile -> turns left
+    # blocked_tiles maps tile -> list of {'owner': 'white'|'black', 'turns': int}
+    blocked_tiles: Dict[Any, List[Dict[str, Any]]] = field(default_factory=dict)
     frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
-    # which color the blocked tile applies to (tile -> 'white'|'black')
+    # legacy alias kept for backward-compat where code expects a mapping
+    # of tile -> owner; kept in sync by helper methods when possible.
     blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
     # Whether the player has already moved a chess piece this card-game turn.
     player_moved_this_turn: bool = False
@@ -167,6 +169,39 @@ class Game:
                 # and will be used for user-visible draw information.
                 results.append((c, True))
         return results
+
+    # Helper for blocked tiles: add an entry without overwriting existing ones.
+    def add_blocked_tile(self, tile: Any, owner: str, turns: int) -> None:
+        try:
+            lst = self.blocked_tiles.get(tile)
+            if lst is None:
+                lst = []
+                self.blocked_tiles[tile] = lst
+            lst.append({'owner': owner, 'turns': int(turns)})
+            # keep legacy owner mapping for convenience (first entry wins)
+            try:
+                self.blocked_tiles_owner[tile] = lst[0].get('owner')
+            except Exception:
+                pass
+        except Exception:
+            try:
+                # fallback: if structure unexpected, overwrite
+                self.blocked_tiles[tile] = [{'owner': owner, 'turns': int(turns)}]
+                self.blocked_tiles_owner[tile] = owner
+            except Exception:
+                pass
+
+    def get_blocked_entries(self, tile: Any) -> List[Dict[str, Any]]:
+        return list(self.blocked_tiles.get(tile, []) or [])
+
+    def is_tile_blocked_for(self, tile: Any, color: str) -> bool:
+        for e in self.get_blocked_entries(tile):
+            try:
+                if e.get('owner') == color and int(e.get('turns', 0)) > 0:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def setup_battle(self) -> None:
         """Initial draw of 4 cards at battle start and PP reset."""
@@ -211,22 +246,39 @@ class Game:
         """
         # Decay blocked tiles: only decrement tiles that belong to the color
         # whose turn just ended (if provided).
+        # New representation: blocked_tiles[tile] -> list of entries
         for k in list(self.blocked_tiles.keys()):
-            owner = self.blocked_tiles_owner.get(k)
-            if ended_color is not None and owner is not None and owner != ended_color:
-                # skip tiles that belong to the other color
-                continue
-            try:
-                self.blocked_tiles[k] -= 1
-            except Exception:
-                continue
-            if self.blocked_tiles[k] <= 0:
+            entries = self.blocked_tiles.get(k) or []
+            # filter by ended_color if provided: only decrement entries that
+            # apply to the color whose turn ended (legacy behavior)
+            changed = False
+            for e in list(entries):
                 try:
-                    del self.blocked_tiles_owner[k]
+                    owner = e.get('owner')
+                    if ended_color is not None and owner is not None and owner != ended_color:
+                        # skip decrementing this entry
+                        continue
+                    e['turns'] = int(e.get('turns', 0)) - 1
+                    changed = True
+                except Exception:
+                    continue
+            # remove expired entries
+            new_entries = [e for e in entries if int(e.get('turns', 0)) > 0]
+            if new_entries:
+                self.blocked_tiles[k] = new_entries
+                # keep legacy owner mapping to the first active entry's owner
+                try:
+                    self.blocked_tiles_owner[k] = new_entries[0].get('owner')
+                except Exception:
+                    pass
+            else:
+                try:
+                    del self.blocked_tiles[k]
                 except Exception:
                     pass
                 try:
-                    del self.blocked_tiles[k]
+                    if k in self.blocked_tiles_owner:
+                        del self.blocked_tiles_owner[k]
                 except Exception:
                     pass
         # Decay frozen pieces: we need to look up the engine piece for each id
@@ -596,10 +648,14 @@ class Game:
                             to_place = candidates[:max_tiles]
                             for (nr, nc) in to_place:
                                 try:
-                                    self.blocked_tiles[(nr, nc)] = turns
-                                    self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                    # append an entry so multiple effects can coexist
+                                    self.add_blocked_tile((nr, nc), opp_color, turns)
                                 except Exception:
-                                    self.blocked_tiles[(nr, nc)] = turns
+                                    try:
+                                        self.blocked_tiles[(nr, nc)] = turns
+                                        self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                    except Exception:
+                                        self.blocked_tiles[(nr, nc)] = turns
                             placed = len(to_place)
                             if placed:
                                 try:

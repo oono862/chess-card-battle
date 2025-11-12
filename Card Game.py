@@ -3302,6 +3302,15 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
     def is_blocked_tile(rr, cc, color):
         # If a blocked tile applies to this color, disallow moving there
         try:
+            # Prefer model helper if available (handles multi-entry representation)
+            if getattr(game, 'is_tile_blocked_for', None) is not None:
+                try:
+                    # game.is_tile_blocked_for(tile, color) -> True if blocked for that color
+                    if game.is_tile_blocked_for((rr, cc), color):
+                        return True
+                except Exception:
+                    pass
+            # Fallback to legacy single-owner mapping
             if getattr(game, 'blocked_tiles_owner', None) is not None:
                 owner = game.blocked_tiles_owner.get((rr, cc))
                 if owner == color:
@@ -4381,16 +4390,43 @@ def draw_panel():
     # --- カード効果の視覚化オーバーレイ ---
     # 表示: 封鎖マス (赤の半透明)、凍結駒 (青の半透明に「凍」マーク)
     try:
-        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+            # raw may be legacy int or new list of entries
+            try:
+                if isinstance(raw, list):
+                    entries = raw
+                elif isinstance(raw, dict):
+                    entries = [raw]
+                else:
+                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+            except Exception:
+                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+
+            # only show overlay if any entry has turns > 0
+            any_active = False
+            for e in entries:
+                try:
+                    if int(e.get('turns', 0)) > 0:
+                        any_active = True
+                        break
+                except Exception:
+                    continue
+            if not any_active:
+                continue
+
             bx = board_left + bc * square_w
             by = board_top + br * square_h
             s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
             s.fill((200, 30, 30, 120))
             screen.blit(s, (bx, by))
-            # ターン数を小さく表示
-            ttxt = TINY.render(str(turns), True, (255,255,255))
+            # ターン数を小さく表示 (join multiple turns if present)
+            try:
+                turns_text = ','.join(str(int(e.get('turns', 0))) for e in entries if int(e.get('turns', 0)) > 0)
+            except Exception:
+                turns_text = str(getattr(game, 'blocked_tiles_owner', {}).get((br, bc)) or '')
+            ttxt = TINY.render(turns_text, True, (255,255,255))
             screen.blit(ttxt, (bx + 4, by + 4))
-            # 所有者表示（白/黒の頭文字）
+            # 所有者表示（白/黒の頭文字） - use legacy owner mapping for display
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             if owner:
                 ot = TINY.render(owner[0].upper(), True, (255,255,255))
@@ -4522,14 +4558,34 @@ def draw_panel():
         # We'll compute per-variant total_ms as needed
         now_ms = int(_ct_time.time() * 1000)
 
-        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
-            # only show while turns > 0
-            if not turns:
+        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+            # raw may be legacy int or new list of entries
+            try:
+                if isinstance(raw, list):
+                    entries = raw
+                elif isinstance(raw, dict):
+                    entries = [raw]
+                else:
+                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+            except Exception:
+                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
+
+            # only show while any turns > 0
+            any_active = False
+            for e in entries:
+                try:
+                    if int(e.get('turns', 0)) > 0:
+                        any_active = True
+                        break
+                except Exception:
+                    continue
+            if not any_active:
                 continue
+
             bx = board_left + bc * square_w
             by = board_top + br * square_h
 
-            # select which gif variant to use based on blocked_tiles_owner
+            # select which gif variant to use based on blocked_tiles_owner (legacy first-owner)
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             use_2p = False
             try:
@@ -6315,11 +6371,15 @@ def handle_mouse_click(pos):
                     # assume card used by player -> applies to opponent color
                     applies_to = game.pending.info.get('for_color', 'black')
                     try:
-                        game.blocked_tiles[(row, col)] = turns
-                        game.blocked_tiles_owner[(row, col)] = applies_to
+                        # append a blocked-tile entry (new representation)
+                        game.add_blocked_tile((row, col), applies_to, turns)
                     except Exception:
-                        # Fallback to simple int-only mapping
-                        game.blocked_tiles[(row, col)] = turns
+                        # Fallback to legacy behavior: overwrite single int mapping
+                        try:
+                            game.blocked_tiles[(row, col)] = turns
+                            game.blocked_tiles_owner[(row, col)] = applies_to
+                        except Exception:
+                            game.blocked_tiles[(row, col)] = turns
                     try:
                         play_heat_gif_at(row, col)
                     except Exception:
@@ -6359,10 +6419,13 @@ def handle_mouse_click(pos):
                             applies_to = game.pending.info.get('for_color', 'black')
                             for (r, c) in sel:
                                 try:
-                                    game.blocked_tiles[(r, c)] = turns
-                                    game.blocked_tiles_owner[(r, c)] = applies_to
+                                    game.add_blocked_tile((r, c), applies_to, turns)
                                 except Exception:
-                                    game.blocked_tiles[(r, c)] = turns
+                                    try:
+                                        game.blocked_tiles[(r, c)] = turns
+                                        game.blocked_tiles_owner[(r, c)] = applies_to
+                                    except Exception:
+                                        game.blocked_tiles[(r, c)] = turns
                             game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
@@ -6723,11 +6786,9 @@ def handle_mouse_click(pos):
             else:
                 # If the player clicked a square that is blocked for their color, show a notice
                 try:
-                    bmap = getattr(game, 'blocked_tiles', {}) or {}
-                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
-                    if (row, col) in bmap:
-                        owner = bowner.get((row, col))
-                        if owner == chess_current_turn:
+                    # Use centralized tile-blocked check so owner-aware logic applies
+                    try:
+                        if getattr(game, 'is_tile_blocked_for', None) is not None and game.is_tile_blocked_for((row, col), chess_current_turn):
                             msg = "灼熱状態なので通れません"
                             game.log.append(msg)
                             try:
@@ -6736,6 +6797,21 @@ def handle_mouse_click(pos):
                             except Exception:
                                 pass
                             return
+                    except Exception:
+                        # Fallback to legacy mapping
+                        bmap = getattr(game, 'blocked_tiles', {}) or {}
+                        bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                        if (row, col) in bmap:
+                            owner = bowner.get((row, col))
+                            if owner == chess_current_turn:
+                                msg = "灼熱状態なので通れません"
+                                game.log.append(msg)
+                                try:
+                                    notice_msg = msg
+                                    notice_until = _ct_time.time() + 1.0
+                                except Exception:
+                                    pass
+                                return
                 except Exception:
                     pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel

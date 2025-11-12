@@ -1161,13 +1161,55 @@ def restart_game():
     
     # カードゲーム部分もリセット
     global game, ai_player
-    # Recreate game and AI according to the chosen deck mode
-    game = new_game_with_mode(DECK_MODE)
-    # ensure ai_player is also rebuilt to match deck size
+    # Prompt the user to choose deck mode for the rematch so they can
+    # pick between fixed or created decks each time. This mirrors the
+    # start-screen flow but keeps the restart UX quick and explicit.
     try:
-        ai_player = build_ai_player(DECK_MODE)
+        selected = False
+        try:
+            selected = show_deck_choice_modal(screen)
+        except Exception:
+            selected = False
+
+        if not selected:
+            # User cancelled deck re-selection; fall back to previous DECK_MODE
+            game = new_game_with_mode(DECK_MODE)
+            try:
+                ai_player = build_ai_player(DECK_MODE)
+            except Exception:
+                ai_player = None
+        else:
+            # If user selected custom, open deck list to pick which custom deck to use
+            if DECK_MODE == 'custom':
+                try:
+                    started = show_deck_modal(screen, battle_select_mode=True)
+                except Exception:
+                    started = False
+                if not started:
+                    # user cancelled deck pick after choosing custom; fallback
+                    game = new_game_with_mode(DECK_MODE)
+                    try:
+                        ai_player = build_ai_player(DECK_MODE)
+                    except Exception:
+                        ai_player = None
+            else:
+                # fixed deck chosen
+                game = new_game_with_mode('fixed')
+                try:
+                    ai_player = build_ai_player('fixed')
+                except Exception:
+                    ai_player = None
     except Exception:
-        ai_player = None
+        # On any error, ensure we still create a playable game
+        try:
+            game = new_game_with_mode(DECK_MODE)
+            ai_player = build_ai_player(DECK_MODE)
+        except Exception:
+            game = new_game_with_mode('fixed')
+            try:
+                ai_player = build_ai_player('fixed')
+            except Exception:
+                ai_player = None
     log_scroll_offset = 0
     
     game.log.append("=== ゲームを再開しました ===")
@@ -1536,6 +1578,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                         names = [str(x) for x in cards_field]
                             try:
                                 print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                # Remember that user explicitly chose a custom deck so future
+                                # rematches or returning to menus should preserve this choice.
+                                global DECK_MODE
+                                DECK_MODE = 'custom'
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -2145,6 +2191,9 @@ def show_custom_deck_selection(screen):
     """
     # Per UX request: do not show the old blocking custom-deck selection modal.
     # Keep the background deck list interactive and topmost.
+    # Declare global here so any future use of this function that assigns
+    # to DECK_MODE will correctly update the module-level variable.
+    global DECK_MODE
     return
 
     global DECK_MODE

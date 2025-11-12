@@ -4076,7 +4076,7 @@ def draw_panel():
     bg_col = (60, 140, 220) if can_start else (140, 140, 140)
     pygame.draw.rect(screen, bg_col, start_turn_rect)
     pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
-    lab = FONT.render("ターン開始 (T)", True, (255,255,255))
+    lab = FONT.render("バトル開始 (T)", True, (255,255,255))
     screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
     info_y += line_height
     

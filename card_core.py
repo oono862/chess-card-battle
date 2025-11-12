@@ -162,6 +162,9 @@ class Game:
                 results.append((c, False))
             else:
                 self.player.hand.add(c)
+                # Do NOT append a per-card 'ドロー:' log here. The full
+                # turn-start message (e.g. 'ターンN開始: ...ドロー...') remains
+                # and will be used for user-visible draw information.
                 results.append((c, True))
         return results
 
@@ -456,6 +459,13 @@ class Game:
         player.hand.remove_at(hand_index)
         # Call effect; many effects expect (game, player)
         msg = card.effect(self, player)
+        # Immediately log that the AI played this card so the usage message
+        # appears before any auto-resolve logs produced while handling pending
+        # actions (e.g. '灼熱' のマス選択や効果適用)。
+        try:
+            self.log.append(f"AI: 『{card.name}』を使用しました。")
+        except Exception:
+            pass
         # If effect created pending (unlikely for AI), try to auto-resolve simple kinds
         if self.pending is not None:
             # ensure pending knows which side caused it
@@ -669,7 +679,8 @@ class Game:
                 self.pending = None
         # move to graveyard
         player.graveyard.append(card)
-        self.log.append(f"AI: 『{card.name}』を使用しました。 {msg}")
+        # Return a descriptive message; do NOT append another usage log here
+        # because we already logged the AI usage above.
         return True, f"AI: 『{card.name}』を使用しました。 {msg}"
 
 
@@ -786,30 +797,63 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
             game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
         else:
             game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
+            # Mirror to module-level global counter for UI/legacy code consistency
+            try:
+                globals()['ai_consecutive_turns'] = game.ai_consecutive_turns
+            except Exception:
+                pass
     except Exception:
         if player is game.player:
             setattr(game, 'player_consecutive_turns', 1)
         else:
             setattr(game, 'ai_consecutive_turns', 1)
+            try:
+                globals()['ai_consecutive_turns'] = 1
+            except Exception:
+                pass
     return "このターンに追加で1ターン分行動できます（合計2ターン）。"
 
 
 def eff_draw2(game: Game, player: PlayerState) -> str:
     """2ドロー(1): 山札から2枚引く。"""
-    # Draw two cards for the specified player (works for both human and AI)
+    # Draw two cards for the specified player.
+    # For human players, report card names in the returned message and logs.
+    # For AI, avoid exposing specific card names in logs/messages; return a
+    # generic message so the human player cannot see the AI's draw results.
     items: List[str] = []
+    ai_mode = (player is not game.player)
+    drawn_any = False
+    overflow_count = 0
     for _ in range(2):
         c = player.deck.draw()
         if c is None:
             continue
+        drawn_any = True
         if len(player.hand.cards) >= player.hand_limit:
+            # send to graveyard; for human we log card name, for AI we keep it private
             player.graveyard.append(c)
-            game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
-            items.append(f"{c.name}(墓地)")
+            if not ai_mode:
+                game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
+                items.append(f"{c.name}(墓地)")
+            else:
+                overflow_count += 1
         else:
             player.hand.add(c)
-            items.append(c.name)
-    return "ドロー: " + (", ".join(items) if items else "なし")
+            if not ai_mode:
+                items.append(c.name)
+            else:
+                # for AI, do not record the specific card name
+                pass
+
+    if ai_mode:
+        if not drawn_any:
+            return "ドロー: なし"
+        # generic message for AI draws; optionally mention counts without names
+        if overflow_count > 0:
+            return "ドローしました（手札上限により一部墓地へ送られました）。"
+        return "ドローしました。"
+    else:
+        return "ドロー: " + (", ".join(items) if items else "なし")
 
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:

@@ -32,8 +32,7 @@ print('get_piece_at(6,1):', cg.get_piece_at(r,c))
 if cg.game.pending and cg.game.pending.kind=='target_tile':
     turns = cg.game.pending.info.get('turns',2)
     applies_to = cg.game.pending.info.get('for_color','black')
-    cg.game.blocked_tiles[(r,c)] = turns
-    cg.game.blocked_tiles_owner[(r,c)] = applies_to
+    cg.game.add_blocked_tile((r, c), applies_to, turns)
     cg.game.pending = None
     print('applied blocked_tiles:', cg.game.blocked_tiles, cg.game.blocked_tiles_owner)
 else:

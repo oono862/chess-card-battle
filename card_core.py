@@ -127,9 +127,11 @@ class Game:
     log: List[str] = field(default_factory=list)
     pending: Optional[PendingAction] = None
     # Placeholders for chess integration
-    blocked_tiles: Dict[Any, int] = field(default_factory=dict)  # tile -> turns left
+    # blocked_tiles maps tile -> list of {'owner': 'white'|'black', 'turns': int}
+    blocked_tiles: Dict[Any, List[Dict[str, Any]]] = field(default_factory=dict)
     frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
-    # which color the blocked tile applies to (tile -> 'white'|'black')
+    # legacy alias kept for backward-compat where code expects a mapping
+    # of tile -> owner; kept in sync by helper methods when possible.
     blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
     # Whether the player has already moved a chess piece this card-game turn.
     player_moved_this_turn: bool = False
@@ -162,8 +164,44 @@ class Game:
                 results.append((c, False))
             else:
                 self.player.hand.add(c)
+                # Do NOT append a per-card 'ドロー:' log here. The full
+                # turn-start message (e.g. 'ターンN開始: ...ドロー...') remains
+                # and will be used for user-visible draw information.
                 results.append((c, True))
         return results
+
+    # Helper for blocked tiles: add an entry without overwriting existing ones.
+    def add_blocked_tile(self, tile: Any, owner: str, turns: int) -> None:
+        try:
+            lst = self.blocked_tiles.get(tile)
+            if lst is None:
+                lst = []
+                self.blocked_tiles[tile] = lst
+            lst.append({'owner': owner, 'turns': int(turns)})
+            # keep legacy owner mapping for convenience (first entry wins)
+            try:
+                self.blocked_tiles_owner[tile] = lst[0].get('owner')
+            except Exception:
+                pass
+        except Exception:
+            try:
+                # fallback: if structure unexpected, overwrite
+                self.blocked_tiles[tile] = [{'owner': owner, 'turns': int(turns)}]
+                self.blocked_tiles_owner[tile] = owner
+            except Exception:
+                pass
+
+    def get_blocked_entries(self, tile: Any) -> List[Dict[str, Any]]:
+        return list(self.blocked_tiles.get(tile, []) or [])
+
+    def is_tile_blocked_for(self, tile: Any, color: str) -> bool:
+        for e in self.get_blocked_entries(tile):
+            try:
+                if e.get('owner') == color and int(e.get('turns', 0)) > 0:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def setup_battle(self) -> None:
         """Initial draw of 4 cards at battle start and PP reset."""
@@ -208,22 +246,39 @@ class Game:
         """
         # Decay blocked tiles: only decrement tiles that belong to the color
         # whose turn just ended (if provided).
+        # New representation: blocked_tiles[tile] -> list of entries
         for k in list(self.blocked_tiles.keys()):
-            owner = self.blocked_tiles_owner.get(k)
-            if ended_color is not None and owner is not None and owner != ended_color:
-                # skip tiles that belong to the other color
-                continue
-            try:
-                self.blocked_tiles[k] -= 1
-            except Exception:
-                continue
-            if self.blocked_tiles[k] <= 0:
+            entries = self.blocked_tiles.get(k) or []
+            # filter by ended_color if provided: only decrement entries that
+            # apply to the color whose turn ended (legacy behavior)
+            changed = False
+            for e in list(entries):
                 try:
-                    del self.blocked_tiles_owner[k]
+                    owner = e.get('owner')
+                    if ended_color is not None and owner is not None and owner != ended_color:
+                        # skip decrementing this entry
+                        continue
+                    e['turns'] = int(e.get('turns', 0)) - 1
+                    changed = True
+                except Exception:
+                    continue
+            # remove expired entries
+            new_entries = [e for e in entries if int(e.get('turns', 0)) > 0]
+            if new_entries:
+                self.blocked_tiles[k] = new_entries
+                # keep legacy owner mapping to the first active entry's owner
+                try:
+                    self.blocked_tiles_owner[k] = new_entries[0].get('owner')
+                except Exception:
+                    pass
+            else:
+                try:
+                    del self.blocked_tiles[k]
                 except Exception:
                     pass
                 try:
-                    del self.blocked_tiles[k]
+                    if k in self.blocked_tiles_owner:
+                        del self.blocked_tiles_owner[k]
                 except Exception:
                     pass
         # Decay frozen pieces: we need to look up the engine piece for each id
@@ -548,6 +603,13 @@ class Game:
         player.hand.remove_at(hand_index)
         # Call effect; many effects expect (game, player)
         msg = card.effect(self, player)
+        # Immediately log that the AI played this card so the usage message
+        # appears before any auto-resolve logs produced while handling pending
+        # actions (e.g. '灼熱' のマス選択や効果適用)。
+        try:
+            self.log.append(f"AI: 『{card.name}』を使用しました。")
+        except Exception:
+            pass
         # If effect created pending (unlikely for AI), try to auto-resolve simple kinds
         if self.pending is not None:
             # ensure pending knows which side caused it
@@ -770,7 +832,8 @@ class Game:
                 self.pending = None
         # move to graveyard
         player.graveyard.append(card)
-        self.log.append(f"AI: 『{card.name}』を使用しました。 {msg}")
+        # Return a descriptive message; do NOT append another usage log here
+        # because we already logged the AI usage above.
         return True, f"AI: 『{card.name}』を使用しました。 {msg}"
 
 
@@ -887,30 +950,63 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
             game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
         else:
             game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
+            # Mirror to module-level global counter for UI/legacy code consistency
+            try:
+                globals()['ai_consecutive_turns'] = game.ai_consecutive_turns
+            except Exception:
+                pass
     except Exception:
         if player is game.player:
             setattr(game, 'player_consecutive_turns', 1)
         else:
             setattr(game, 'ai_consecutive_turns', 1)
+            try:
+                globals()['ai_consecutive_turns'] = 1
+            except Exception:
+                pass
     return "このターンに追加で1ターン分行動できます（合計2ターン）。"
 
 
 def eff_draw2(game: Game, player: PlayerState) -> str:
     """2ドロー(1): 山札から2枚引く。"""
-    # Draw two cards for the specified player (works for both human and AI)
+    # Draw two cards for the specified player.
+    # For human players, report card names in the returned message and logs.
+    # For AI, avoid exposing specific card names in logs/messages; return a
+    # generic message so the human player cannot see the AI's draw results.
     items: List[str] = []
+    ai_mode = (player is not game.player)
+    drawn_any = False
+    overflow_count = 0
     for _ in range(2):
         c = player.deck.draw()
         if c is None:
             continue
+        drawn_any = True
         if len(player.hand.cards) >= player.hand_limit:
+            # send to graveyard; for human we log card name, for AI we keep it private
             player.graveyard.append(c)
-            game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
-            items.append(f"{c.name}(墓地)")
+            if not ai_mode:
+                game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
+                items.append(f"{c.name}(墓地)")
+            else:
+                overflow_count += 1
         else:
             player.hand.add(c)
-            items.append(c.name)
-    return "ドロー: " + (", ".join(items) if items else "なし")
+            if not ai_mode:
+                items.append(c.name)
+            else:
+                # for AI, do not record the specific card name
+                pass
+
+    if ai_mode:
+        if not drawn_any:
+            return "ドロー: なし"
+        # generic message for AI draws; optionally mention counts without names
+        if overflow_count > 0:
+            return "ドローしました（手札上限により一部墓地へ送られました）。"
+        return "ドローしました。"
+    else:
+        return "ドロー: " + (", ".join(items) if items else "なし")
 
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:

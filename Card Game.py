@@ -4286,6 +4286,44 @@ def draw_panel():
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
     info_y += left_line_step
 
+    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+    try:
+        # プレイヤー側
+        if getattr(game.player, 'iron_wall_active', False):
+            label_txt = "鉄壁発動中"
+            pad_x = 10
+            pad_y = 6
+            txt_surf = FONT.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            # high-contrast cyan background with rounded corners
+            try:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+            except Exception:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+
+        # 相手側（AI）が鉄壁発動中なら表示
+        if getattr(ai_player, 'iron_wall_active', False):
+            label_txt = "相手: 鉄壁発動中"
+            pad_x = 8
+            pad_y = 4
+            txt_surf = SMALL.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            try:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+            except Exception:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+    except Exception:
+        # fail-safe: don't break UI if something goes wrong
+        pass
+
     # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
     global start_turn_rect
     btn_w, btn_h = 160, 36
@@ -6371,8 +6409,16 @@ def handle_mouse_click(pos):
                     # assume card used by player -> applies to opponent color
                     applies_to = game.pending.info.get('for_color', 'black')
                     try:
-                        # append a blocked-tile entry (new representation)
-                        game.add_blocked_tile((row, col), applies_to, turns)
+                        ok = game.apply_blocked_tile((row, col), turns, applies_to=applies_to, source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                        if not ok:
+                            # prevented by iron wall
+                            game.log.append(f"鉄壁が効果を防ぎました。 {(row,col)} への封鎖は適用されませんでした。")
+                        else:
+                            try:
+                                # ensure owner mapping is recorded if helper didn't set it
+                                game.blocked_tiles_owner[(row, col)] = applies_to
+                            except Exception:
+                                pass
                     except Exception:
                         # Fallback to legacy behavior: overwrite single int mapping
                         try:
@@ -6417,16 +6463,21 @@ def handle_mouse_click(pos):
                         if len(sel) >= tmax:
                             turns = game.pending.info.get('turns', 2)
                             applies_to = game.pending.info.get('for_color', 'black')
+                            applied = []
                             for (r, c) in sel:
                                 try:
-                                    game.add_blocked_tile((r, c), applies_to, turns)
+                                    ok = game.apply_blocked_tile((r, c), turns, applies_to=applies_to, source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                                    if ok:
+                                        applied.append((r, c))
                                 except Exception:
                                     try:
                                         game.blocked_tiles[(r, c)] = turns
                                         game.blocked_tiles_owner[(r, c)] = applies_to
+                                        applied.append((r, c))
                                     except Exception:
                                         game.blocked_tiles[(r, c)] = turns
-                            game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                                        applied.append((r, c))
+                            game.log.append(f"封鎖: {applied if applied else sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
                 else:
@@ -6514,26 +6565,40 @@ def handle_mouse_click(pos):
                     except Exception:
                         engine_piece = None
                     if engine_piece is not None:
-                        # record on canonical engine piece
+                        # record on canonical engine piece, using helper to respect iron-wall
                         try:
-                            game.frozen_pieces[id(engine_piece)] = turns
+                            applied = game.apply_freeze_piece(engine_piece, turns, target_color=getattr(engine_piece, 'color', None), source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                            if not applied:
+                                game.log.append(f"鉄壁が効果を防ぎました。{engine_piece} の凍結は適用されませんでした。")
+                                game.pending = None
+                                return
                         except Exception:
-                            game.frozen_pieces[id(engine_piece)] = turns
-                        try:
-                            setattr(engine_piece, 'frozen_turns', turns)
-                        except Exception:
-                            pass
+                            try:
+                                game.frozen_pieces[id(engine_piece)] = turns
+                            except Exception:
+                                game.frozen_pieces[id(engine_piece)] = turns
+                            try:
+                                setattr(engine_piece, 'frozen_turns', turns)
+                            except Exception:
+                                pass
                         target_for_log = engine_piece
                     else:
                         # fallback: record on clicked object (dict or other)
                         try:
-                            game.frozen_pieces[id(clicked)] = turns
+                            applied = game.apply_freeze_piece(clicked, turns, target_color=getattr(clicked, 'color', None) if hasattr(clicked, 'color') else (clicked.get('color') if isinstance(clicked, dict) else None), source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                            if not applied:
+                                game.log.append(f"鉄壁が効果を防ぎました。{clicked} の凍結は適用されませんでした。")
+                                game.pending = None
+                                return
                         except Exception:
-                            game.frozen_pieces[id(clicked)] = turns
-                        try:
-                            setattr(clicked, 'frozen_turns', turns)
-                        except Exception:
-                            pass
+                            try:
+                                game.frozen_pieces[id(clicked)] = turns
+                            except Exception:
+                                game.frozen_pieces[id(clicked)] = turns
+                            try:
+                                setattr(clicked, 'frozen_turns', turns)
+                            except Exception:
+                                pass
                         target_for_log = clicked
                     # try to get a readable name
                     try:

@@ -4024,12 +4024,8 @@ def draw_panel():
     info_y += line_height
     # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
     # PPの下の表示を非表示（下部に表示されるため）
-    # try:
-    #     w_check = is_in_check_for_display(chess.pieces, 'white')
-    #     b_check = is_in_check_for_display(chess.pieces, 'black')
-    #     if w_check or b_check:
-    #         col = (230, 120, 0)
-    #         if w_check:
+                            try:
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
     #             draw_text(screen, "白チェック中", info_x, info_y, col)
     #             info_y += line_height - 10
     #         if b_check:
@@ -4267,60 +4263,44 @@ def draw_panel():
                     fy = board_top + r * square_h
                     # scale animation to exactly the square size so it fits the tile
                     try:
-                        fw = int(square_w)
-                        fh = int(square_h)
-                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
-                    except Exception:
-                        f_surf = frame
-                    # draw aligned to the tile's top-left so it occupies the tile area
-                    screen.blit(f_surf, (fx, fy))
-    except Exception:
-        # Don't let animation errors break UI
-        pass
+    
+                        # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+                        try:
+                            # プレイヤー側
+                            if getattr(game.player, 'iron_wall_active', False):
+                                label_txt = "鉄壁発動中"
+                                pad_x = 10
+                                pad_y = 6
+                                txt_surf = FONT.render(label_txt, True, (255,255,255))
+                                box_w = txt_surf.get_width() + pad_x*2
+                                box_h = txt_surf.get_height() + pad_y*2
+                                box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+                                # high-contrast cyan background with rounded corners
+                                try:
+                                    pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+                                except Exception:
+                                    pygame.draw.rect(screen, (6, 160, 200), box_rect)
+                                screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+                                info_y += box_h + 6
 
-    # Play ice GIF animation if active (centered on target/frozen piece square)
-    try:
-        if ic_gif_anim.get('playing') and ic_gif_anim.get('frames'):
-            elapsed = _ct_time.time() - ic_gif_anim.get('start_time', 0.0)
-            total = ic_gif_anim.get('total_duration', 0.0)
-            frames = ic_gif_anim.get('frames')
-            durations = ic_gif_anim.get('durations') or [1000]
-            if elapsed >= total:
-                ic_gif_anim['playing'] = False
-            else:
-                # determine current frame
-                acc = 0.0
-                elapsed_ms = elapsed * 1000.0
-                idx = 0
-                for i, d in enumerate(durations):
-                    acc += d
-                    if elapsed_ms < acc:
-                        idx = i
-                        break
-                frame = frames[idx]
-                pos = ic_gif_anim.get('pos')
-                if pos is not None:
-                    r, c = pos
-                    # scale animation so it FITS INSIDE the tile while preserving aspect ratio
-                    try:
-                        fw0, fh0 = frame.get_width(), frame.get_height()
-                        # compute max allowed scale to fit inside tile
-                        max_w = max(1, square_w)
-                        max_h = max(1, square_h)
-                        # respect IC_GIF_SCALE as an upper bound but ensure not exceeding tile
-                        scale_bound = IC_GIF_SCALE
-                        # scale factors to fit width/height
-                        sf_w = max_w / fw0
-                        sf_h = max_h / fh0
-                        # choose smallest to ensure fit, and do not exceed scale_bound
-                        sf = min(sf_w, sf_h, scale_bound)
-                        if sf <= 0:
-                            sf = 1.0
-                        fw = max(1, int(fw0 * sf))
-                        fh = max(1, int(fh0 * sf))
-                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
-                    except Exception:
-                        f_surf = frame
+                            # 相手側（AI）が鉄壁発動中なら表示
+                            if getattr(ai_player, 'iron_wall_active', False):
+                                label_txt = "相手: 鉄壁発動中"
+                                pad_x = 8
+                                pad_y = 4
+                                txt_surf = SMALL.render(label_txt, True, (255,255,255))
+                                box_w = txt_surf.get_width() + pad_x*2
+                                box_h = txt_surf.get_height() + pad_y*2
+                                box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+                                try:
+                                    pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+                                except Exception:
+                                    pygame.draw.rect(screen, (6, 120, 160), box_rect)
+                                screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+                                info_y += box_h + 6
+                        except Exception:
+                            # fail-safe: don't break UI if something goes wrong
+                            pass
                         fw = f_surf.get_width()
                         fh = f_surf.get_height()
                     # center the scaled animation INSIDE the tile

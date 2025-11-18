@@ -1504,11 +1504,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-<<<<<<< HEAD
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
-=======
                                 logger.debug("show_deck_modal starting battle, names=%s", names)
->>>>>>> main
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -4039,12 +4035,7 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
-
-<<<<<<< HEAD
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
-=======
-    git branch --show-current; git fetch origin; git checkout main; git pull --rebase origin main; git status --porcelain; git status    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
->>>>>>> main
     try:
         # プレイヤー側
         if getattr(game.player, 'iron_wall_active', False):

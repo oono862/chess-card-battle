@@ -92,23 +92,18 @@
 ---
 
 ### 7. モーダル・ダイアログ
-- [x] スタート画面（show_start_screen） - ui/modals/screen_modals.pyに完全移行
-- [x] 設定画面（show_settings_screen） - ui/modals/screen_modals.pyに完全移行
+- [ ] スタート画面（show_start_screen） - モジュール骨格作成済み
 - [ ] 難易度選択（show_deck_choice_modal） - モジュール骨格作成済み
 - [ ] デッキ管理画面（show_deck_modal） - モジュール骨格作成済み
 - [ ] デッキ編集画面（show_deck_editor） - モジュール骨格作成済み
 - [ ] デッキ内容確認（show_deck_contents_overlay） - モジュール骨格作成済み
 - [ ] デッキバトル確認（show_deck_battle_confirm） - モジュール骨格作成済み
 - [ ] デッキアクション選択（show_deck_action_modal） - モジュール骨格作成済み
+- [ ] 設定画面（show_settings_screen） - モジュール骨格作成済み
 - [ ] カスタムデッキ選択（show_custom_deck_selection）
 
 **分割先**: `ui/modals/deck_modals.py`, `ui/modals/screen_modals.py` (骨格作成完了)
-**進捗状況**:
-  - show_start_screen関数をui/modals/screen_modals.pyに完全移行(~270行)
-  - show_settings_screen関数をui/modals/screen_modals.pyに完全移行(~290行)
-  - B.B.C.pyはラッパー関数として新モジュールを呼び出す
-  - 難易度選択、デッキ選択、BGM設定、ギミック発動設定などの全機能を実装
-**注意**: デッキ関連モーダルの完全移行は次フェーズで実施。現在はB.B.C.pyに元の実装が残存。
+**注意**: 実装の完全移行は次フェーズで実施。現在はB.B.C.pyに元の実装が残存。
 
 ---
 

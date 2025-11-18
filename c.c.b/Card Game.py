@@ -560,7 +560,19 @@ def show_deck_choice_modal(screen):
 CPU_DIFFICULTY = 2
 
 # 画像の読み込み（カード名と同じファイル名.png を images 配下から探す）
-IMG_DIR = os.path.join(os.path.dirname(__file__), "images")
+# Prefer package-local images (c.c.b/images). If that directory does not
+# exist (e.g. running from the repository root), fall back to the top-level
+# `images` directory so tools/tests can still find assets.
+pkg_images = os.path.join(os.path.dirname(__file__), "images")
+repo_images = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'images'))
+if os.path.isdir(pkg_images):
+    IMG_DIR = pkg_images
+elif os.path.isdir(repo_images):
+    IMG_DIR = repo_images
+else:
+    # last resort: try a relative `images` path from cwd
+    fallback = os.path.join(os.getcwd(), 'images')
+    IMG_DIR = fallback if os.path.isdir(fallback) else pkg_images
 _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}

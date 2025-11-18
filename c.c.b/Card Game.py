@@ -560,7 +560,19 @@ def show_deck_choice_modal(screen):
 CPU_DIFFICULTY = 2
 
 # 画像の読み込み（カード名と同じファイル名.png を images 配下から探す）
-IMG_DIR = os.path.join(os.path.dirname(__file__), "images")
+# Prefer package-local images (c.c.b/images). If that directory does not
+# exist (e.g. running from the repository root), fall back to the top-level
+# `images` directory so tools/tests can still find assets.
+pkg_images = os.path.join(os.path.dirname(__file__), "images")
+repo_images = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'images'))
+if os.path.isdir(pkg_images):
+    IMG_DIR = pkg_images
+elif os.path.isdir(repo_images):
+    IMG_DIR = repo_images
+else:
+    # last resort: try a relative `images` path from cwd
+    fallback = os.path.join(os.getcwd(), 'images')
+    IMG_DIR = fallback if os.path.isdir(fallback) else pkg_images
 _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
@@ -688,48 +700,17 @@ def _load_gif_frames(path: str):
     durations_list is list of durations in milliseconds.
     If Pillow is not available or loading fails, returns ([surface], [1000]).
     """
-    global heat_gif_frames_cache, heat_gif_durations
+    # Delegate heavy lifting to ui_assets helper module. This keeps the
+    # original function name for backward compatibility with other callers
+    # in this file while moving implementation to a smaller module.
     try:
-        from PIL import Image
-    except Exception:
-        # Pillow not available: fallback to loading the GIF as a single image
-        try:
-            surf = pygame.image.load(path).convert_alpha()
-            return [surf], [1000]
-        except Exception:
-            return None, None
-
-    try:
-        img = Image.open(path)
+        from . import ui_assets as _ui_assets
     except Exception:
         try:
-            surf = pygame.image.load(path).convert_alpha()
-            return [surf], [1000]
+            import ui_assets as _ui_assets
         except Exception:
             return None, None
-
-    frames = []
-    durations = []
-    try:
-        for frame_index in range(0, getattr(img, 'n_frames', 1)):
-            img.seek(frame_index)
-            frame = img.convert('RGBA')
-            mode = frame.mode
-            size = frame.size
-            data = frame.tobytes()
-            surf = pygame.image.fromstring(data, size, mode).convert_alpha()
-            frames.append(surf)
-            dur = img.info.get('duration', 100)  # milliseconds
-            durations.append(dur)
-    except EOFError:
-        pass
-    if not frames:
-        try:
-            surf = pygame.image.load(path).convert_alpha()
-            return [surf], [1000]
-        except Exception:
-            return None, None
-    return frames, durations
+    return _ui_assets._load_gif_frames(path)
 
 def _ensure_mg_gif_loaded():
     """Lazily load Image_MG.gif frames into mg_gif_* globals."""
@@ -1862,7 +1843,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
 
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
-                                        if discard_rect.collidepoint(wmx, wmy):
+                                    if discard_rect.collidepoint(wmx, wmy):
                                         logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
@@ -4066,7 +4047,6 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
-
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:
         # プレイヤー側

@@ -1831,7 +1831,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
 
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
-                                        if discard_rect.collidepoint(wmx, wmy):
+                                    if discard_rect.collidepoint(wmx, wmy):
                                         logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ

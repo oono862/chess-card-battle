@@ -248,8 +248,8 @@ def build_game_from_card_names(names):
 
         # debug: report unmatched names and how many matched
         try:
-            print(f"DEBUG: build_game_from_card_names - unmatched={unmatched}, matched_count={len(pool)}")
-            print(f"DEBUG: pool sample names={[getattr(c,'name',None) for c in pool[:20]]}")
+            logger.debug("build_game_from_card_names - unmatched=%s, matched_count=%d", unmatched, len(pool))
+            logger.debug("pool sample names=%s", [getattr(c,'name',None) for c in pool[:20]])
         except Exception:
             pass
 
@@ -265,24 +265,24 @@ def build_game_from_card_names(names):
                 try:
                     from .card_core import Deck
                 except Exception as imp_e:
-                    print(f"DEBUG: failed to import Deck from card_core: {imp_e}")
+                    logger.exception("failed to import Deck from card_core: %s", imp_e)
                     raise
             try:
                 types_info = [type(c).__name__ for c in pool[:8]]
-                print(f"DEBUG: pool types sample={types_info}")
+                logger.debug("pool types sample=%s", types_info)
             except Exception:
                 pass
             deck = Deck(pool)
             try:
                 deck_names_before = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
-                print(f"DEBUG: deck names before shuffle={deck_names_before}")
+                logger.debug("deck names before shuffle=%s", deck_names_before)
                 sys.stdout.flush()
             except Exception:
                 pass
             try:
                 deck.shuffle()
                 deck_names_after = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
-                print(f"DEBUG: deck names after shuffle={deck_names_after}")
+                logger.debug("deck names after shuffle=%s", deck_names_after)
                 sys.stdout.flush()
             except Exception:
                 # if shuffle fails, continue with unshuffled deck
@@ -302,7 +302,7 @@ def build_game_from_card_names(names):
             deck_cards = getattr(g.player.deck, 'cards', [])
             deck_count = len(deck_cards)
             top_names = [c.name for c in deck_cards[:8]]
-            print(f"DEBUG: after setup_battle hand={hand_names} deck_remaining={deck_count} top={top_names}")
+            logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
         except Exception:
             pass
         return g
@@ -1535,7 +1535,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -1547,9 +1547,9 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                         cards = getattr(g.player.deck, 'cards', None)
                                         if cards is not None:
-                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                            logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                                 except Exception as _e:
-                                    print(f"DEBUG: error inspecting created game: {_e}")
+                                    logger.exception("error inspecting created game: %s", _e)
                             except Exception as e:
                                 print(f"DEBUG: exception when creating game from names: {e}")
                                 # fallback to a safe default
@@ -1845,7 +1845,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        logger.debug("save clicked with %d cards (<20) - entering confirmation dialog", len(deck_cards))
                         # 20枚未満でも保存を許可するか確認するダイアログに変更
                         # 「破棄する」-> 変更を破棄して戻る
                         # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
@@ -1862,15 +1862,15 @@ def show_deck_editor(screen, existing_deck, slot_idx):
 
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
-                                    if discard_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        if discard_rect.collidepoint(wmx, wmy):
+                                        logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
 
                                     # 保存するボタン
                                     save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
                                     if save_anyway_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        logger.debug("user selected SAVE ANYWAY in low-deck dialog")
                                         # 20枚未満だが保存して戻る
                                         pygame.key.stop_text_input()
                                         return {
@@ -7159,14 +7159,42 @@ def main_loop():
 
 
 if __name__ == "__main__":
-    # show start screen to choose AI difficulty before starting
-    show_start_screen()
-    # Ensure game/ai_player created according to DECK_MODE (start screen may have set it)
+    # Top-level entry: run start screen and main loop.
+    # Wrap in KeyboardInterrupt handler so Ctrl+C (or other interrupts)
+    # do not produce an unhandled traceback and ensure pygame quits cleanly.
     try:
-        if globals().get('game') is None:
-            globals()['game'] = new_game_with_mode(DECK_MODE)
-        if globals().get('ai_player') is None:
-            globals()['ai_player'] = build_ai_player(DECK_MODE)
-    except Exception:
+        # show start screen to choose AI difficulty before starting
+        show_start_screen()
+        # Ensure game/ai_player created according to DECK_MODE (start screen may have set it)
+        try:
+            if globals().get('game') is None:
+                globals()['game'] = new_game_with_mode(DECK_MODE)
+            if globals().get('ai_player') is None:
+                globals()['ai_player'] = build_ai_player(DECK_MODE)
+        except Exception:
+            pass
+        main_loop()
+    except KeyboardInterrupt:
+        # User requested interruption (Ctrl+C). Exit gracefully.
+        try:
+            print("Interrupted by user. Exiting...")
+        except Exception:
+            pass
+    except SystemExit:
+        # allow normal sys.exit() to proceed
         pass
-    main_loop()
+    except Exception:
+        # Unexpected exception: print traceback for debugging, but still try to shutdown
+        try:
+            traceback.print_exc()
+        except Exception:
+            pass
+    finally:
+        try:
+            pygame.quit()
+        except Exception:
+            pass
+        try:
+            sys.exit(0)
+        except Exception:
+            pass

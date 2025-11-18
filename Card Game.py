@@ -1535,7 +1535,11 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
+<<<<<<< HEAD
                                 logger.debug("show_deck_modal starting battle, names=%s", names)
+=======
+                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+>>>>>>> c296b4d (鉄壁改善)
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -4062,6 +4066,47 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
+<<<<<<< HEAD
+=======
+
+    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+    try:
+        # プレイヤー側
+        if getattr(game.player, 'iron_wall_active', False):
+            label_txt = "鉄壁発動中"
+            pad_x = 10
+            pad_y = 6
+            txt_surf = FONT.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            # high-contrast cyan background with rounded corners
+            try:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+            except Exception:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+
+        # 相手側（AI）が鉄壁発動中なら表示
+        if getattr(ai_player, 'iron_wall_active', False):
+            label_txt = "相手: 鉄壁発動中"
+            pad_x = 8
+            pad_y = 4
+            txt_surf = SMALL.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            try:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+            except Exception:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+    except Exception:
+        # fail-safe: don't break UI if something goes wrong
+        pass
+>>>>>>> c296b4d (鉄壁改善)
 
     git branch --show-current; git fetch origin; git checkout main; git pull --rebase origin main; git status --porcelain; git status    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:

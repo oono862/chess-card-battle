@@ -4066,47 +4066,6 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
-<<<<<<< HEAD
-=======
-
-    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
-    try:
-        # プレイヤー側
-        if getattr(game.player, 'iron_wall_active', False):
-            label_txt = "鉄壁発動中"
-            pad_x = 10
-            pad_y = 6
-            txt_surf = FONT.render(label_txt, True, (255,255,255))
-            box_w = txt_surf.get_width() + pad_x*2
-            box_h = txt_surf.get_height() + pad_y*2
-            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
-            # high-contrast cyan background with rounded corners
-            try:
-                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
-            except Exception:
-                pygame.draw.rect(screen, (6, 160, 200), box_rect)
-            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
-            info_y += box_h + 6
-
-        # 相手側（AI）が鉄壁発動中なら表示
-        if getattr(ai_player, 'iron_wall_active', False):
-            label_txt = "相手: 鉄壁発動中"
-            pad_x = 8
-            pad_y = 4
-            txt_surf = SMALL.render(label_txt, True, (255,255,255))
-            box_w = txt_surf.get_width() + pad_x*2
-            box_h = txt_surf.get_height() + pad_y*2
-            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
-            try:
-                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
-            except Exception:
-                pygame.draw.rect(screen, (6, 120, 160), box_rect)
-            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
-            info_y += box_h + 6
-    except Exception:
-        # fail-safe: don't break UI if something goes wrong
-        pass
->>>>>>> c296b4d (鉄壁改善)
 
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:

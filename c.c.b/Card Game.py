@@ -238,8 +238,27 @@ except Exception:
     logger.exception("Failed to import game modules")
     import os as _os
     DECK_SAVE_FILE = _os.path.join(_os.path.dirname(__file__), 'saved_decks.json')
-    def load_saved_decks(): return [None] * 9
-    def save_decks_to_file(decks): pass
+    def load_saved_decks():
+        """保存されたデッキをJSONファイルから読み込む。最大9個。"""
+        if not os.path.exists(DECK_SAVE_FILE):
+            return [None] * 9
+        try:
+            with open(DECK_SAVE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                decks = data.get('decks', [])
+                while len(decks) < 9:
+                    decks.append(None)
+                return decks[:9]
+        except Exception:
+            return [None] * 9
+
+    def save_decks_to_file(decks):
+        """デッキリストをJSONファイルに保存"""
+        try:
+            with open(DECK_SAVE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({'decks': decks}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"デッキ保存エラー: {e}")
     def list_custom_decks(): return []
     def load_custom_deck_by_name(name: str): return None
     def build_deck_for_mode(mode: str):

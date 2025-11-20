@@ -59,6 +59,12 @@ except Exception:
         except Exception: return []
     def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2): pass
 
+# スクリプトを直接実行する場合、同ディレクトリ下の `assets/` を import できるように
+# カレントファイルのディレクトリを sys.path に追加しておく（ローカル実行時の互換性補助）。
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+if _this_dir not in sys.path:
+    sys.path.insert(0, _this_dir)
+
 # Pygameウィンドウ管理をインポート
 try:
     from ui.window import initialize_window, get_screen, get_clock, get_window_size, update_window_size

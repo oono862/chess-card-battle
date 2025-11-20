@@ -164,7 +164,62 @@ try:
 except Exception:
     logger.exception("Failed to import assets modules")
     IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images")
-    def get_card_image(name: str, size=(72, 96)): return None
+    # Robust fallback image loader: try several filename variants and search IMG_DIR
+    _image_cache = {}
+    def get_card_image(name: str, size=(72, 96)):
+        key = (name, size)
+        if key in _image_cache:
+            return _image_cache[key]
+        surf = None
+        # candidate filenames: exact, common extensions, gif
+        candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.gif", f"{name}.webp", f"{name}.bmp"]
+        # also try replacing spaces with nothing or underscore, and half-width variants
+        name_no_space = name.replace(' ', '')
+        candidates += [f"{name_no_space}.png", f"{name_no_space}.gif", f"{name_no_space}.jpg"]
+        name_us = name.replace(' ', '_')
+        candidates += [f"{name_us}.png", f"{name_us}.gif"]
+        # Try direct candidates in IMG_DIR
+        try:
+            for cand in candidates:
+                path = os.path.join(IMG_DIR, cand)
+                if os.path.exists(path):
+                    try:
+                        img = pygame.image.load(path).convert_alpha()
+                        surf = pygame.transform.smoothscale(img, size)
+                        break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        # If not found, walk IMG_DIR to find a filename with matching base (case-insensitive)
+        if surf is None and os.path.isdir(IMG_DIR):
+            base_l = ''.join(ch for ch in name if not ch.isspace()).lower()
+            for root, _dirs, files in os.walk(IMG_DIR):
+                for f in files:
+                    fn, ext = os.path.splitext(f)
+                    fn_norm = ''.join(ch for ch in fn if not ch.isspace()).lower()
+                    if fn_norm == base_l and ext.lower() in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']:
+                        try:
+                            path = os.path.join(root, f)
+                            img = pygame.image.load(path).convert_alpha()
+                            surf = pygame.transform.smoothscale(img, size)
+                            break
+                        except Exception:
+                            continue
+                if surf is not None:
+                    break
+        # Fallback: placeholder surface with the name
+        if surf is None:
+            surf = pygame.Surface(size, pygame.SRCALPHA)
+            surf.fill((220, 220, 230))
+            pygame.draw.rect(surf, (80, 80, 80), (0, 0, size[0], size[1]), 2)
+            try:
+                txt = SMALL.render(name, True, (30, 30, 30))
+                surf.blit(txt, ((size[0]-txt.get_width())//2, (size[1]-txt.get_height())//2))
+            except Exception:
+                pass
+        _image_cache[key] = surf
+        return surf
     def get_piece_image_surface(name: str, color: str, size: tuple): return None
     def play_heat_gif_at(row: int, col: int): pass
     def play_ic_gif_at(row: int, col: int): pass

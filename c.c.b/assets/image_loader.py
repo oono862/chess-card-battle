@@ -48,12 +48,31 @@ def get_card_image(name: str, size=(72, 96)):
         return _image_cache[key]
     
     surf = None
+    # explicit name -> file mapping for special cards
+    NAME_TO_FILE = {
+        # map card display name to an image filename in images/
+        "ハンです☆": "card_death_1.png",
+        "命がけのギャンブル": "card_kaiji_Jo.png",
+        "負けるわけないだろwww": "card_you_lose.gif",
+        "鉄壁": "card_sh.png",
+    }
     # 1) Try direct candidates
+    # preferred candidate filenames (including GIF)
     candidates = [
         f"{name}.png", f"{name}.PNG", 
         f"{name}.jpg", f"{name}.jpeg",
-        f"{name}.webp", f"{name}.bmp"
+        f"{name}.webp", f"{name}.bmp", f"{name}.gif"
     ]
+    # if there is an explicit mapping for this card name, try it first
+    mapped = NAME_TO_FILE.get(name)
+    if mapped:
+        path = os.path.join(IMG_DIR, mapped)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                surf = pygame.transform.smoothscale(img, size)
+            except Exception:
+                surf = None
     for cand in candidates:
         path = os.path.join(IMG_DIR, cand)
         if os.path.exists(path):

@@ -46,7 +46,7 @@ def get_card_image(name: str, size=(72, 96)):
     key = (name, size)
     if key in _image_cache:
         return _image_cache[key]
-    
+
     surf = None
     # explicit name -> file mapping for special cards
     NAME_TO_FILE = {
@@ -68,47 +68,41 @@ def get_card_image(name: str, size=(72, 96)):
         return s
 
     norm_name = _normalize(name)
-    # 1) Try direct candidates
+
     # preferred candidate filenames (including GIF)
     candidates = [
-        f"{name}.png", f"{name}.PNG", 
+        f"{name}.png", f"{name}.PNG",
         f"{name}.jpg", f"{name}.jpeg",
         f"{name}.webp", f"{name}.bmp", f"{name}.gif"
     ]
-    # if there is an explicit mapping for this card name, try it first
-    # try exact, then normalized mapping
+
+    # if there is an explicit mapping for this card name, try it first (exact then normalized)
     mapped = NAME_TO_FILE.get(name) or NAME_TO_FILE.get(norm_name)
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
-            mapped = NAME_TO_FILE.get(name) or NAME_TO_FILE.get(norm_name)
+        if os.path.exists(path):
             try:
                 img = pygame.image.load(path).convert_alpha()
                 surf = pygame.transform.smoothscale(img, size)
             except Exception:
                 surf = None
-    # try candidates for the raw name and the normalized name
-    for cand in candidates:
-        path = os.path.join(IMG_DIR, cand)
-        if os.path.exists(path):
-            try:
-                img = pygame.image.load(path).convert_alpha()
-                surf = pygame.transform.smoothscale(img, size)
-                break
-            except Exception:
-                pass
+
+    # try direct candidate filenames
+    if surf is None:
+        for cand in candidates:
+            path = os.path.join(IMG_DIR, cand)
+            if os.path.exists(path):
+                try:
+                    img = pygame.image.load(path).convert_alpha()
+                    surf = pygame.transform.smoothscale(img, size)
+                    break
+                except Exception:
+                    pass
+
+    # try normalized name candidates if different
     if surf is None and norm_name != name:
         for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
             path = os.path.join(IMG_DIR, cand)
-            if surf is None and norm_name != name:
-                for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
-                    path = os.path.join(IMG_DIR, cand)
-                    if os.path.exists(path):
-                        try:
-                            img = pygame.image.load(path).convert_alpha()
-                            surf = pygame.transform.smoothscale(img, size)
-                            break
-                        except Exception:
-                            pass
             if os.path.exists(path):
                 try:
                     img = pygame.image.load(path).convert_alpha()

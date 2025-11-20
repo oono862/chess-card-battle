@@ -1,0 +1,534 @@
+﻿
+> def draw_panel():
+      # 閭梧勹逕ｻ蜒上′縺ゅｌ縺ｰ縺昴ｌ繧呈緒逕ｻ縺励√↑縺代ｌ縺ｰ蠕捺擂縺ｮ蝪励ｊ縺､縺ｶ縺励ｒ陦後≧
+      global log_toggle_rect, play_bg_img, play_bg_surf
+      try:
+          # 蛻晏屓: 逕ｻ蜒上ヵ繧｡繧､繝ｫ縺後≠繧後・繝ｭ繝ｼ繝峨＠縺ｦ繧ｭ繝｣繝・す繝･
+          if play_bg_img is None and play_bg_surf is None:
+              try:
+                  bg_path = os.path.join(IMG_DIR, PLAY_BG_FILENAME)
+                  if os.path.exists(bg_path):
+                      play_bg_img = pygame.image.load(bg_path)
+              except Exception:
+                  play_bg_img = None
+  
+          # play_bg_img 縺悟ｭ伜惠縺吶ｌ縺ｰ迴ｾ蝨ｨ縺ｮ繧ｦ繧｣繝ｳ繝峨え繧ｵ繧､繧ｺ縺ｫ蜷医ｏ縺帙※繧ｹ繧ｱ繝ｼ繝ｫ縺励※謠冗判
+          if play_bg_img is not None:
+              try:
+                  play_bg_surf = pygame.transform.smoothscale(play_bg_img, (W, H)).convert()
+                  screen.blit(play_bg_surf, (0, 0))
+              except Exception:
+                  # 繧ｹ繧ｱ繝ｼ繝ｪ繝ｳ繧ｰ繧・緒逕ｻ縺ｫ螟ｱ謨励＠縺溷ｴ蜷医・蜊倩牡縺ｧ蝪励ｊ縺､縺ｶ縺・                screen.fill((240, 240
+, 245))
+          else:
+              screen.fill((240, 240, 245))
+      except Exception:
+          # 縺ｩ縺薙°縺ｧ萓句､悶′蜃ｺ縺ｦ繧・UI 縺悟｣翫ｌ縺ｪ縺・ｈ縺・↓繝輔か繝ｼ繝ｫ繝舌ャ繧ｯ
+          try:
+              screen.fill((240, 240, 245))
+          except Exception:
+              pass
+  
+      # === 繝ｬ繧､繧｢繧ｦ繝郁ｨｭ螳・ 蟾ｦ蛛ｴ縺ｫ蝓ｺ譛ｬ諠・ｱ縲√◎縺ｮ蜿ｳ縺ｫ繝√ぉ繧ｹ逶､繧堤判髱｢荳企Κ縺九ｉ驟咲ｽｮ ===
+      # Use shared responsive layout so left/right panels and board stay balanced
+      layout = compute_layout(W, H)
+      left_panel_width = layout['left_panel_width']
+      left_margin = layout['left_margin']
+      top_margin = layout['board_area_top']
+  
+      # 蝓ｺ譛ｬ諠・ｱ縺ｮ驟咲ｽｮ・亥ｷｦ蛛ｴ・・    info_x = left_margin
+      info_y = top_margin
+      line_height = 35
+      # 蟾ｦ繝代ロ繝ｫ縺ｮ螟ｪ蟄苓｡ｨ遉ｺ縺ｫ蜷医ｏ縺帙※邵ｦ髢馴囈繧貞ｰ代＠蠎・￡繧・    left_line_step = 44
+      
+      # 繧ｿ繝ｼ繝ｳ謨ｰ
+      draw_text(screen, f"繧ｿ繝ｼ繝ｳ: {game.turn}", info_x, info_y, bold=True, letter_spacing=1, scale=lay
+out.get('scale', 1.0))
+      info_y += left_line_step
+      
+      # PP
+      draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y, bold=Tru
+e, letter_spacing=1, scale=layout.get('scale', 1.0))
+      info_y += left_line_step
+      # 迴ｾ蝨ｨ縺ｮ繝√ぉ繝・け迥ｶ諷九ｒ蟾ｦ繝代ロ繝ｫ荳企Κ縺ｫ譏守､ｺ・亥酔譎ゅメ繧ｧ繝・け譎ゅ・荳｡譁ｹ陦ｨ遉ｺ・・    # PP縺ｮ荳九・陦ｨ遉ｺ繧帝撼陦ｨ遉ｺ・井ｸ矩Κ縺ｫ陦ｨ遉ｺ縺輔
+ｌ繧九◆繧・ｼ・    # try:
+      #     w_check = is_in_check_for_display(chess.pieces, 'white')
+      #     b_check = is_in_check_for_display(chess.pieces, 'black')
+      #     if w_check or b_check:
+      #         col = (230, 120, 0)
+      #         if w_check:
+      #             draw_text(screen, "逋ｽ繝√ぉ繝・け荳ｭ", info_x, info_y, col)
+      #             info_y += line_height - 10
+      #         if b_check:
+      #             draw_text(screen, "鮟偵メ繧ｧ繝・け荳ｭ", info_x, info_y, col)
+      #             info_y += line_height - 10
+      # except Exception:
+      #     pass
+      # 邁｡譏薙お繝輔ぉ繧ｯ繝郁｡ｨ遉ｺ: 谺｡縺ｫ逋ｺ蜍輔☆繧狗音蛻･繧｢繧ｯ繧ｷ繝ｧ繝ｳ繧貞ｷｦ繝代ロ繝ｫ縺ｫ陦ｨ遉ｺ
+      # 陦ｨ險倥Ν繝ｼ繝ｫ: 縲梧ｬ｡・夐｣幄ｶ雁庄縲阪梧ｬ｡・夊ｿｽ蜉陦悟虚ﾃ溶縲・    if getattr(game.player, 'next_move_can_jump', Fal
+se):
+          draw_text(screen, "谺｡・夐｣幄ｶ雁庄", info_x, info_y, (10, 40, 180), scale=layout.get('scale', 1.0)
+)
+          info_y += left_line_step - 6
+      # 霑・峭蜉ｹ譫懊・陦ｨ遉ｺ・・layer_consecutive_turns繧剃ｽｿ逕ｨ・・    consecutive_turns = getattr(game, 'player_con
+secutive_turns', 0)
+      if consecutive_turns > 0:
+          info_y += 6
+          label = "谺｡・夊ｿｽ蜉陦悟虚" if consecutive_turns == 1 else f"谺｡・夊ｿｽ蜉陦悟虚ﾃ養consecutive_turns}"
+          draw_text(screen, label, info_x, info_y, (10, 120, 10), scale=layout.get('scale', 1.0))
+          info_y += left_line_step - 6
+      info_y += left_line_step
+      
+      # 螻ｱ譛ｭ
+      draw_text(screen, f"螻ｱ譛ｭ: {len(game.player.deck.cards)}譫・, info_x, info_y, (40,40,90), bold=True
+, letter_spacing=1, scale=layout.get('scale', 1.0))
+      info_y += left_line_step
+      
+      # 蠅灘慍陦ｨ遉ｺ・医け繝ｪ繝・け蜿ｯ閭ｽ鬆伜沺縺ｨ縺励※遏ｩ蠖｢繧剃ｿ晏ｭ假ｼ・    grave_text = f"蠅灘慍: {len(game.player.graveyard)}譫・
+      global grave_label_rect
+      grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40), bold=True, letter_s
+pacing=1, scale=layout.get('scale', 1.0))
+      info_y += left_line_step
+      
+      # 逶ｸ謇九・謇区惆陦ｨ遉ｺ・医け繝ｪ繝・け蜿ｯ閭ｽ鬆伜沺縺ｨ縺励※遏ｩ蠖｢繧剃ｿ晏ｭ假ｼ・    opponent_hand_text = f"逶ｸ謇九・謇区惆: {get_opponent
+_hand_count()}譫・
+      global opponent_hand_rect
+      opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), bold=Tr
+ue, letter_spacing=1, scale=layout.get('scale', 1.0))
+      info_y += left_line_step
+  
+      # 繝槭え繧ｹ縺ｧ繧よ款縺帙ｋ縲弱ち繝ｼ繝ｳ髢句ｧ・T)縲上・繧ｿ繝ｳ繧貞ｷｦ繝代ロ繝ｫ縺ｫ驟咲ｽｮ
+      global start_turn_rect
+      btn_w, btn_h = 160, 36
+      start_turn_rect = pygame.Rect(info_x, info_y, btn_w, btn_h)
+      # 謚ｼ荳句庄蜷ｦ縺ｫ蠢懊§縺ｦ濶ｲ蛻・￠
+      can_start = (getattr(game, 'pending', None) is None) and (not getattr(game, 'turn_active', False
+)) and (chess_current_turn == 'white') and (not cpu_wait) and (not game_over)
+      bg_col = (60, 140, 220) if can_start else (140, 140, 140)
+      pygame.draw.rect(screen, bg_col, start_turn_rect)
+      pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
+      # Scale the button label so it follows the UI scale used on the right-side rendering
+      ui_scale = layout.get('scale', 1.0)
+      try:
+          lab_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(12, int(FONT.get_heigh
+t() * ui_scale)), bold=True)
+          lab = lab_font.render("繝舌ヨ繝ｫ髢句ｧ・(T)", True, (255,255,255))
+          screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn
+_h - lab.get_height())//2))
+      except Exception:
+          lab = FONT.render("繝舌ヨ繝ｫ髢句ｧ・(T)", True, (255,255,255))
+          screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn
+_h - lab.get_height())//2))
+      info_y += left_line_step
+      
+      # 菫晉蕗荳ｭ陦ｨ遉ｺ・亥渕譛ｬ諠・ｱ縺ｮ荳具ｼ・    if getattr(game, 'pending', None) is not None:
+          info_y += line_height + 10
+          label = game.pending.kind
+          src = game.pending.info.get('source_card_name')
+          if src:
+              label = f"{src} ({label})"
+          draw_text(screen, f"笞 菫晉蕗荳ｭ:", info_x, info_y, (180, 60, 0))
+          info_y += 20
+          draw_text(screen, label, info_x, info_y, (180, 60, 0))
+  
+      # 蜿ｳ繝代ロ繝ｫ: 繝倥Ν繝暦ｼ育ｰ｡貎斐↓・・- use right panel x so help stays grouped
+      help_x = layout['right_panel_x'] + 12
+      help_y = layout['board_top']
+      # Operation/help header (use bolder font)
+      try:
+          header_s = HELP_FONT.render("謫堺ｽ・", True, (60, 60, 100))
+          screen.blit(header_s, (help_x, help_y))
+      except Exception:
+          draw_text(screen, "謫堺ｽ・", help_x, help_y, (60, 60, 100))
+      # increase spacing to improve readability
+      # Use slightly larger line spacing so each help item is easier to read.
+      help_y += 44
+      for hl in HELP_LINES:  # 蜈ｨ縺ｦ縺ｮ謫堺ｽ懊ｒ陦ｨ遉ｺ
+          try:
+              line_s = HELP_FONT.render(hl, True, (30, 30, 90))
+              screen.blit(line_s, (help_x, help_y))
+          except Exception:
+              draw_text(screen, hl, help_x, help_y, (30, 30, 90))
+          # add more vertical gap between items for improved readability
+          help_y += 40
+  
+      # === 繝√ぉ繧ｹ逶､繧ｨ繝ｪ繧｢: 蟾ｦ蛛ｴ繝代ロ繝ｫ縺ｮ蜿ｳ縲∫判髱｢荳企Κ縺九ｉ髢句ｧ・===
+      board_area_left = layout['central_left']
+      board_area_top = layout['board_top']
+      # board_size and position computed by compute_layout
+      board_size = layout['board_size']
+      board_area_width = board_size
+      board_area_height = board_size
+      square_w = board_size // 8
+      square_h = square_w
+      board_left = layout['board_left']
+      board_top = layout['board_top']
+      # use pale greenish theme similar to original design
+      light = (235, 248, 240)
+      dark = (200, 220, 200)
+      # draw board background
+      try:
+          pygame.draw.rect(screen, (200, 220, 200), (board_left, board_top, board_size, board_size))
+          pygame.draw.rect(screen, (120, 140, 120), (board_left, board_top, board_size, board_size), 2
+)
+      except Exception:
+          # fallback: nothing
+          pass
+      for rr in range(8):
+          for cc in range(8):
+              rrect = pygame.Rect(board_left + cc*square_w, board_top + rr*square_h, square_w, square_
+h)
+              pygame.draw.rect(screen, light if (rr+cc)%2==0 else dark, rrect)
+  
+      # 鬧偵・謠冗判・育判蜒上′縺ゅｌ縺ｰ逕ｻ蜒上〒縲√↑縺代ｌ縺ｰ繝輔か繝ｼ繝ｫ繝舌ャ繧ｯ縺ｧ荳ｸ縺ｨ譁・ｭ暦ｼ・    for p in chess.pieces:
+          cell_x = board_left + p.col*square_w
+          cell_y = board_top + p.row*square_h
+          # leave small padding so piece images don't touch square edges
+          padding = max(6, int(square_w * 0.08))
+          img_w = square_w - padding*2
+          img_h = square_h - padding*2
+          img = get_piece_image_surface(p.name, p.color, (img_w, img_h))
+          if img is not None:
+              screen.blit(img, (cell_x + padding, cell_y + padding))
+          else:
+              cx = cell_x + square_w//2
+              cy = cell_y + square_h//2
+              radius = min(square_w, square_h)//2 - padding
+              if p.color == 'white':
+                  pygame.draw.circle(screen, (250,250,250), (cx,cy), radius)
+                  label = SMALL.render(p.name, True, (0,0,0))
+              else:
+                  pygame.draw.circle(screen, (40,40,40), (cx,cy), radius)
+                  label = SMALL.render(p.name, True, (255,255,255))
+              screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
+  
+      # --- 繧ｫ繝ｼ繝牙柑譫懊・隕冶ｦ壼喧繧ｪ繝ｼ繝舌・繝ｬ繧､ ---
+      # 陦ｨ遉ｺ: 蟆・事繝槭せ (襍､縺ｮ蜊企乗・)縲∝㍾邨宣ｧ・(髱偵・蜊企乗・縺ｫ縲悟㍾縲阪・繝ｼ繧ｯ)
+      try:
+          for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+              # raw may be legacy int or new list of entries
+              try:
+                  if isinstance(raw, list):
+                      entries = raw
+                  elif isinstance(raw, dict):
+                      entries = [raw]
+                  else:
+                      entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'tu
+rns': raw}]
+              except Exception:
+                  entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns'
+: raw}]
+  
+              # only show overlay if any entry has turns > 0
+              any_active = False
+              for e in entries:
+                  try:
+                      if int(e.get('turns', 0)) > 0:
+                          any_active = True
+                          break
+                  except Exception:
+                      continue
+              if not any_active:
+                  continue
+  
+              bx = board_left + bc * square_w
+              by = board_top + br * square_h
+              s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+              s.fill((200, 30, 30, 120))
+              screen.blit(s, (bx, by))
+              # 繧ｿ繝ｼ繝ｳ謨ｰ繧貞ｰ上＆縺剰｡ｨ遉ｺ (join multiple turns if present)
+              try:
+                  turns_text = ','.join(str(int(e.get('turns', 0))) for e in entries if int(e.get('tur
+ns', 0)) > 0)
+              except Exception:
+                  turns_text = str(getattr(game, 'blocked_tiles_owner', {}).get((br, bc)) or '')
+              ttxt = TINY.render(turns_text, True, (255,255,255))
+              screen.blit(ttxt, (bx + 4, by + 4))
+              # 謇譛芽・｡ｨ遉ｺ・育區/鮟偵・鬆ｭ譁・ｭ暦ｼ・- use legacy owner mapping for display
+              owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
+              if owner:
+                  ot = TINY.render(owner[0].upper(), True, (255,255,255))
+                  screen.blit(ot, (bx + 4, by + 18))
+      except Exception:
+          pass
+  
+      # 莉ｮ豎ｺ螳壻ｸｭ縺ｮ驕ｸ謚櫁｡ｨ遉ｺ (轤ｹ邱・: target_tiles_multi 縺ｮ selected 繧定ｵ､縺・せ邱壹〒謠冗判
+      try:
+          if getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
+              sel = game.pending.info.get('selected', [])
+              tmax = game.pending.info.get('max_tiles', 3)
+              for idx, (br, bc) in enumerate(sel):
+                  bx = board_left + bc * square_w
+                  by = board_top + br * square_h
+                  rrect = pygame.Rect(bx, by, square_w, square_h)
+                  draw_dashed_rect(screen, (200, 30, 30), rrect, dash=6, gap=4, width=3)
+                  # small tentative label at bottom-right
+                  try:
+                      ttxt = TINY.render(f"莉ｮ{idx+1}/{tmax}", True, (200,30,30))
+                      screen.blit(ttxt, (bx + square_w - ttxt.get_width() - 4, by + square_h - ttxt.ge
+t_height() - 4))
+                  except Exception:
+                      pass
+      except Exception:
+          pass
+  
+      # Play heat GIF animation if active (centered on selected board square)
+      try:
+          if heat_gif_anim.get('playing') and heat_gif_anim.get('frames'):
+              elapsed = _ct_time.time() - heat_gif_anim.get('start_time', 0.0)
+              total = heat_gif_anim.get('total_duration', 0.0)
+              frames = heat_gif_anim.get('frames')
+              durations = heat_gif_anim.get('durations') or [1000]
+              if elapsed >= total:
+                  # stop animation
+                  heat_gif_anim['playing'] = False
+              else:
+                  # determine current frame by elapsed ms
+                  acc = 0.0
+                  elapsed_ms = elapsed * 1000.0
+                  idx = 0
+                  for i, d in enumerate(durations):
+                      acc += d
+                      if elapsed_ms < acc:
+                          idx = i
+                          break
+                  frame = frames[idx]
+                  # compute position centered on target square
+                  pos = heat_gif_anim.get('pos')
+                  if pos is not None:
+                      r, c = pos
+                      fx = board_left + c * square_w
+                      fy = board_top + r * square_h
+                      # scale animation to exactly the square size so it fits the tile
+                      try:
+                          fw = int(square_w)
+                          fh = int(square_h)
+                          f_surf = pygame.transform.smoothscale(frame, (fw, fh))
+                      except Exception:
+                          f_surf = frame
+                      # draw aligned to the tile's top-left so it occupies the tile area
+                      screen.blit(f_surf, (fx, fy))
+      except Exception:
+          # Don't let animation errors break UI
+          pass
+  
+      # Play ice GIF animation if active (centered on target/frozen piece square)
+      try:
+          if ic_gif_anim.get('playing') and ic_gif_anim.get('frames'):
+              elapsed = _ct_time.time() - ic_gif_anim.get('start_time', 0.0)
+              total = ic_gif_anim.get('total_duration', 0.0)
+              frames = ic_gif_anim.get('frames')
+              durations = ic_gif_anim.get('durations') or [1000]
+              if elapsed >= total:
+                  ic_gif_anim['playing'] = False
+              else:
+                  # determine current frame
+                  acc = 0.0
+                  elapsed_ms = elapsed * 1000.0
+                  idx = 0
+                  for i, d in enumerate(durations):
+                      acc += d
+                      if elapsed_ms < acc:
+                          idx = i
+                          break
+                  frame = frames[idx]
+                  pos = ic_gif_anim.get('pos')
+                  if pos is not None:
+                      r, c = pos
+                      # scale animation so it FITS INSIDE the tile while preserving aspect ratio
+                      try:
+                          fw0, fh0 = frame.get_width(), frame.get_height()
+                          # compute max allowed scale to fit inside tile
+                          max_w = max(1, square_w)
+                          max_h = max(1, square_h)
+                          # respect IC_GIF_SCALE as an upper bound but ensure not exceeding tile
+                          scale_bound = IC_GIF_SCALE
+                          # scale factors to fit width/height
+                          sf_w = max_w / fw0
+                          sf_h = max_h / fh0
+                          # choose smallest to ensure fit, and do not exceed scale_bound
+                          sf = min(sf_w, sf_h, scale_bound)
+                          if sf <= 0:
+                              sf = 1.0
+                          fw = max(1, int(fw0 * sf))
+                          fh = max(1, int(fh0 * sf))
+                          f_surf = pygame.transform.smoothscale(frame, (fw, fh))
+                      except Exception:
+                          f_surf = frame
+                          fw = f_surf.get_width()
+                          fh = f_surf.get_height()
+                      # center the scaled animation INSIDE the tile
+                      fx = board_left + c * square_w + (square_w - fw) // 2
+                      fy = board_top + r * square_h + (square_h - fh) // 2
+                      screen.blit(f_surf, (fx, fy))
+      except Exception:
+          pass
+  
+      # --- 蟆・事繧ｿ繧､繝ｫ縺ｧ縺ｮ繝ｫ繝ｼ繝怜・逕・ Image_MG.gif (player) / Image_MG_2P.gif (AI) ---
+      try:
+          # ensure both variants are loaded (2P may fallback to standard MG)
+          _ensure_mg_gif_loaded()
+          _ensure_mg_gif_2p_loaded()
+  
+          # if neither is available, skip
+          if not (mg_gif_frames_cache or mg_gif_2p_frames_cache):
+              raise Exception("no mg gif available")
+  
+          # We'll compute per-variant total_ms as needed
+          now_ms = int(_ct_time.time() * 1000)
+  
+          for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
+              # raw may be legacy int or new list of entries
+              try:
+                  if isinstance(raw, list):
+                      entries = raw
+                  elif isinstance(raw, dict):
+                      entries = [raw]
+                  else:
+                      entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'tu
+rns': raw}]
+              except Exception:
+                  entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns'
+: raw}]
+  
+              # only show while any turns > 0
+              any_active = False
+              for e in entries:
+                  try:
+                      if int(e.get('turns', 0)) > 0:
+                          any_active = True
+                          break
+                  except Exception:
+                      continue
+              if not any_active:
+                  continue
+  
+              bx = board_left + bc * square_w
+              by = board_top + br * square_h
+  
+              # select which gif variant to use based on blocked_tiles_owner (legacy first-owner)
+              owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
+              use_2p = False
+              try:
+                  # Heuristic: if the blocked tile owner is 'white' (i.e. the tile
+                  # blocks white player) it's likely AI applied it; show 2P variant.
+                  if owner == 'white' and mg_gif_2p_frames_cache:
+                      use_2p = True
+              except Exception:
+                  use_2p = False
+  
+              frames_cache = mg_gif_2p_frames_cache if use_2p and mg_gif_2p_frames_cache else mg_gif_f
+rames_cache
+              durations = mg_gif_2p_durations if use_2p and mg_gif_2p_durations else mg_gif_durations
+  
+              if not frames_cache or not durations:
+                  continue
+  
+              try:
+                  total_ms = int(sum(durations))
+              except Exception:
+                  total_ms = max(1, int((mg_gif_2p_total_duration if use_2p else mg_gif_total_duration
+) * 1000))
+  
+              # frame index by modulo looping
+              if total_ms > 0:
+                  tmod = now_ms % total_ms
+                  acc = 0
+                  idx = 0
+                  for i, d in enumerate(durations):
+                      acc += d
+                      if tmod < acc:
+                          idx = i
+                          break
+              else:
+                  idx = 0
+  
+              frame = frames_cache[idx]
+              try:
+                  f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
+              except Exception:
+                  f_surf = frame
+              # draw on tile top-left so it covers the tile area
+              screen.blit(f_surf, (bx, by))
+      except Exception:
+          pass
+  
+      # --- 繧ｿ繝ｼ繝ｳ陦ｨ遉ｺ繝・Ο繝・・・井ｸｭ螟ｮ繝ｻ1遘定｡ｨ遉ｺ・・---
+      try:
+          if turn_telop_msg and _ct_time.time() < turn_telop_until:
+              # 荳ｭ螟ｮ縺ｫ螟ｧ縺阪ａ縺ｮ繝・く繧ｹ繝医ｒ陦ｨ遉ｺ・医・繝ｼ繝牙・縺ｫ陦ｨ遉ｺ・・            bs = board_size
+              bx = board_left
+              by = board_top
+              telop_font_size = max(28, bs // 8)
+              telop_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", telop_font_size, bol
+d=True)
+              telop_surf = telop_font.render(turn_telop_msg, True, (255, 255, 255))
+              # drop shadow
+              shadow = telop_font.render(turn_telop_msg, True, (0, 0, 0))
+              tx = bx + (bs - telop_surf.get_width()) // 2
+              ty = by + (bs - telop_surf.get_height()) // 2
+              screen.blit(shadow, (tx + 2, ty + 2))
+              screen.blit(telop_surf, (tx, ty))
+      except Exception:
+          pass
+  
+      # 遏ｭ譎る俣陦ｨ遉ｺ逕ｨ縺ｮ隴ｦ蜻奇ｼ医Ο繧ｰ縺ｫ蜉縺医※逕ｻ髱｢縺ｫ繧・.5遘定｡ｨ遉ｺ・・    try:
+          if notice_msg and _ct_time.time() < notice_until:
+              # small semi-transparent box near top-center of board
+              box_w = min(500, board_size - 40)
+              notice_font_size = max(16, board_size // 24)
+              notice_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", notice_font_size, b
+old=True)
+              notice_surf = notice_font.render(notice_msg, True, (255, 230, 180))
+              shadow = notice_font.render(notice_msg, True, (0,0,0))
+              bx = board_left + (board_size - notice_surf.get_width()) // 2
+              by = board_top + 8
+              # background box
+              try:
+                  tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pyga
+me.SRCALPHA)
+                  tmp.fill((0,0,0,160))
+                  screen.blit(tmp, (bx-10, by-6))
+              except Exception:
+                  pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_s
+urf.get_height()+12))
+              screen.blit(shadow, (bx+2, by+2))
+              screen.blit(notice_surf, (bx, by))
+      except Exception:
+          pass
+  
+      try:
+          for p in chess.pieces:
+              # consider both the game.frozen_pieces mapping and a transient
+              # per-piece attribute that may be set when AI applies 蜃咲ｵ・            try:
+                  frozen_map = getattr(game, 'frozen_pieces', {})
+                  is_frozen = (id(p) in frozen_map and frozen_map.get(id(p), 0) > 0) or (hasattr(p, 'f
+rozen_turns') and getattr(p, 'frozen_turns', 0) > 0)
+              except Exception:
+                  is_frozen = id(p) in getattr(game, 'frozen_pieces', {})
+              if is_frozen:
+                  fx = board_left + p.col * square_w
+                  fy = board_top + p.row * square_h
+                  s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                  s.fill((30, 120, 200, 90))
+                  screen.blit(s, (fx, fy))
+                  # 蜃咲ｵ舌・繝ｼ繧ｯ
+                  mark = SMALL.render('蜃・, True, (255,255,255))
+                  screen.blit(mark, (fx + square_w - mark.get_width() - 4, fy + 4))
+      except Exception:
+          pass
+  
+      # 繝上う繝ｩ繧､繝茨ｼ磯∈謚槫庄閭ｽ縺ｪ遘ｻ蜍募・・・ Chess Main貅匁侠縺ｮ濶ｲ蛻・￠
+      if selected_piece:
+          # 蜿肴茶繝√ぉ繝・け・郁ｿ・峭譎ゅ・縺ｿ險ｱ蜿ｯ・峨ｒ濶ｲ蛻・￠縺吶ｋ縺溘ａ縺ｮ莠句燕蛻､螳・        try:
+              sp_color = getattr(selected_piece, 'color', selected_piece.get('color'))
+          except Exception:
+              sp_color = 'white'
+          try:
+              pre_self_in_check = is_in_check(chess.pieces, sp_color)
+          except Exception:
+              pre_self_in_check = False
+          try:
+              if sp_color == 'white':
+
+

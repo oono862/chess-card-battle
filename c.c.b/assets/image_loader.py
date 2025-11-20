@@ -56,6 +56,18 @@ def get_card_image(name: str, size=(72, 96)):
         "負けるわけないだろwww": "card_you_lose.gif",
         "鉄壁": "card_sh.png",
     }
+
+    def _normalize(n: str) -> str:
+        if not isinstance(n, str):
+            return n
+        # strip and convert full-width spaces to normal spaces, then collapse multiple spaces
+        s = n.strip().replace('\u3000', ' ')
+        # collapse runs of spaces
+        while '  ' in s:
+            s = s.replace('  ', ' ')
+        return s
+
+    norm_name = _normalize(name)
     # 1) Try direct candidates
     # preferred candidate filenames (including GIF)
     candidates = [
@@ -64,15 +76,17 @@ def get_card_image(name: str, size=(72, 96)):
         f"{name}.webp", f"{name}.bmp", f"{name}.gif"
     ]
     # if there is an explicit mapping for this card name, try it first
-    mapped = NAME_TO_FILE.get(name)
+    # try exact, then normalized mapping
+    mapped = NAME_TO_FILE.get(name) or NAME_TO_FILE.get(norm_name)
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
-        if os.path.exists(path):
+            mapped = NAME_TO_FILE.get(name) or NAME_TO_FILE.get(norm_name)
             try:
                 img = pygame.image.load(path).convert_alpha()
                 surf = pygame.transform.smoothscale(img, size)
             except Exception:
                 surf = None
+    # try candidates for the raw name and the normalized name
     for cand in candidates:
         path = os.path.join(IMG_DIR, cand)
         if os.path.exists(path):
@@ -82,6 +96,26 @@ def get_card_image(name: str, size=(72, 96)):
                 break
             except Exception:
                 pass
+    if surf is None and norm_name != name:
+        for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
+            path = os.path.join(IMG_DIR, cand)
+            if surf is None and norm_name != name:
+                for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
+                    path = os.path.join(IMG_DIR, cand)
+                    if os.path.exists(path):
+                        try:
+                            img = pygame.image.load(path).convert_alpha()
+                            surf = pygame.transform.smoothscale(img, size)
+                            break
+                        except Exception:
+                            pass
+            if os.path.exists(path):
+                try:
+                    img = pygame.image.load(path).convert_alpha()
+                    surf = pygame.transform.smoothscale(img, size)
+                    break
+                except Exception:
+                    pass
     
     # 2) Recursive search (case-insensitive base name match)
     if surf is None and os.path.isdir(IMG_DIR):

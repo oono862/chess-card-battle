@@ -81,11 +81,38 @@ def get_card_image(name: str, size=(72, 96)):
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
         if os.path.exists(path):
-            try:
-                img = pygame.image.load(path).convert_alpha()
-                surf = pygame.transform.smoothscale(img, size)
-            except Exception:
-                surf = None
+            # try multiple ways to load image to handle corrupted headers / formats
+            def _try_load(p):
+                # 1) pygame.load + convert_alpha
+                try:
+                    img = pygame.image.load(p).convert_alpha()
+                    return img
+                except Exception:
+                    pass
+                # 2) pygame.load without convert
+                try:
+                    img = pygame.image.load(p)
+                    return img
+                except Exception:
+                    pass
+                # 3) Pillow fallback
+                try:
+                    from PIL import Image
+                    im = Image.open(p).convert('RGBA')
+                    mode = im.mode
+                    size_px = im.size
+                    data = im.tobytes()
+                    surf_local = pygame.image.fromstring(data, size_px, mode).convert_alpha()
+                    return surf_local
+                except Exception:
+                    return None
+
+            img = _try_load(path)
+            if img is not None:
+                try:
+                    surf = pygame.transform.smoothscale(img, size)
+                except Exception:
+                    surf = None
 
     # try direct candidate filenames
     if surf is None:

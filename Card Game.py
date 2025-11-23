@@ -3766,36 +3766,113 @@ def ai_make_move():
 
 
 def get_card_image(name: str, size=(72, 96)):
+    """Return a pygame.Surface for the card named `name` scaled to `size`.
+
+    This implementation is tolerant: it checks an explicit name->file mapping
+    for special gimmick names, looks for candidate extensions including GIF,
+    performs a recursive filename search ignoring spaces/fullwidth spaces,
+    and falls back to Pillow if pygame.image.load fails for some formats.
+    """
     key = (name, size)
     if key in _image_cache:
         return _image_cache[key]
+
     surf = None
-    # 1) 直接候補
-    candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.webp", f"{name}.bmp"]
-    for cand in candidates:
-        path = os.path.join(IMG_DIR, cand)
+
+    # explicit mapping for special gimmick cards
+    NAME_TO_FILE = {
+        "ハンです☆": "card_death_1.png",
+        "命がけのギャンブル": "card_kaiji_Jo.png",
+        "負けるわけないだろwww": "card_you_lose.gif",
+        "鉄壁": "card_sh.png",
+    }
+
+    def _normalize(n: str) -> str:
+        try:
+            s = str(n)
+        except Exception:
+            s = n
+        s = s.replace('\u3000', ' ')
+        s = ' '.join(s.split())
+        return s
+
+    norm_name = _normalize(name)
+
+    # helper to robustly load image (pygame then Pillow)
+    def _try_load(p):
+        try:
+            img = pygame.image.load(p).convert_alpha()
+            return img
+        except Exception:
+            pass
+        try:
+            img = pygame.image.load(p)
+            return img
+        except Exception:
+            pass
+        try:
+            from PIL import Image
+            im = Image.open(p).convert('RGBA')
+            mode = im.mode
+            size_px = im.size
+            data = im.tobytes()
+            surf_local = pygame.image.fromstring(data, size_px, mode).convert_alpha()
+            return surf_local
+        except Exception:
+            return None
+
+    # 0) mapping override
+    mapped = None
+    for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
+        mapped = NAME_TO_FILE.get(k)
+        if mapped:
+            break
+    if mapped:
+        path = os.path.join(IMG_DIR, mapped)
         if os.path.exists(path):
-            try:
-                img = pygame.image.load(path).convert_alpha()
-                surf = pygame.transform.smoothscale(img, size)
-                break
-            except Exception:
-                pass
-    # 2) 再帰的にベース名一致を探索（拡張子/大文字小文字を無視）
-    if surf is None and os.path.isdir(IMG_DIR):
-        base_l = name.lower()
-        for root, _dirs, files in os.walk(IMG_DIR):
-            for f in files:
-                fn, ext = os.path.splitext(f)
-                if fn.lower() == base_l and ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
+            img = _try_load(path)
+            if img is not None:
+                try:
+                    surf = pygame.transform.smoothscale(img, size)
+                except Exception:
+                    surf = None
+
+    # 1) try direct candidates (including gif)
+    if surf is None:
+        candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.webp", f"{name}.bmp", f"{name}.gif"]
+        for cand in candidates:
+            path = os.path.join(IMG_DIR, cand)
+            if os.path.exists(path):
+                img = _try_load(path)
+                if img is not None:
                     try:
-                        path = os.path.join(root, f)
-                        img = pygame.image.load(path).convert_alpha()
                         surf = pygame.transform.smoothscale(img, size)
                         break
                     except Exception:
-                        continue
-    # If no image was found, create a simple placeholder surface so callers can blit safely
+                        surf = None
+
+    # 2) recursive search tolerant to spaces
+    if surf is None and os.path.isdir(IMG_DIR):
+        base_l = name.lower()
+        base_l_nospace = base_l.replace(' ', '').replace('\u3000', '')
+        for root, _dirs, files in os.walk(IMG_DIR):
+            for f in files:
+                fn, ext = os.path.splitext(f)
+                fn_l = fn.lower()
+                fn_l_nospace = fn_l.replace(' ', '').replace('\u3000', '')
+                if ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"] and (fn_l == base_l or fn_l_nospace == base_l_nospace):
+                    path = os.path.join(root, f)
+                    img = _try_load(path)
+                    if img is not None:
+                        try:
+                            surf = pygame.transform.smoothscale(img, size)
+                            break
+                        except Exception:
+                            surf = None
+            if surf is not None:
+                break
+
+    # 3) placeholder
     if surf is None:
         surf = pygame.Surface(size, pygame.SRCALPHA)
         surf.fill((220, 220, 230))
@@ -3809,49 +3886,11 @@ def get_card_image(name: str, size=(72, 96)):
     _image_cache[key] = surf
     return surf
 
-HELP_LINES = [
-    "[T] 次のターン開始",
-    "[1-7] カード使用",
-    "[D] 保留中: 捨て札確定",
-    "[L] ログ表示切替",
-    "[G] 墓地表示切替",
-    "[H] 相手の手札表示",
-    # "[F8] 反撃チェック直前局面にジャンプ (DEBUG)",
-    # "[F9] 同時チェック開始局面にジャンプ (DEBUG)",
-    "[クリック] カード拡大",
-    "[Esc] 終了",
-]
-
-
-def draw_text(surf, text, x, y, color=(20, 20, 20)):
-    img = FONT.render(text, True, color)
-    rect = surf.blit(img, (x, y))
-    return rect
-
-
-def wrap_text(text: str, max_width: int):
-    """Return list of lines wrapped to fit max_width using FONT metrics."""
-    lines = []
-    cur = ""
-    for ch in text:
-        test = cur + ch
-        w, _ = FONT.size(test)
-        if w <= max_width or cur == "":
-            cur = test
-        else:
-            lines.append(cur)
-            cur = ch
-    if cur:
-        lines.append(cur)
-    return lines
-
 
 def compute_layout(win_w: int, win_h: int):
-    """Compute common layout metrics used by draw_panel and input handling.
-    Returns a dict with keys:
-        left_margin, left_panel_width, right_panel_width, right_panel_x,
-        board_left, board_top, board_size, board_area_top, board_area_height,
-        card_area_top, scale
+    """Return layout tuple:
+    (board_left, board_top, board_size, board_area_top, board_area_height,
+     card_area_top, scale)
     """
     # Compute a uniform scale relative to a base UI resolution so that
     # fullscreen and windowed modes scale UI elements consistently.

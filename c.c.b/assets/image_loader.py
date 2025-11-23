@@ -124,15 +124,16 @@ def get_card_image(name: str, size=(72, 96)):
             path = os.path.join(IMG_DIR, cand)
             if os.path.exists(path):
                 try:
-                mapped = None
-                for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
-                    mapped = NAME_TO_FILE.get(k)
-                    if mapped:
-                        break
+                    img = pygame.image.load(path).convert_alpha()
                     surf = pygame.transform.smoothscale(img, size)
                     break
                 except Exception:
-                    pass
+                    try:
+                        img = pygame.image.load(path)
+                        surf = pygame.transform.smoothscale(img, size)
+                        break
+                    except Exception:
+                        pass
 
     # try normalized name candidates if different
     if surf is None and norm_name != name:
@@ -149,10 +150,15 @@ def get_card_image(name: str, size=(72, 96)):
     # 2) Recursive search (case-insensitive base name match)
     if surf is None and os.path.isdir(IMG_DIR):
         base_l = name.lower()
+        base_l_nospace = base_l.replace(' ', '').replace('\u3000', '')
         for root, _dirs, files in os.walk(IMG_DIR):
             for f in files:
                 fn, ext = os.path.splitext(f)
-                if fn.lower() == base_l and ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
+                fn_l = fn.lower()
+                fn_l_nospace = fn_l.replace(' ', '').replace('\u3000', '')
+                if ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"] and (
+                    fn_l == base_l or fn_l_nospace == base_l_nospace
+                ):
                     try:
                         path = os.path.join(root, f)
                         img = pygame.image.load(path).convert_alpha()

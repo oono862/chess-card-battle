@@ -76,8 +76,12 @@ def get_card_image(name: str, size=(72, 96)):
         f"{name}.webp", f"{name}.bmp", f"{name}.gif"
     ]
 
-    # if there is an explicit mapping for this card name, try it first (exact then normalized)
-    mapped = NAME_TO_FILE.get(name) or NAME_TO_FILE.get(norm_name)
+    # if there is an explicit mapping for this card name, try multiple variants
+    mapped = None
+    for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
+        mapped = NAME_TO_FILE.get(k)
+        if mapped:
+            break
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
         if os.path.exists(path):
@@ -120,7 +124,11 @@ def get_card_image(name: str, size=(72, 96)):
             path = os.path.join(IMG_DIR, cand)
             if os.path.exists(path):
                 try:
-                    img = pygame.image.load(path).convert_alpha()
+                mapped = None
+                for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
+                    mapped = NAME_TO_FILE.get(k)
+                    if mapped:
+                        break
                     surf = pygame.transform.smoothscale(img, size)
                     break
                 except Exception:

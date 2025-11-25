@@ -60,82 +60,6 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 # Help/operation text: slightly bolder and with more spacing for readability
 HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
-
-def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0):
-    """Lightweight, local draw_text fallback used by the UI.
-
-    This implementation avoids importing the larger `ui.layout` module
-    so the root `Card Game.py` can run standalone for tests. It supports
-    basic `bold` and `scale` and ignores per-letter spacing for
-    simplicity.
-    """
-    # Micro-optimized draw_text: cache fonts to avoid repeated SysFont calls
-    try:
-        # fast-path: use module FONT when no scaling/bold/letter-spacing requested
-        if (not bold) and (letter_spacing == 0) and (float(scale) == 1.0):
-            try:
-                img = FONT.render(str(text), True, color)
-                return surf.blit(img, (x, y))
-            except Exception:
-                pass
-
-        # font cache keyed by (size, bold)
-        if '_font_cache' not in globals():
-            globals()['_font_cache'] = {}
-        _font_cache = globals()['_font_cache']
-
-        try:
-            base_h = max(10, FONT.get_height())
-        except Exception:
-            base_h = 20
-        size = max(10, int(base_h * float(scale)))
-
-        key = (size, bool(bold))
-        font = _font_cache.get(key)
-        if font is None:
-            try:
-                font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=bool(bold))
-            except Exception:
-                font = pygame.font.Font(None, size)
-            _font_cache[key] = font
-
-        if letter_spacing <= 0:
-            img = font.render(str(text), True, color)
-            return surf.blit(img, (x, y))
-
-        # per-character rendering with spacing
-        cur_x = x
-        spacing_px = max(0, int(letter_spacing * float(scale)))
-        max_h = 0
-        for ch in str(text):
-            ch_surf = font.render(ch, True, color)
-            surf.blit(ch_surf, (cur_x, y))
-            cur_x += ch_surf.get_width() + spacing_px
-            if ch_surf.get_height() > max_h:
-                max_h = ch_surf.get_height()
-        return pygame.Rect(x, y, cur_x - x, max_h)
-    except Exception:
-        try:
-            f = pygame.font.Font(None, 24)
-            img = f.render(str(text), True, color)
-            return surf.blit(img, (x, y))
-        except Exception:
-            return pygame.Rect(x, y, 0, 0)
-
-
-HELP_LINES = [
-    "[T] 次のターン開始",
-    "[1-7] カード使用",
-    "[D] 保留中: 捨て札確定",
-    "[L] ログ表示切替",
-    "[G] 墓地表示切替",
-    "[H] 相手の手札表示",
-    "[クリック] カード拡大",
-    "[Esc] 終了",
-]
-
-
-
 # ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
 gimmick_activation_mode = 'number_key'
 # When top-level "カードをクリックして発動" is selected we keep a submode
@@ -3842,113 +3766,36 @@ def ai_make_move():
 
 
 def get_card_image(name: str, size=(72, 96)):
-    """Return a pygame.Surface for the card named `name` scaled to `size`.
-
-    This implementation is tolerant: it checks an explicit name->file mapping
-    for special gimmick names, looks for candidate extensions including GIF,
-    performs a recursive filename search ignoring spaces/fullwidth spaces,
-    and falls back to Pillow if pygame.image.load fails for some formats.
-    """
     key = (name, size)
     if key in _image_cache:
         return _image_cache[key]
-
     surf = None
-
-    # explicit mapping for special gimmick cards (map to existing images)
-    NAME_TO_FILE = {
-        "ハンです☆": "墓地ルーレット.png",
-        "命がけのギャンブル": "ChatGPT Image 2025年11月4日 11_12_06.png",
-        "負けるわけないだろwww": "Image_F.gif",
-        "鉄壁": "暴風.png",
-    }
-
-    def _normalize(n: str) -> str:
-        try:
-            s = str(n)
-        except Exception:
-            s = n
-        s = s.replace('\u3000', ' ')
-        s = ' '.join(s.split())
-        return s
-
-    norm_name = _normalize(name)
-
-    # helper to robustly load image (pygame then Pillow)
-    def _try_load(p):
-        try:
-            img = pygame.image.load(p).convert_alpha()
-            return img
-        except Exception:
-            pass
-        try:
-            img = pygame.image.load(p)
-            return img
-        except Exception:
-            pass
-        try:
-            from PIL import Image
-            im = Image.open(p).convert('RGBA')
-            mode = im.mode
-            size_px = im.size
-            data = im.tobytes()
-            surf_local = pygame.image.fromstring(data, size_px, mode).convert_alpha()
-            return surf_local
-        except Exception:
-            return None
-
-    # 0) mapping override
-    mapped = None
-    for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
-        mapped = NAME_TO_FILE.get(k)
-        if mapped:
-            break
-    if mapped:
-        path = os.path.join(IMG_DIR, mapped)
+    # 1) 直接候補
+    candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.webp", f"{name}.bmp"]
+    for cand in candidates:
+        path = os.path.join(IMG_DIR, cand)
         if os.path.exists(path):
-            img = _try_load(path)
-            if img is not None:
-                try:
-                    surf = pygame.transform.smoothscale(img, size)
-                except Exception:
-                    surf = None
-
-    # 1) try direct candidates (including gif)
-    if surf is None:
-        candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.webp", f"{name}.bmp", f"{name}.gif"]
-        for cand in candidates:
-            path = os.path.join(IMG_DIR, cand)
-            if os.path.exists(path):
-                img = _try_load(path)
-                if img is not None:
-                    try:
-                        surf = pygame.transform.smoothscale(img, size)
-                        break
-                    except Exception:
-                        surf = None
-
-    # 2) recursive search tolerant to spaces
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                surf = pygame.transform.smoothscale(img, size)
+                break
+            except Exception:
+                pass
+    # 2) 再帰的にベース名一致を探索（拡張子/大文字小文字を無視）
     if surf is None and os.path.isdir(IMG_DIR):
         base_l = name.lower()
-        base_l_nospace = base_l.replace(' ', '').replace('\u3000', '')
         for root, _dirs, files in os.walk(IMG_DIR):
             for f in files:
                 fn, ext = os.path.splitext(f)
-                fn_l = fn.lower()
-                fn_l_nospace = fn_l.replace(' ', '').replace('\u3000', '')
-                if ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"] and (fn_l == base_l or fn_l_nospace == base_l_nospace):
-                    path = os.path.join(root, f)
-                    img = _try_load(path)
-                    if img is not None:
-                        try:
-                            surf = pygame.transform.smoothscale(img, size)
-                            break
-                        except Exception:
-                            surf = None
-            if surf is not None:
-                break
-
-    # 3) placeholder
+                if fn.lower() == base_l and ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
+                    try:
+                        path = os.path.join(root, f)
+                        img = pygame.image.load(path).convert_alpha()
+                        surf = pygame.transform.smoothscale(img, size)
+                        break
+                    except Exception:
+                        continue
+    # If no image was found, create a simple placeholder surface so callers can blit safely
     if surf is None:
         surf = pygame.Surface(size, pygame.SRCALPHA)
         surf.fill((220, 220, 230))
@@ -3962,11 +3809,49 @@ def get_card_image(name: str, size=(72, 96)):
     _image_cache[key] = surf
     return surf
 
+HELP_LINES = [
+    "[T] 次のターン開始",
+    "[1-7] カード使用",
+    "[D] 保留中: 捨て札確定",
+    "[L] ログ表示切替",
+    "[G] 墓地表示切替",
+    "[H] 相手の手札表示",
+    # "[F8] 反撃チェック直前局面にジャンプ (DEBUG)",
+    # "[F9] 同時チェック開始局面にジャンプ (DEBUG)",
+    "[クリック] カード拡大",
+    "[Esc] 終了",
+]
+
+
+def draw_text(surf, text, x, y, color=(20, 20, 20)):
+    img = FONT.render(text, True, color)
+    rect = surf.blit(img, (x, y))
+    return rect
+
+
+def wrap_text(text: str, max_width: int):
+    """Return list of lines wrapped to fit max_width using FONT metrics."""
+    lines = []
+    cur = ""
+    for ch in text:
+        test = cur + ch
+        w, _ = FONT.size(test)
+        if w <= max_width or cur == "":
+            cur = test
+        else:
+            lines.append(cur)
+            cur = ch
+    if cur:
+        lines.append(cur)
+    return lines
+
 
 def compute_layout(win_w: int, win_h: int):
-    """Return layout tuple:
-    (board_left, board_top, board_size, board_area_top, board_area_height,
-     card_area_top, scale)
+    """Compute common layout metrics used by draw_panel and input handling.
+    Returns a dict with keys:
+        left_margin, left_panel_width, right_panel_width, right_panel_x,
+        board_left, board_top, board_size, board_area_top, board_area_height,
+        card_area_top, scale
     """
     # Compute a uniform scale relative to a base UI resolution so that
     # fullscreen and windowed modes scale UI elements consistently.
@@ -4139,13 +4024,7 @@ def draw_panel():
     info_y += line_height
     # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
     # PPの下の表示を非表示（下部に表示されるため）
-    #             draw_text(screen, "白チェック中", info_x, info_y, col)
-    #             info_y += line_height - 10
-    #         if b_check:
-    #             draw_text(screen, "黒チェック中", info_x, info_y, col)
-    #             info_y += line_height - 10
-    # except Exception:
-    #     pass
+    # (debug logging for deck modal shown elsewhere)
     # 簡易エフェクト表示: 次に発動する特別アクションを左パネルに表示
     # 表記ルール: 「次：飛越可」「次：追加行動×n」
     if getattr(game.player, 'next_move_can_jump', False):
@@ -4175,6 +4054,44 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
+
+    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+    try:
+        # プレイヤー側
+        if getattr(game.player, 'iron_wall_active', False):
+            label_txt = "鉄壁発動中"
+            pad_x = 10
+            pad_y = 6
+            txt_surf = FONT.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            # high-contrast cyan background with rounded corners
+            try:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+            except Exception:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+
+        # 相手側（AI）が鉄壁発動中なら表示
+        if getattr(ai_player, 'iron_wall_active', False):
+            label_txt = "相手: 鉄壁発動中"
+            pad_x = 8
+            pad_y = 4
+            txt_surf = SMALL.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            try:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+            except Exception:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+    except Exception:
+        # fail-safe: don't break UI if something goes wrong
+        pass
 
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:
@@ -4414,16 +4331,15 @@ def draw_panel():
                     fy = board_top + r * square_h
                     # scale animation to exactly the square size so it fits the tile
                     try:
-                        f_surf = pygame.transform.smoothscale(frame, (square_w, square_h))
+                        fw = int(square_w)
+                        fh = int(square_h)
+                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
                     except Exception:
                         f_surf = frame
-                    fw = f_surf.get_width()
-                    fh = f_surf.get_height()
-                    # center the scaled animation INSIDE the tile
-                    fx = board_left + c * square_w + (square_w - fw) // 2
-                    fy = board_top + r * square_h + (square_h - fh) // 2
+                    # draw aligned to the tile's top-left so it occupies the tile area
                     screen.blit(f_surf, (fx, fy))
     except Exception:
+        # Don't let animation errors break UI
         pass
 
     # --- 封鎖タイルでのループ再生: Image_MG.gif (player) / Image_MG_2P.gif (AI) ---

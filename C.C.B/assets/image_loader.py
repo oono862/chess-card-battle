@@ -33,7 +33,7 @@ def get_main_module():
     return None
 
 
-def get_card_image(name: str, size=(72, 96)):
+def get_card_image(name: str, size=(72, 96), force_reload: bool = False):
     """Load and cache a card image by name.
     
     Args:
@@ -44,6 +44,11 @@ def get_card_image(name: str, size=(72, 96)):
         pygame.Surface with the card image or placeholder
     """
     key = (name, size)
+    if force_reload and key in _image_cache:
+        try:
+            del _image_cache[key]
+        except Exception:
+            pass
     if key in _image_cache:
         return _image_cache[key]
     
@@ -58,11 +63,19 @@ def get_card_image(name: str, size=(72, 96)):
         path = os.path.join(IMG_DIR, cand)
         if os.path.exists(path):
             try:
-                img = pygame.image.load(path).convert_alpha()
+                img = pygame.image.load(path)
+                # convert_alpha requires a display; fallback to convert()
+                try:
+                    img = img.convert_alpha()
+                except Exception:
+                    try:
+                        img = img.convert()
+                    except Exception:
+                        pass
                 surf = pygame.transform.smoothscale(img, size)
                 break
             except Exception:
-                pass
+                surf = None
     
     # 2) Recursive search (case-insensitive base name match)
     if surf is None and os.path.isdir(IMG_DIR):
@@ -73,7 +86,14 @@ def get_card_image(name: str, size=(72, 96)):
                 if fn.lower() == base_l and ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
                     try:
                         path = os.path.join(root, f)
-                        img = pygame.image.load(path).convert_alpha()
+                        img = pygame.image.load(path)
+                        try:
+                            img = img.convert_alpha()
+                        except Exception:
+                            try:
+                                img = img.convert()
+                            except Exception:
+                                pass
                         surf = pygame.transform.smoothscale(img, size)
                         break
                     except Exception:
@@ -100,7 +120,7 @@ def get_card_image(name: str, size=(72, 96)):
     return surf
 
 
-def get_piece_image_surface(name: str, color: str, size: tuple):
+def get_piece_image_surface(name: str, color: str, size: tuple, force_reload: bool = False):
     """Return a pygame.Surface for the given chess piece.
     
     Args:
@@ -112,6 +132,11 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
         pygame.Surface with the piece image or None if not found
     """
     key = (name, color, size)
+    if force_reload and key in _piece_image_cache:
+        try:
+            del _piece_image_cache[key]
+        except Exception:
+            pass
     if key in _piece_image_cache:
         return _piece_image_cache[key]
     
@@ -122,7 +147,14 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
     
     try:
         if os.path.exists(path):
-            img = pygame.image.load(path).convert_alpha()
+            img = pygame.image.load(path)
+            try:
+                img = img.convert_alpha()
+            except Exception:
+                try:
+                    img = img.convert()
+                except Exception:
+                    pass
             surf = pygame.transform.smoothscale(img, size)
     except Exception:
         surf = None

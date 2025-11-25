@@ -46,10 +46,10 @@ def get_card_image(name: str, size=(72, 96)):
     surf = None
 
     NAME_TO_FILE = {
-        "ハンです☆": "墓地ルーレット.png",
-        "命がけのギャンブル": "ChatGPT Image 2025年11月4日 11_12_06.png",
-        "負けるわけないだろwww": "Image_F.gif",
-        "鉄壁": "暴風.png",
+        "ハンです☆": "ハン です☆.png",
+        "命がけのギャンブル": "命がけのギャンブル.png",
+        "負けるわけないだろwww": "負けるわけないだろwww.gif",
+        "鉄壁": "鉄壁.png",
     }
 
     def _normalize(s: str) -> str:

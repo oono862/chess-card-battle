@@ -4176,7 +4176,6 @@ def draw_panel():
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
 
-
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:
         # プレイヤー側

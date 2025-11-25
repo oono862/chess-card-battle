@@ -1,244 +1,44 @@
 #カードゲーム部分実装
 import pygame
 from pygame import Rect
-import sys, traceback, os, json, logging
-from datetime import datetime
-import time as _ct_time
+import sys
+import traceback
+import os
+import json
+import logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# 親ディレクトリのcard_coreモジュールをインポート
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-try:
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
-except Exception:
-    logger.exception("Failed to import card_core module")
-    raise
-# チェスロジックを外部モジュール化
-try:
-    import chess_engine as chess
-except Exception:
-    logger.exception("Failed to import chess_engine module")
-    raise
-# チェスルールモジュール
-try:
-    from chess import rules as chess_rules
-except Exception:
-    logger.exception("Failed to import chess.rules module")
-    chess_rules = None
 
-# ゲーム状態管理
 try:
-    from game.state import get_game_state, reset_game_state
+    from .card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
-    logger.exception("Failed to import game.state module")
-    class _FallbackGameState:
-        def __init__(self):
-            self.game = None
-            self.ai_player = None
-    _fallback_state = _FallbackGameState()
-    def get_game_state(): return _fallback_state
-    def reset_game_state(): pass
-# ユーティリティヘルパー関数
-try:
-    from utils.helpers import on_board, get_opponent_hand_count, get_piece_at, simulate_move
-    from utils.drawing import draw_dashed_rect
-except Exception:
-    logger.exception("Failed to import utils.helpers module")
-    def on_board(r, c): return 0 <= r < 8 and 0 <= c < 8
-    def get_opponent_hand_count():
-        try: return len(ai_player.hand.cards) if ai_player else 0
-        except Exception: return 0
-    def get_piece_at(row, col):
-        try: return chess.get_piece_at(row, col)
-        except Exception: return None
-    def simulate_move(src_piece, to_r, to_c):
-        try: return chess.simulate_move(src_piece, to_r, to_c)
-        except Exception: return []
-    def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2): pass
+    # 直接実行用パス解決（フォルダ直接実行時）
+    try:
+        from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    except Exception:
+        logger.exception("Failed to import card_core module")
+        raise
 
-# Pygameウィンドウ管理をインポート
+# チェスロジックを外部モジュール化（Chess MainのPieceクラス実装）
 try:
-    from ui.window import initialize_window, get_screen, get_clock, get_window_size, update_window_size
+    from . import chess_engine as chess
 except Exception:
-    logger.exception("Failed to import ui.window module")
-    pygame.init()
-    def initialize_window(w=1200, h=800, caption="Chess-Card-Battle β", resizable=True):
-        screen = pygame.display.set_mode((w, h), pygame.RESIZABLE if resizable else 0)
-        pygame.display.set_caption(caption)
-        return screen, pygame.time.Clock()
-    def get_screen(): return pygame.display.get_surface()
-    def get_clock(): return pygame.time.Clock()
-    def get_window_size():
-        s = pygame.display.get_surface()
-        return s.get_size() if s else (1200, 800)
-    def update_window_size(): pass
+    try:
+        import chess_engine as chess
+    except Exception:
+        logger.exception("Failed to import chess_engine module")
+        raise
 
-# UIフォント設定をインポート
-try:
-    from ui.config import (get_font, FONT, SMALL, TINY, HELP_FONT, get_gimmick_activation_mode, set_gimmick_activation_mode, get_gimmick_click_submode, set_gimmick_click_submode, DOUBLE_CLICK_INTERVAL, DOUBLE_CLICK_DIST, DOUBLE_CLICK_DIST_SQ, get_last_click_info, set_last_click_info)
-    from ui.layout import draw_text, wrap_text, compute_layout, BASE_UI_W, BASE_UI_H
-    from ui import card_renderer
-    from ui import overlay
-except Exception:
-    logger.exception("Failed to import ui modules")
-    BASE_UI_W, BASE_UI_H = 1200, 800
-    pygame.init()
-    FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
-    SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
-    TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
-    HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
-    DOUBLE_CLICK_INTERVAL, DOUBLE_CLICK_DIST, DOUBLE_CLICK_DIST_SQ = 0.60, 36, 1296
-    def get_gimmick_activation_mode(): return 'number_key'
-    def set_gimmick_activation_mode(mode): pass
-    def get_gimmick_click_submode(): return 'click_enlarged'
-    def set_gimmick_click_submode(submode): pass
-    def get_last_click_info(): return (0.0, (0, 0), None)
-    def set_last_click_info(time, pos, card_index): pass
-    FONT_CACHE = {}
-    def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
-        key = (family, int(size), bool(bold))
-        f = FONT_CACHE.get(key)
-        if f: return f
-        try: f = pygame.font.SysFont(family, int(size), bold=bold)
-        except Exception:
-            try: f = pygame.font.Font(None, int(size))
-            except Exception: f = FONT
-        FONT_CACHE[key] = f
-        return f
-    def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0): pass
-    def wrap_text(text: str, max_width: int): return [text]
-    def compute_layout(win_w: int, win_h: int): return {}
-    # フォールバックのoverlay関数を定義
-    class _FallbackOverlay:
-        def handle_scrollbar_drag_start(self, pos, show_log, scrollbar_rect, log_scroll_offset): return False
-        def handle_scrollbar_drag_end(self): pass
-        def handle_scrollbar_motion(self, pos, show_log, scrollbar_rect, log_scroll_offset, max_scroll): return log_scroll_offset
-        def get_scrollbar_state(self): return (None, False, 0, 0)
-    overlay = _FallbackOverlay()
-
-# BGM管理をインポート
-try:
-    from audio.bgm_manager import (set_bgm_mode, get_bgm_enabled, set_bgm_enabled, get_bgm_volume, set_bgm_volume, get_current_bgm_mode)
-except Exception:
-    logger.exception("Failed to import audio.bgm_manager module")
-    def set_bgm_mode(mode: str | None) -> None: pass
-    def get_bgm_enabled(): return True
-    def set_bgm_enabled(enabled): pass
-    def get_bgm_volume(): return 0.8
-    def set_bgm_volume(volume): pass
-    def get_current_bgm_mode(): return None
-# デバッグツールをインポート
-try:
-    from debug.debug_tools import (DEBUG_COUNTER_CHECK_CARD_MODE, _debug_mark_card_played, debug_setup_castling, debug_setup_en_passant, debug_setup_promotion, debug_reset_initial, debug_setup_checkmate, debug_setup_counter_check_white, debug_setup_simul_check_start, set_debug_counter_check_mode, get_debug_counter_check_mode)
-except Exception:
-    logger.exception("Failed to import debug.debug_tools module")
-    DEBUG_COUNTER_CHECK_CARD_MODE = False
-    def _debug_mark_card_played(): pass
-    def debug_setup_castling(): pass
-    def debug_setup_en_passant(): pass
-    def debug_setup_promotion(): pass
-    def debug_reset_initial(): pass
-    def debug_setup_checkmate(): pass
-    def debug_setup_counter_check_white(): pass
-    def debug_setup_simul_check_start(): pass
-    def set_debug_counter_check_mode(enabled: bool): pass
-    def get_debug_counter_check_mode() -> bool: return False
-
-# 画像・アニメーション管理をインポート
-try:
-    from assets import image_loader, animation
-    IMG_DIR = image_loader.IMG_DIR
-    get_card_image = image_loader.get_card_image
-    get_piece_image_surface = image_loader.get_piece_image_surface
-    play_heat_gif_at = animation.play_heat_gif_at
-    play_ic_gif_at = animation.play_ic_gif_at
-    heat_gif_anim = animation.heat_gif_anim
-    ic_gif_anim = animation.ic_gif_anim
-    _ensure_mg_gif_loaded = animation._ensure_mg_gif_loaded
-    _ensure_mg_gif_2p_loaded = animation._ensure_mg_gif_2p_loaded
-    IC_GIF_SCALE = animation.IC_GIF_SCALE
-    _animation_module = animation
-except Exception:
-    logger.exception("Failed to import assets modules")
-    IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images")
-    def get_card_image(name: str, size=(72, 96)): return None
-    def get_piece_image_surface(name: str, color: str, size: tuple): return None
-    def play_heat_gif_at(row: int, col: int): pass
-    def play_ic_gif_at(row: int, col: int): pass
-    def _ensure_mg_gif_loaded(): pass
-    def _ensure_mg_gif_2p_loaded(): pass
-    heat_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
-    ic_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
-    IC_GIF_SCALE = 1.4
-    _animation_module = None
-
-# デッキ管理をインポート
-try:
-    from game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
-    from game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
-except Exception:
-    logger.exception("Failed to import game modules")
-    import os as _os
-    DECK_SAVE_FILE = _os.path.join(_os.path.dirname(__file__), 'saved_decks.json')
-    def load_saved_decks(): return [None] * 9
-    def save_decks_to_file(decks): pass
-    def list_custom_decks(): return []
-    def load_custom_deck_by_name(name: str): return None
-    def build_deck_for_mode(mode: str):
-        try: return new_game_with_rule_deck().player.deck
-        except Exception: return None
-    def build_ai_player(mode: str):
-        try:
-            deck = build_deck_for_mode(mode)
-            return PlayerState(deck=deck, pp_max=10)
-        except Exception: return None
-    def build_game_from_card_names(names): return None
-    def start_player_turn(ai_end_msg: str = None): pass
-    def attempt_start_turn(): pass
-    def end_player_chess_move(): pass
-    def switch_turn(): pass
-
-# ゲームループ管理をインポート
-try:
-    from game import loop_manager
-except Exception:
-    logger.exception("Failed to import game.loop_manager module")
-    loop_manager = None
-# キーボード入力処理をインポート
-try:
-    from input.keyboard_handler import handle_keydown as _handle_keydown_impl
-except Exception:
-    logger.exception("Failed to import input.keyboard_handler module")
-    _handle_keydown_impl = None
-# モーダルダイアログをインポート
-try:
-    from ui.modals.screen_modals import show_start_screen as _show_start_screen_impl, show_settings_screen as _show_settings_screen_impl
-except Exception:
-    logger.exception("Failed to import ui.modals.screen_modals module")
-    _show_start_screen_impl = None
-    _show_settings_screen_impl = None
-# チェス盤描画をインポート
-try:
-    from ui.board_renderer import (draw_chessboard, draw_pieces, draw_card_effects, draw_gif_animations, draw_turn_telop, draw_notice_message, draw_highlights, draw_check_indicator)
-except Exception:
-    logger.exception("Failed to import ui.board_renderer module")
-    def draw_chessboard(screen, layout, chess): pass
-    def draw_pieces(screen, layout, chess, SMALL): pass
-    def draw_card_effects(screen, layout, game, chess, TINY): pass
-    def draw_gif_animations(screen, layout): pass
-    def draw_turn_telop(screen, layout, turn_telop_msg, turn_telop_until): pass
-    def draw_notice_message(screen, layout, notice_msg, notice_until): pass
-    def draw_highlights(screen, layout, selected_piece, highlight_squares, chess, game, is_in_check, simulate_move): pass
-    def draw_check_indicator(screen, layout, game_over, chess, is_in_check_for_display, can_attack_king_with_cards, W, H): pass
 
 pygame.init()
 
 # 画面設定
 W, H = 1200, 800
-# 既存のdisplay surfaceを再利用（複数ウィンドウ防止）
+# Allow the user to resize/minimize/maximize the game window
+# If another module (e.g. main launcher) already created a display surface,
+# prefer to reuse it to avoid creating multiple windows when this module
+# is imported rather than executed directly.
 try:
     existing_surf = pygame.display.get_surface()
 except Exception:
@@ -250,7 +50,7 @@ else:
     pygame.display.set_caption("Chess-Card-Battle β")
 clock = pygame.time.Clock()
 
-# 基準UI解像度（スケーリング用）
+# Base UI resolution used for consistent scaling between windowed and fullscreen
 BASE_UI_W = 1200
 BASE_UI_H = 800
 
@@ -262,17 +62,28 @@ HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True
 
 # ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
 gimmick_activation_mode = 'number_key'
-gimmick_click_submode = 'click_enlarged'  # クリックモード時のサブモード
-# ダブルクリック検出用
+# When top-level "カードをクリックして発動" is selected we keep a submode
+# which is either 'click_enlarged' or 'double_click'. The effective
+# `gimmick_activation_mode` mirrors this submode when click-top is active.
+gimmick_click_submode = 'click_enlarged'
+# double click support
 last_click_time = 0.0
 last_click_pos = (0, 0)
+# Track the last logical card index that was clicked (None when click wasn't on a hand card)
 last_clicked_card_index = None
+# Increase interval slightly to make double-click detection more forgiving for slower users
 DOUBLE_CLICK_INTERVAL = 0.60
-DOUBLE_CLICK_DIST = 36
+# Maximum pixel distance between clicks to be considered a double-click
+DOUBLE_CLICK_DIST = 36  # pixels
 DOUBLE_CLICK_DIST_SQ = DOUBLE_CLICK_DIST * DOUBLE_CLICK_DIST
 
-# ゲーム状態（難易度・デッキモード選択後に初期化）
+# ゲーム状態
+# NOTE: defer creating the actual game and AI decks until after the
+# user selects difficulty and deck mode in the start flow. We'll
+# initialize `game` and `ai_player` via `new_game_with_mode()` so the
+# deck sizes can match the player's choice (fixed=24 / custom=20).
 game = None
+# AI placeholder; will be created at game start
 ai_player = None
 
 # Convenience fallback for test imports: when this module is imported by
@@ -283,15 +94,11 @@ try:
     if game is None:
         try:
             game = new_game_with_sample_deck()
-            # Register GIF animation hook
-            if game and _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
-                game.play_ic_gif = _animation_module.play_ic_gif_at
         except Exception:
             # best-effort fallback: leave game as None if creation fails
             game = None
 except Exception:
     # swallow any import-time errors to avoid breaking consumers
-    pass
     pass
 # ヘルパー: 相手（AI）の手札枚数を取得する（UI はこれを参照する）
 def get_opponent_hand_count():
@@ -314,19 +121,320 @@ log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
-# BGM設定（設定画面で変更可）
+# ---- BGM 設定 (UI から変更可能) ----
+# BGM を再生するかどうか (設定画面で切替)
 bgm_enabled = True
+# BGM ボリューム (0.0 - 1.0)
 bgm_volume = 0.8
+
+# track current logical bgm mode so callers can reapply when toggling
 current_bgm_mode = None
 
-# デッキモード: 'fixed'=ルールデッキ(24枚), 'custom'=作成デッキ(20枚)
+# Deck selection mode: 'fixed' uses the rule deck (24 cards),
+# 'custom' uses the created deck (20 cards). This is set after the
+# difficulty + deck choice modal.
 DECK_MODE = 'fixed'
 
-# デッキ管理関数(_custom_decks_dir, list_custom_decks, load_custom_deck_by_name, 
-# build_game_from_card_names, build_deck_for_mode, build_ai_player)は
-# game/deck_manager.pyに移行済みのため削除しました
 
-# set_bgm_modeはaudio/bgm_manager.pyに移行済みのため削除しました
+def _custom_decks_dir():
+    """Return path to custom decks directory (may not exist)."""
+    return os.path.join(os.path.dirname(__file__), 'decks')
+
+
+def list_custom_decks():
+    """Return a list of custom deck basenames (without .json)."""
+    d = _custom_decks_dir()
+    out = []
+    try:
+        if os.path.isdir(d):
+            for fn in sorted(os.listdir(d)):
+                if fn.lower().endswith('.json'):
+                    out.append(os.path.splitext(fn)[0])
+    except Exception:
+        logger.exception("Error while listing custom decks")
+    return out
+
+
+def load_custom_deck_by_name(name: str):
+    """Load a custom deck (list of card names) from decks/<name>.json.
+
+    Returns list of card names or None on error.
+    """
+    d = _custom_decks_dir()
+    path = os.path.join(d, f"{name}.json")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception:
+        logger.exception("Failed to load custom deck: %s", path)
+    return None
+
+
+def build_game_from_card_names(names):
+    """Build a Game whose player's deck contains cards named in `names`.
+
+    This maps names to prototypes from make_rule_cards_deck(); unknown
+    names are skipped. On failure, fall back to new_game_with_mode('custom').
+    """
+    try:
+        proto_deck = make_rule_cards_deck()
+        proto_map = {c.name: c for c in proto_deck.cards}
+        # build a normalization map for prototypes to improve matching robustness
+        def _norm_key(s: str) -> str:
+            try:
+                ss = str(s)
+            except Exception:
+                ss = s
+            ss = ss.replace('\u3000', ' ')
+            ss = ' '.join(ss.split())
+            return ss
+        proto_map_norm = {}
+        for c in proto_deck.cards:
+            k = _norm_key(c.name)
+            proto_map_norm[k] = c
+            proto_map_norm[k.replace(' ', '')] = c
+
+        pool = []
+        # allow some cards that are build-only (not included in make_rule_cards_deck)
+        extra_map = {}
+        try:
+            import card_core as cc
+            extra_map = {
+                '命がけのギャンブル': getattr(cc, 'eff_risky_gamble', None),
+                '負けるわけないだろwww': getattr(cc, 'eff_no_lose', None),
+                '鉄壁': getattr(cc, 'eff_iron_wall', None),
+                'ハンです☆': getattr(cc, 'eff_hand_discard', None),
+            }
+        except Exception:
+            extra_map = {}
+
+        def _norm(n: str) -> str:
+            # normalize whitespace and common fullwidth space variants
+            try:
+                s = str(n)
+            except Exception:
+                s = n
+            s = s.replace('\u3000', ' ')  # fullwidth space -> normal
+            # collapse multiple whitespace and strip ends
+            s = ' '.join(s.split())
+            return s
+
+        unmatched = []
+        for nm in names:
+            norm_nm = _norm(nm)
+            # prefer normalized prototype lookup to avoid mismatch
+            p = proto_map.get(nm) or proto_map.get(norm_nm) or proto_map.get(norm_nm.replace(' ', '')) or proto_map_norm.get(norm_nm) or proto_map_norm.get(norm_nm.replace(' ', ''))
+            if p is None:
+                # try extra_map fallback with normalized keys
+                eff = extra_map.get(nm) or extra_map.get(norm_nm) or extra_map.get(norm_nm.replace(' ', ''))
+                if eff:
+                    try:
+                        pool.append(Card(norm_nm, 3 if norm_nm == '命がけのギャンブル' else (4 if norm_nm == '負けるわけないだろwww' else 2), eff))
+                        continue
+                    except Exception:
+                        pass
+                unmatched.append(nm)
+                continue
+            try:
+                # clone prototype (best-effort)
+                pool.append(Card(p.name, p.cost, p.effect, getattr(p, 'precheck', None)))
+            except Exception:
+                try:
+                    pool.append(Card(p.name, p.cost, p.effect))
+                except Exception:
+                    continue
+
+        # debug: report unmatched names and how many matched
+        try:
+            logger.debug("build_game_from_card_names - unmatched=%s, matched_count=%d", unmatched, len(pool))
+            logger.debug("pool sample names=%s", [getattr(c,'name',None) for c in pool[:20]])
+        except Exception:
+            pass
+
+        if not pool:
+            print(f"DEBUG: build_game_from_card_names - no pool built from names, unmatched={unmatched if 'unmatched' in locals() else []}")
+            deck = build_deck_for_mode('custom')
+        else:
+            # Import Deck robustly: prefer absolute import (script mode),
+            # fall back to relative import (package mode).
+            try:
+                from card_core import Deck
+            except Exception:
+                try:
+                    from .card_core import Deck
+                except Exception as imp_e:
+                    logger.exception("failed to import Deck from card_core: %s", imp_e)
+                    raise
+            try:
+                types_info = [type(c).__name__ for c in pool[:8]]
+                logger.debug("pool types sample=%s", types_info)
+            except Exception:
+                pass
+            deck = Deck(pool)
+            try:
+                deck_names_before = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                logger.debug("deck names before shuffle=%s", deck_names_before)
+                sys.stdout.flush()
+            except Exception:
+                pass
+            try:
+                deck.shuffle()
+                deck_names_after = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                logger.debug("deck names after shuffle=%s", deck_names_after)
+                sys.stdout.flush()
+            except Exception:
+                # if shuffle fails, continue with unshuffled deck
+                pass
+            # debug dump to file disabled by request — do not write debug_deck_dump.txt
+
+        deck.shuffle()
+        player = PlayerState(deck=deck)
+        g = Game(player=player)
+        try:
+            g.setup_battle()
+        except Exception:
+            pass
+        # debug: print initial hand and deck top after setup_battle
+        try:
+            hand_names = [c.name for c in g.player.hand.cards]
+            deck_cards = getattr(g.player.deck, 'cards', [])
+            deck_count = len(deck_cards)
+            top_names = [c.name for c in deck_cards[:8]]
+            logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
+        except Exception:
+            pass
+        return g
+    except Exception as e:
+        # Try to use the module logger if present; otherwise fall back to
+        # printing a traceback so failures are visible during development.
+        try:
+            logger.exception("Failed to build game from card names, falling back to custom deck")
+        except Exception:
+            try:
+                import traceback
+                print(f"DEBUG: build_game_from_card_names unexpected exception: {e}")
+                traceback.print_exc()
+            except Exception:
+                print(f"DEBUG: build_game_from_card_names unexpected exception (no traceback available): {e}")
+        return new_game_with_mode('custom')
+
+
+# Helper: safely switch BGM. mode is 'title' or 'game' or None to stop.
+def set_bgm_mode(mode: str | None) -> None:
+    """Atomically switch background music according to mode.
+
+    - 'title' -> MusMus-BGM-162.mp3
+    - 'game'  -> MusMus-BGM-173.mp3
+    - None    -> stop music
+
+    This function is defensive: it initializes the mixer if needed and
+    catches exceptions so UI flow is not interrupted.
+    """
+    try:
+        # ensure mixer is initialized
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception:
+                pass
+        # stop any currently playing music first
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+
+        if not bgm_enabled or mode is None:
+            # Ensure volume is muted when disabled
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.set_volume(0.0)
+            except Exception:
+                pass
+            try:
+                globals()['current_bgm_mode'] = None
+            except Exception:
+                pass
+            return
+
+        if mode == 'title':
+            bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-162.mp3')
+        elif mode == 'game':
+            bgm_path = os.path.join(os.path.dirname(__file__), 'mugic', 'MusMus-BGM-173.mp3')
+        else:
+            # unknown mode -> stop
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+            return
+
+        if os.path.exists(bgm_path):
+            try:
+                pygame.mixer.music.load(bgm_path)
+                pygame.mixer.music.play(-1)
+                try:
+                    pygame.mixer.music.set_volume(max(0.0, min(1.0, bgm_volume)))
+                except Exception:
+                    pass
+            except Exception:
+                # ignore audio errors
+                pass
+            try:
+                globals()['current_bgm_mode'] = mode
+            except Exception:
+                pass
+    except Exception:
+        # swallow any unexpected errors to avoid breaking UI
+        pass
+
+
+def build_deck_for_mode(mode: str):
+    """Return a Deck object appropriate for the chosen deck mode.
+
+    - 'fixed' -> full rule deck (24 cards)
+    - 'custom' -> trimmed deck (20 cards)
+    """
+    try:
+        deck = make_rule_cards_deck()
+        # make_rule_cards_deck already shuffles its pool; for custom decks
+        # we trim to 20 and reshuffle so randomness is preserved.
+        if mode == 'custom':
+            try:
+                deck.cards = deck.cards[:20]
+                deck.shuffle()
+            except Exception:
+                pass
+        return deck
+    except Exception:
+        # fallback: return whatever rule deck returns or raise
+        try:
+            return make_rule_cards_deck()
+        except Exception:
+            return None
+
+
+def build_ai_player(mode: str):
+    """Create and return a PlayerState for the AI matching the deck mode."""
+    try:
+        deck = build_deck_for_mode(mode)
+        if deck is None:
+            return None
+        p = PlayerState(deck=deck)
+        # initial pp and draw as before
+        try:
+            p.reset_pp()
+            for _ in range(4):
+                c = p.deck.draw()
+                if c is not None:
+                    p.hand.add(c)
+        except Exception:
+            pass
+        return p
+    except Exception:
+        return None
+
 
 def new_game_with_mode(mode: str):
     """Create a new Game with player's deck and return the Game object.
@@ -346,12 +454,6 @@ def new_game_with_mode(mode: str):
             game.setup_battle()
         except Exception:
             pass
-        # Register GIF animation hook
-        try:
-            if _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
-                game.play_ic_gif = _animation_module.play_ic_gif_at
-        except Exception:
-            pass
         return game
     except Exception:
         # Last resort, call existing helper
@@ -369,26 +471,6 @@ def show_deck_choice_modal(screen):
     """
     global DECK_MODE
     clk = pygame.time.Clock()
-    # デバウンス: 連続呼び出し防止
-    try:
-        global _last_deck_choice_open_time
-    except Exception:
-        _last_deck_choice_open_time = None
-    try:
-        now = _ct_time.time()
-        if _last_deck_choice_open_time and (now - _last_deck_choice_open_time) < 0.5:
-            return False
-        _last_deck_choice_open_time = now
-    except Exception:
-        pass
-    # モーダルを開いたクリックイベントをフラッシュ（二重アクション防止）
-    try:
-        pygame.event.get([pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN])
-    except Exception:
-        try:
-            pygame.event.clear()
-        except Exception:
-            pass
     w, h = 560, 240
     x = (W - w)//2
     y = (H - h)//2
@@ -478,7 +560,19 @@ def show_deck_choice_modal(screen):
 CPU_DIFFICULTY = 2
 
 # 画像の読み込み（カード名と同じファイル名.png を images 配下から探す）
-# IMG_DIR is already imported from image_loader module above
+# Prefer package-local images (c.c.b/images). If that directory does not
+# exist (e.g. running from the repository root), fall back to the top-level
+# `images` directory so tools/tests can still find assets.
+pkg_images = os.path.join(os.path.dirname(__file__), "images")
+repo_images = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'images'))
+if os.path.isdir(pkg_images):
+    IMG_DIR = pkg_images
+elif os.path.isdir(repo_images):
+    IMG_DIR = repo_images
+else:
+    # last resort: try a relative `images` path from cwd
+    fallback = os.path.join(os.getcwd(), 'images')
+    IMG_DIR = fallback if os.path.isdir(fallback) else pkg_images
 _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
@@ -500,18 +594,325 @@ scrollbar_rect = None
 dragging_scrollbar = False
 drag_start_y = 0
 drag_start_offset = 0
-# スクロールバードラッグ用（draw_panelで計算される値）
-_max_scroll = 0  # ログスクロールの最大値
 # Heat choice button rects (灼熱の二択ボタン)
 heat_choice_unfreeze_rect = None
 heat_choice_block_rect = None
 
-# GIFアニメーション関連の変数はassets.animation.pyから参照
-# (heat_gif_anim, ic_gif_anim, mg_gif_*など)
+# GIF animation cache / player for heat effect (Image_F.gif)
+heat_gif_frames_cache = None  # list of pygame.Surface frames or single-surface fallback
+heat_gif_durations = None  # list of per-frame durations (ms)
+heat_gif_anim = {
+    'playing': False,
+    'start_time': 0.0,
+    'total_duration': 0.0,
+    'frames': None,
+    'durations': None,
+    'pos': None,  # (row, col)
+}
 
-# DEBUG: 反撃チェック検証モード (F6でON/OFF)
-# デバッグ関数(_debug_mark_card_played, debug_setup_*)はdebug/debug_tools.pyに移行済みのため削除しました
-# draw_dashed_rect関数はutils/drawing.pyに移行済みのため削除しました
+# MG GIF (blocked-tile persistent effect) cache
+mg_gif_frames_cache = None
+mg_gif_durations = None
+mg_gif_total_duration = 0.0
+mg_gif_load_attempted = False
+mg_gif_load_success = False
+
+# 2P-color variant for AI-applied blocked tiles
+mg_gif_2p_frames_cache = None
+mg_gif_2p_durations = None
+mg_gif_2p_total_duration = 0.0
+mg_gif_2p_load_attempted = False
+mg_gif_2p_load_success = False
+
+# Ice GIF (氷結) cache + player (Image_ic (1).gif)
+ic_gif_frames_cache = None  # 凍結の追加
+ic_gif_durations = None
+ic_gif_load_attempted = False
+ic_gif_load_success = False
+
+ic_gif_anim = {
+    'playing': False,
+    'start_time': 0.0,
+    'total_duration': 0.0,
+    'frames': None,
+    'durations': None,
+    'pos': None,  # (row, col)
+}
+
+# === DEBUG: 反撃チェックを「カード使用直後のみ許可」する検証モード ===
+# F6 で ON/OFF。ON の間、実カード使用または F7 で
+# game._debug_last_action_was_card を立てると、その次の1手に限り
+# 「自身チェック中でも相手にチェックを与える手（反撃チェック）」を許可します。
+DEBUG_COUNTER_CHECK_CARD_MODE = False
+
+def _debug_mark_card_played():
+    """カードを使用した（またはF7相当）として次の1手に反撃チェックを許可する。
+    デバッグモード（F6）がONのときのみ意味を持つ。
+    """
+    if globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False):
+        try:
+            setattr(game, '_debug_last_action_was_card', True)
+            try:
+                game.log.append("[DEBUG] カード使用扱いフラグをセット（次の1手）。")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+def _ensure_mg_gif_2p_loaded():
+    """Lazily load Image_MG_2P.gif frames into mg_gif_2p_* globals."""
+    global mg_gif_2p_frames_cache, mg_gif_2p_durations, mg_gif_2p_total_duration
+    global mg_gif_2p_load_attempted, mg_gif_2p_load_success
+    if mg_gif_2p_frames_cache is not None and mg_gif_2p_durations is not None:
+        return
+    if mg_gif_2p_load_attempted:
+        return
+    mg_gif_2p_load_attempted = True
+    gif_path = os.path.join(IMG_DIR, 'Image_MG_2P.gif')
+    frames, durations = _load_gif_frames(gif_path)
+    if not frames:
+        # fallback: try the standard MG gif
+        gif_path2 = os.path.join(IMG_DIR, 'Image_MG.gif')
+        frames, durations = _load_gif_frames(gif_path2)
+    if not frames:
+        mg_gif_2p_frames_cache = None
+        mg_gif_2p_durations = None
+        mg_gif_2p_total_duration = 0.0
+        mg_gif_2p_load_success = False
+        return
+    mg_gif_2p_frames_cache = frames
+    mg_gif_2p_durations = durations
+    try:
+        mg_gif_2p_total_duration = sum(durations) / 1000.0
+    except Exception:
+        mg_gif_2p_total_duration = 0.0
+    mg_gif_2p_load_success = True
+# How much to slow down the ice GIF playback (multiplier on per-frame durations).
+# Increase to make the animation slower/longer. Default 2.5x for better visibility.
+IC_GIF_SPEED_FACTOR = 2.5
+# Scale multiplier for ice GIF when rendering over a tile (1.0 = tile size)
+IC_GIF_SCALE = 1.4
+
+def _load_gif_frames(path: str):
+    """Try to load GIF frames using Pillow if available, fallback to single surface.
+
+    Returns (frames_list, durations_list). frames_list is a list of pygame.Surface.
+    durations_list is list of durations in milliseconds.
+    If Pillow is not available or loading fails, returns ([surface], [1000]).
+    """
+    # Delegate heavy lifting to ui_assets helper module. This keeps the
+    # original function name for backward compatibility with other callers
+    # in this file while moving implementation to a smaller module.
+    try:
+        from . import ui_assets as _ui_assets
+    except Exception:
+        try:
+            import ui_assets as _ui_assets
+        except Exception:
+            return None, None
+    return _ui_assets._load_gif_frames(path)
+
+def _ensure_mg_gif_loaded():
+    """Lazily load Image_MG.gif frames into mg_gif_* globals."""
+    global mg_gif_frames_cache, mg_gif_durations, mg_gif_total_duration
+    global mg_gif_load_attempted, mg_gif_load_success
+    if mg_gif_frames_cache is not None and mg_gif_durations is not None:
+        return
+    if mg_gif_load_attempted:
+        return
+    mg_gif_load_attempted = True
+    gif_path = os.path.join(IMG_DIR, 'Image_MG.gif')
+    frames, durations = _load_gif_frames(gif_path)
+    if not frames:
+        mg_gif_frames_cache = None
+        mg_gif_durations = None
+        mg_gif_total_duration = 0.0
+        mg_gif_load_success = False
+        # fallback: try pygame.image.load as a single-surface fallback
+        try:
+            surf = pygame.image.load(gif_path).convert_alpha()
+            mg_gif_frames_cache = [surf]
+            mg_gif_durations = [1000]
+            mg_gif_total_duration = 1.0
+            mg_gif_load_success = True
+            # note: intentionally do not log image/GIF internal loading to game.log
+            return
+        except Exception:
+            return
+    mg_gif_frames_cache = frames
+    mg_gif_durations = durations
+    try:
+        mg_gif_total_duration = sum(durations) / 1000.0
+    except Exception:
+        mg_gif_total_duration = len(durations) * 0.1 if durations else 0.0
+    mg_gif_load_success = True
+
+def play_heat_gif_at(row: int, col: int):
+    """Start playing the heat GIF animation centered at board square (row,col)."""
+    global heat_gif_frames_cache, heat_gif_durations, heat_gif_anim
+    gif_path = os.path.join(IMG_DIR, 'Image_F.gif')
+    if heat_gif_frames_cache is None or heat_gif_durations is None:
+        frames, durations = _load_gif_frames(gif_path)
+        heat_gif_frames_cache = frames
+
+
+
+    frames = heat_gif_frames_cache
+    durations = heat_gif_durations
+    if not frames:
+        return
+    heat_gif_anim['frames'] = frames
+    heat_gif_anim['durations'] = durations
+    heat_gif_anim['playing'] = True
+    heat_gif_anim['start_time'] = _ct_time.time()
+    heat_gif_anim['total_duration'] = sum(durations) / 1000.0
+    heat_gif_anim['pos'] = (row, col)
+
+
+def _ensure_ic_gif_loaded():
+    """Lazily load Image_ic GIF frames into ic_gif_* globals."""
+    global ic_gif_frames_cache, ic_gif_durations, ic_gif_load_attempted, ic_gif_load_success
+    if ic_gif_frames_cache is not None and ic_gif_durations is not None:
+        return
+    if ic_gif_load_attempted:
+        return
+    ic_gif_load_attempted = True
+    candidates = [
+        'Image_ic (1).gif',
+        'Image_ic.gif',
+        'Image_ic(1).gif',
+        'Image_ic_1.gif',
+        'Image_ic1.gif',
+        'ice.gif',
+    ]
+    frames = None
+    durations = None
+    for cand in candidates:
+        path = os.path.join(IMG_DIR, cand)
+        f, d = _load_gif_frames(path)
+        if f:
+            frames = f
+            durations = d
+            # suppress GIF load logging (internal asset loading)
+            break
+    if not frames and os.path.isdir(IMG_DIR):
+        for fn in os.listdir(IMG_DIR):
+            if fn.lower().startswith('image_ic'):
+                path = os.path.join(IMG_DIR, fn)
+                f, d = _load_gif_frames(path)
+                if f:
+                    frames = f
+                    durations = d
+                    # suppress GIF load logging (internal asset loading)
+                    break
+    if not frames:
+        try:
+            path = os.path.join(IMG_DIR, 'Image_ic (1).gif')
+            surf = pygame.image.load(path).convert_alpha()
+            frames = [surf]
+            durations = [1000]
+            # suppress GIF load logging (internal asset loading)
+            ic_gif_load_success = True
+        except Exception:
+            ic_gif_load_success = False
+            # suppress GIF load failure logging (internal asset loading)
+            return
+    ic_gif_frames_cache = frames
+    # Apply speed factor to make ice animation slower and more visible
+    try:
+        # ensure durations is a list of ints
+        durations = [int(d) for d in (durations or [1000])]
+        slowed = [max(int(d * IC_GIF_SPEED_FACTOR), 120) for d in durations]
+        ic_gif_durations = slowed
+        ic_gif_anim['total_duration'] = sum(ic_gif_durations) / 1000.0
+        # suppress GIF playback-setting logging (internal asset loading)
+    except Exception:
+        ic_gif_durations = durations
+        try:
+            ic_gif_anim['total_duration'] = sum(durations) / 1000.0
+        except Exception:
+            ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
+    ic_gif_load_success = True
+
+
+def play_ic_gif_at(row: int, col: int):
+    """Start playing the ice GIF centered at board square (row,col)."""
+    global ic_gif_frames_cache, ic_gif_durations, ic_gif_anim
+    if ic_gif_frames_cache is None or ic_gif_durations is None:
+        _ensure_ic_gif_loaded()
+    frames = ic_gif_frames_cache
+    durations = ic_gif_durations
+    if not frames:
+        # suppress GIF playback debug logging
+        return
+    ic_gif_anim['frames'] = frames
+    ic_gif_anim['durations'] = durations
+    ic_gif_anim['playing'] = True
+    ic_gif_anim['start_time'] = _ct_time.time()
+    try:
+        ic_gif_anim['total_duration'] = sum(durations) / 1000.0
+    except Exception:
+        ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
+    ic_gif_anim['pos'] = (row, col)
+    # suppress GIF playback debug logging
+
+
+# Register hook on module-level `game` so core logic can request GIF playback
+try:
+    game.play_ic_gif = play_ic_gif_at
+except Exception:
+    pass
+
+def get_piece_image_surface(name: str, color: str, size: tuple):
+    """Return a pygame.Surface for the given piece (name like 'K','Q', color 'white'/'black').
+    Cache scaled images by (name,color,size). If file not found, return None to indicate fallback.
+    """
+    key = (name, color, size)
+    if key in _piece_image_cache:
+        return _piece_image_cache[key]
+    # Filename convention: Chess_{letter_lower}_{color}.png (as used elsewhere)
+    fname = f"Chess_{name.lower()}_{color}.png"
+    path = os.path.join(IMG_DIR, fname)
+    surf = None
+    try:
+        if os.path.exists(path):
+            img = pygame.image.load(path).convert_alpha()
+            surf = pygame.transform.smoothscale(img, size)
+    except Exception:
+        surf = None
+    _piece_image_cache[key] = surf
+    return surf
+
+
+def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2):
+    """Draw a dashed rectangle on surf. rect is pygame.Rect."""
+    x, y, w, h = rect.x, rect.y, rect.w, rect.h
+    # top
+    sx = x
+    while sx < x + w:
+        ex = min(sx + dash, x + w)
+        pygame.draw.line(surf, color, (sx, y), (ex, y), width)
+        sx += dash + gap
+    # bottom
+    sx = x
+    by = y + h
+    while sx < x + w:
+        ex = min(sx + dash, x + w)
+        pygame.draw.line(surf, color, (sx, by), (ex, by), width)
+        sx += dash + gap
+    # left
+    sy = y
+    while sy < y + h:
+        ey = min(sy + dash, y + h)
+        pygame.draw.line(surf, color, (x, sy), (x, ey), width)
+        sy += dash + gap
+    # right
+    sy = y
+    rx = x + w
+    while sy < y + h:
+        ey = min(sy + dash, y + h)
+        pygame.draw.line(surf, color, (rx, sy), (rx, ey), width)
+        sy += dash + gap
 
 """
 ------------------ Chess integration (via external module) ------------------
@@ -531,14 +932,18 @@ except Exception:
 game_over = False      # ゲームが終わったかどうか
 game_over_winner = None # 勝者（まだ決まっていない）
 
-# 同時チェック管理（両者同時チェック時の特殊勝敗判定）
+# --- 同時チェック管理（特殊ルール） ---
+# 仕様:
+# - 両者が同時にチェックになった瞬間に同時チェック状態に突入。
+# - それぞれ「次の自分のチェス手番開始」時点でチェック解除できていなければ失敗。
+# - 両者とも失敗 → 引き分け。片方のみ解除成功 → そのプレイヤーの勝利。両方解除 → 通常継続。
 simul_check_active = False
 simul_white_result = 'none'  # 'none'|'pending'|'cleared'|'failed'
 simul_black_result = 'none'
 white_turn_index = 0
 black_turn_index = 0
 last_turn_color = None
-simul_white_deadline = None
+simul_white_deadline = None  # 次の自分の手番開始のターンインデックス
 simul_black_deadline = None
 
 # AI thinking/display settings
@@ -558,7 +963,164 @@ turn_telop_until = 0.0
 notice_msg = None
 notice_until = 0.0
 
-# Debug関数は debug/debug_tools.py に移行済み（フォールバックは140-161行で定義済み）
+# --- Debug setup helpers (F1-F4) for quick rule testing ---
+def debug_setup_castling():
+    """Set a simple board where white can castle both sides (no black pieces)."""
+    chess.pieces.clear()
+    # white king and rooks only
+    chess.pieces.append(chess.Piece(7,4,'K','white'))
+    chess.pieces.append(chess.Piece(7,0,'R','white'))
+    chess.pieces.append(chess.Piece(7,7,'R','white'))
+    # Ensure they are unmoved
+    for p in chess.pieces:
+        p.has_moved = False
+    # Clear en passant and selections
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
+
+def debug_setup_en_passant():
+    """Set a board where white can perform en passant to the right."""
+    chess.pieces.clear()
+    wp = chess.Piece(3,4,'P','white')  # e5
+    bp = chess.Piece(3,5,'P','black')  # f5 (assume just moved two steps)
+    chess.pieces.extend([wp, bp])
+    # Set EP target square (the intermediate square the pawn passed)
+    chess.en_passant_target = (2,5)  # f6 from white perspective (row 2)
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
+
+def debug_setup_promotion():
+    """Set a board where white pawn can promote next move."""
+    chess.pieces.clear()
+    wp = chess.Piece(1,0,'P','white')  # a7 -> a8 で昇格
+    chess.pieces.append(wp)
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
+
+def debug_reset_initial():
+    chess.pieces[:] = chess.create_pieces()
+    chess.en_passant_target = None
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
+
+
+def debug_setup_checkmate():
+    """簡単なチェックメイト検証用盤面（白を詰ませる）"""
+    chess.pieces.clear()
+    # 白キングを隅に追い詰める
+    wk = chess.Piece(7, 0, 'K', 'white')  # a1
+    # 黒のクイーンとルークで詰み
+    bq = chess.Piece(6, 1, 'Q', 'black')  # b2
+    br = chess.Piece(7, 1, 'R', 'black')  # b1
+    chess.pieces.extend([wk, bq, br])
+    globals()['selected_piece'] = None
+    globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    chess.en_passant_target = None
+    game.log.append("[DEBUG] チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
+
+def debug_setup_counter_check_white():
+    """白がチェック中で、次の1手で『自分は依然チェックだが相手にチェックを与える』反撃チェック手が存在する局面にセット。
+
+    配置:
+      - 白K: e1 (7,4)
+      - 黒R: e8 (0,4) → 白Kに一直線でチェック中
+      - 白R: b1 (7,1)
+      - 黒K: a6 (2,0)
+
+    このとき、白の手番で Rb1-b6 (7,1)->(2,1) は、
+    白は依然Re8のチェック下にいるが、黒K a6 に横からチェックを与える『反撃チェック』になります。
+    通常は不合法ですが、迅雷有効時、または[F6]デバッグモードONかつカード直後扱い（F7）でのみ合法。
+    """
+    # 盤面リセット
+    chess.pieces.clear()
+    chess.en_passant_target = None
+    # 駒配置
+    wk = chess.Piece(7, 4, 'K', 'white')  # e1
+    br = chess.Piece(0, 4, 'R', 'black')  # e8 (白Kを縦にチェック)
+    wr = chess.Piece(7, 1, 'R', 'white')  # b1 （b6へ上がるとa6の黒Kに横チェック）
+    bk = chess.Piece(2, 0, 'K', 'black')  # a6
+    chess.pieces.extend([wk, br, wr, bk])
+
+    # UI/ターン関連を整える
+    globals()['selected_piece'] = wr
+    try:
+        # 直ちにハイライト表示（通常は不合法のため、F6でON & F7でカード直後扱いを推奨）
+        globals()['highlight_squares'] = get_valid_moves(wr)
+    except Exception:
+        globals()['highlight_squares'] = []
+    globals()['chess_current_turn'] = 'white'
+    try:
+        game.turn_active = True
+        game.player_moved_this_turn = False
+    except Exception:
+        pass
+
+def debug_setup_simul_check_start():
+    """F9: 白が黒Kを取る手を実行し、その後黒が白Kを取れるかをテストする局面をセット。
+
+    例の配置:
+      - 白K: e1 (7,4)
+      - 黒K: a6 (2,0)
+      - 白R: a1 (7,0) → 黒K a6 に縦で取れる
+      - 黒R: e8 (0,4) → 白K e1 に縦で取れる
+
+    白Rがa1からa6へ移動して黒Kを取り、その後黒Rがe8からe1へ移動して白Kを取ることができる。
+    両方のKが取られた場合は引き分け、片方だけが残っている場合はそのプレイヤーの勝ち。
+    """
+    # 盤面リセット
+    chess.pieces.clear()
+    chess.en_passant_target = None
+
+    # 駒配置
+    wk = chess.Piece(7, 4, 'K', 'white')  # e1
+    bk = chess.Piece(2, 0, 'K', 'black')  # a6
+    wr = chess.Piece(7, 0, 'R', 'white')  # a1（a6の黒Kを取れる）
+    br = chess.Piece(0, 4, 'R', 'black')  # e8（e1の白Kを取れる）
+    chess.pieces.extend([wk, bk, wr, br])
+
+    # 白Rを選択状態にして、a6（黒K）への移動をハイライト
+    globals()['selected_piece'] = wr
+    try:
+        globals()['highlight_squares'] = get_valid_moves(wr)
+    except Exception:
+        globals()['highlight_squares'] = []
+    
+    globals()['chess_current_turn'] = 'white'
+    try:
+        game.turn_active = True
+        game.player_moved_this_turn = False
+    except Exception:
+        pass
+
+    # 両キング取得テストモードをONにする（片方のキングが取られても即座に終了しない）
+    globals()['dual_king_capture_test'] = True
+    globals()['first_king_captured'] = None  # 最初に取られたキングの色を記録
+
+    # ログ案内
+    try:
+        game.log.append("[DEBUG] F9: 両キング取得テスト局面をセットしました（白番）。")
+        game.log.append("  白K:e1 / 黒K:a6 / 白R:a1(選択済) / 黒R:e8")
+        game.log.append("  白Ra1→a6で黒Kを取ってください。その後、黒Re8→e1で白Kを取ります。")
+        game.log.append("  両方のKが取られた場合は引き分けになります。")
+    except Exception:
+        pass
+
+    # デバッグモードONなら、利便性のため自動で「カード直後扱い」を付与
+    if globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False):
+        _debug_mark_card_played()
+        pass
+
 
 def restart_game():
     """ゲームを初期状態にリセットして再戦する"""
@@ -568,11 +1130,7 @@ def restart_game():
     # チェス盤を初期配置に
     chess.pieces[:] = chess.create_pieces()
     chess.en_passant_target = None
-    # プロモーション状態をクリア
-    try:
-        chess_rules.clear_promotion_state(chess)
-    except Exception:
-        chess.promotion_pending = None
+    chess.promotion_pending = None
     
     # ゲーム状態をリセット
     game_over = False
@@ -584,114 +1142,17 @@ def restart_game():
     
     # カードゲーム部分もリセット
     global game, ai_player
-    # 再戦時にデッキモードを選択させる
+    # Recreate game and AI according to the chosen deck mode
+    game = new_game_with_mode(DECK_MODE)
+    # ensure ai_player is also rebuilt to match deck size
     try:
-        selected = False
-        try:
-            selected = show_deck_choice_modal(screen)
-        except Exception:
-            selected = False
-
-        if not selected:
-            # User cancelled deck re-selection; fall back to previous DECK_MODE
-            game = new_game_with_mode(DECK_MODE)
-            try:
-                ai_player = build_ai_player(DECK_MODE)
-            except Exception:
-                ai_player = None
-        else:
-            # If user selected custom, open deck list to pick which custom deck to use
-            if DECK_MODE == 'custom':
-                try:
-                    started = show_deck_modal(screen, battle_select_mode=True)
-                except Exception:
-                    started = False
-                if not started:
-                    # user cancelled deck pick after choosing custom; fallback
-                    game = new_game_with_mode(DECK_MODE)
-                    try:
-                        ai_player = build_ai_player(DECK_MODE)
-                    except Exception:
-                        ai_player = None
-            else:
-                # fixed deck chosen
-                game = new_game_with_mode('fixed')
-                try:
-                    ai_player = build_ai_player('fixed')
-                except Exception:
-                    ai_player = None
+        ai_player = build_ai_player(DECK_MODE)
     except Exception:
-        # On any error, ensure we still create a playable game
-        try:
-            game = new_game_with_mode(DECK_MODE)
-            ai_player = build_ai_player(DECK_MODE)
-        except Exception:
-            game = new_game_with_mode('fixed')
-            try:
-                ai_player = build_ai_player('fixed')
-            except Exception:
-                ai_player = None
+        ai_player = None
     log_scroll_offset = 0
     
     game.log.append("=== ゲームを再開しました ===")
     game.log.append("白のターンです。")
-
-
-def _prepare_new_battle_after_deck_already_selected():
-    """Reset board/UI state when a new Game object has already been
-    created (for example, show_start_screen() created globals()['game']).
-
-    This mirrors the non-deck parts of restart_game() but does NOT prompt
-    the user for deck selection; it assumes `game` and `ai_player` are
-    already set to the desired values.
-    """
-    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
-    global log_scroll_offset, game, ai_player
-
-    # Reset chess board state
-    try:
-        chess.pieces[:] = chess.create_pieces()
-    except Exception:
-        pass
-    try:
-        chess.en_passant_target = None
-    except Exception:
-        pass
-    # プロモーション状態をクリア
-    try:
-        if chess_rules:
-            chess_rules.clear_promotion_state(chess)
-        else:
-            chess.promotion_pending = None
-    except Exception:
-        pass
-
-    # Reset UI/flow flags
-    game_over = False
-    game_over_winner = None
-    chess_current_turn = 'white'
-    selected_piece = None
-    highlight_squares = []
-    cpu_wait = False
-
-    # Ensure game/ai_player exist; do not recreate them here
-    try:
-        if game is not None:
-            try:
-                game.turn_active = True
-                game.player_moved_this_turn = False
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    log_scroll_offset = 0
-    try:
-        if game is not None:
-            game.log.append("=== ゲームを再開しました ===")
-            game.log.append("白のターンです。")
-    except Exception:
-        pass
 
 def create_pieces():
     # 互換のためのエイリアス（将来的に削除予定）
@@ -736,8 +1197,8 @@ def show_start_screen():
         # UI aligns correctly when this module is used as an imported UI.
         win_w, win_h = screen.get_size()
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
-        title_font = get_font(max(32, int(H * 0.05)), bold=True)
-        btn_font = get_font(max(20, int(H * 0.03)), bold=True)
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(32, int(H * 0.05)), bold=True)
+        btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(20, int(H * 0.03)), bold=True)
         options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
         # ボタン幅を広げてテキストが見切れないようにする
         btn_w = 240
@@ -863,12 +1324,12 @@ def show_start_screen():
             # If repo image is used, it's likely already properly exposed; apply a tiny brighten.
             if repo_bg_used:
                 bright = pygame.Surface((W, H), pygame.SRCALPHA)
-                bright.fill((255,255,255,10))  # 減少: 20 -> 10
+                bright.fill((255,255,255,20))
                 screen.blit(bright, (0,0))
             else:
                 # For user-provided images, apply stronger brighten to reach the desired level
                 bright = pygame.Surface((W, H), pygame.SRCALPHA)
-                bright.fill((255,255,255,40))  # 減少: 100 -> 40
+                bright.fill((255,255,255,100))
                 screen.blit(bright, (0,0))
         else:
             # lighter sepia fallback
@@ -876,7 +1337,7 @@ def show_start_screen():
 
         # gentle dark overlay to maintain contrast but keep background visible
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,30))  # 減少: 80 -> 30 (背景をもっと見えるように)
+        overlay.fill((0,0,0,80))
         screen.blit(overlay, (0,0))
 
         # Title with outline (dark fill with light outline to match screenshot)
@@ -967,7 +1428,34 @@ def show_start_screen():
         clock.tick(30)
 
 
-# デッキ管理システムは game/deck_manager.py に移行済み（フォールバックは180-200行で定義済み）
+# === デッキ管理システム ===
+import json
+from datetime import datetime
+
+DECK_SAVE_FILE = os.path.join(os.path.dirname(__file__), 'saved_decks.json')
+
+def load_saved_decks():
+    """保存されたデッキをJSONファイルから読み込む。最大9個。"""
+    if not os.path.exists(DECK_SAVE_FILE):
+        return [None] * 9  # 空の9スロット
+    try:
+        with open(DECK_SAVE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            # 9スロット確保
+            decks = data.get('decks', [])
+            while len(decks) < 9:
+                decks.append(None)
+            return decks[:9]  # 最大9個まで
+    except Exception:
+        return [None] * 9
+
+def save_decks_to_file(decks):
+    """デッキリストをJSONファイルに保存"""
+    try:
+        with open(DECK_SAVE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'decks': decks}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"デッキ保存エラー: {e}")
 
 def show_deck_modal(screen, battle_select_mode=False):
     """デッキリスト画面（3x3グリッド表示）。
@@ -977,28 +1465,6 @@ def show_deck_modal(screen, battle_select_mode=False):
     """
     # Present the deck-selection screen as a fullscreen view (non-blocking overlay)
     clk = pygame.time.Clock()
-    
-    # Debounce: prevent immediate re-entry when called twice by the same click
-    try:
-        global _last_deck_modal_open_time
-    except Exception:
-        _last_deck_modal_open_time = None
-    try:
-        now = _ct_time.time()
-        if _last_deck_modal_open_time and (now - _last_deck_modal_open_time) < 0.5:
-            return False
-        _last_deck_modal_open_time = now
-    except Exception:
-        pass
-    # Flush the click/touch that opened the modal to avoid immediate
-    # double-activation of the selected slot (same rationale as above).
-    try:
-        pygame.event.get([pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN])
-    except Exception:
-        try:
-            pygame.event.clear()
-        except Exception:
-            pass
     while True:
         # keep current window size in local variables for positioning dialogs/buttons
         win_w, win_h = screen.get_size()
@@ -1050,11 +1516,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
-                                # Remember that user explicitly chose a custom deck so future
-                                # rematches or returning to menus should preserve this choice.
-                                global DECK_MODE
-                                DECK_MODE = 'custom'
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -1066,15 +1528,14 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                         cards = getattr(g.player.deck, 'cards', None)
                                         if cards is not None:
-                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                            logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                                 except Exception as _e:
-                                    print(f"DEBUG: error inspecting created game: {_e}")
+                                    logger.exception("error inspecting created game: %s", _e)
                             except Exception as e:
                                 print(f"DEBUG: exception when creating game from names: {e}")
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
-                            # cleanly exit; outer finally will clear in-progress flag
                             return True
                         continue
                     else:
@@ -1092,7 +1553,7 @@ def show_deck_modal(screen, battle_select_mode=False):
 
         # draw full-screen deck grid
         screen.fill((240, 235, 230))
-        title_font = get_font(36, bold=True)
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 36, bold=True)
         title = title_font.render("作成デッキを選択してください", True, (30,30,30))
         screen.blit(title, ((W - title.get_width()) // 2, 24))
 
@@ -1103,7 +1564,7 @@ def show_deck_modal(screen, battle_select_mode=False):
         sx = x + 10
         sy = y + 40
         idx = 0
-        slot_font = get_font(20, bold=True)
+        slot_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
         for r in range(3):
             for c in range(3):
                 rx = sx + c * (slot_w + 10)
@@ -1140,7 +1601,6 @@ def show_deck_modal(screen, battle_select_mode=False):
 
         pygame.display.flip()
         clk.tick(30)
-    # end of modal
 
 
 def show_deck_options(screen, deck):
@@ -1215,7 +1675,7 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
     w, h = 560, 240
     x = (W - w)//2
     y = (H - h)//2
-    title_font = get_font(28)
+    title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
 
     while True:
         for ev in pygame.event.get():
@@ -1366,7 +1826,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        logger.debug("save clicked with %d cards (<20) - entering confirmation dialog", len(deck_cards))
                         # 20枚未満でも保存を許可するか確認するダイアログに変更
                         # 「破棄する」-> 変更を破棄して戻る
                         # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
@@ -1384,14 +1844,14 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
                                     if discard_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
 
                                     # 保存するボタン
                                     save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
                                     if save_anyway_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        logger.debug("user selected SAVE ANYWAY in low-deck dialog")
                                         # 20枚未満だが保存して戻る
                                         pygame.key.stop_text_input()
                                         return {
@@ -1503,7 +1963,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         screen.fill((240, 235, 230))
         
         # タイトル
-        title_font = get_font(28, bold=True)
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28, bold=True)
         title = title_font.render("デッキ作成/編集", True, (30, 30, 30))
         screen.blit(title, (20, 25))
         
@@ -1664,8 +2124,8 @@ def show_custom_deck_selection(screen):
     選択されるとそのデッキでゲームを開始します。
     作成済みデッキがない場合は「作る」ボタンでデッキ作成画面へ移動できます。
     """
-    # カスタムデッキ選択モーダルを非表示（背景リストを上部に保持）
-    global DECK_MODE
+    # Per UX request: do not show the old blocking custom-deck selection modal.
+    # Keep the background deck list interactive and topmost.
     return
 
     global DECK_MODE
@@ -2656,15 +3116,6 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
     def is_blocked_tile(rr, cc, color):
         # If a blocked tile applies to this color, disallow moving there
         try:
-            # Prefer model helper if available (handles multi-entry representation)
-            if getattr(game, 'is_tile_blocked_for', None) is not None:
-                try:
-                    # game.is_tile_blocked_for(tile, color) -> True if blocked for that color
-                    if game.is_tile_blocked_for((rr, cc), color):
-                        return True
-                except Exception:
-                    pass
-            # Fallback to legacy single-owner mapping
             if getattr(game, 'blocked_tiles_owner', None) is not None:
                 owner = game.blocked_tiles_owner.get((rr, cc))
                 if owner == color:
@@ -2903,7 +3354,7 @@ def ai_make_move():
         # defensive: ignore if ai_player not properly initialized
         pass
 
-    # AI: チェス手前にカード使用を考慮
+    # --- AI: consider playing a card before moving ---
     def ai_consider_play_card():
         # Ensure assignments to module-level AI flags affect globals (nested function)
         global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
@@ -2912,10 +3363,6 @@ def ai_make_move():
         probs = {1: 0.35, 2: 0.60, 3: 0.80, 4: 0.98}
         p_play = probs.get(CPU_DIFFICULTY, 0.45)
         if not ai_player.hand.cards:
-            try:
-                game.log.append(f"AI: 手札が空です（カード使用をスキップ）")
-            except Exception:
-                pass
             return False
 
         # Gather simple board metrics to influence card choice (mobility, high-value targets)
@@ -3203,8 +3650,21 @@ def ai_make_move():
 
         return made_any
 
+    # attempt to play a card (may mutate ai state)
+    try:
+        prev_turn_active = getattr(game, 'turn_active', False)
+        # allow AI to play via game.play_card_for which requires turn_active
+        game.turn_active = True
+        ai_consider_play_card()
+        game.turn_active = prev_turn_active
+    except Exception:
+        try:
+            game.turn_active = prev_turn_active
+        except Exception:
+            pass
+        pass
+
     # (animation rendering moved to draw_panel where board metrics are available)
-    # Compute candidates BEFORE ai_consider_play_card() so it can reference them
     candidates = []  # list of (piece, move)
     for p in chess.pieces:
         if p.color != 'black':
@@ -3213,24 +3673,6 @@ def ai_make_move():
         v = get_valid_moves(p, ignore_check=True)
         for mv in v:
             candidates.append((p, mv))
-
-    # attempt to play a card (may mutate ai state)
-    try:
-        prev_turn_active = getattr(game, 'turn_active', False)
-        # allow AI to play via game.play_card_for which requires turn_active
-        game.turn_active = True
-        ai_consider_play_card()
-        game.turn_active = prev_turn_active
-    except Exception as e:
-        try:
-            game.turn_active = prev_turn_active
-        except Exception:
-            pass
-        # Log the exception for debugging
-        try:
-            game.log.append(f"AI: カード使用検討中にエラーが発生しました: {e}")
-        except Exception:
-            pass
 
     if not candidates:
         game.log.append('AI: 動ける手がありません')
@@ -3304,6 +3746,50 @@ def ai_make_move():
 # initialize pieces (module already initializes on import)
 
 
+def get_card_image(name: str, size=(72, 96)):
+    key = (name, size)
+    if key in _image_cache:
+        return _image_cache[key]
+    surf = None
+    # 1) 直接候補
+    candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.webp", f"{name}.bmp"]
+    for cand in candidates:
+        path = os.path.join(IMG_DIR, cand)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                surf = pygame.transform.smoothscale(img, size)
+                break
+            except Exception:
+                pass
+    # 2) 再帰的にベース名一致を探索（拡張子/大文字小文字を無視）
+    if surf is None and os.path.isdir(IMG_DIR):
+        base_l = name.lower()
+        for root, _dirs, files in os.walk(IMG_DIR):
+            for f in files:
+                fn, ext = os.path.splitext(f)
+                if fn.lower() == base_l and ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
+                    try:
+                        path = os.path.join(root, f)
+                        img = pygame.image.load(path).convert_alpha()
+                        surf = pygame.transform.smoothscale(img, size)
+                        break
+                    except Exception:
+                        continue
+    # If no image was found, create a simple placeholder surface so callers can blit safely
+    if surf is None:
+        surf = pygame.Surface(size, pygame.SRCALPHA)
+        surf.fill((220, 220, 230))
+        pygame.draw.rect(surf, (80, 80, 80), (0, 0, size[0], size[1]), 2)
+        try:
+            txt = SMALL.render(name, True, (30, 30, 30))
+            surf.blit(txt, ((size[0]-txt.get_width())//2, (size[1]-txt.get_height())//2))
+        except Exception:
+            pass
+
+    _image_cache[key] = surf
+    return surf
+
 HELP_LINES = [
     "[T] 次のターン開始",
     "[1-7] カード使用",
@@ -3316,6 +3802,156 @@ HELP_LINES = [
     "[クリック] カード拡大",
     "[Esc] 終了",
 ]
+
+
+def draw_text(surf, text, x, y, color=(20, 20, 20)):
+    img = FONT.render(text, True, color)
+    rect = surf.blit(img, (x, y))
+    return rect
+
+
+def wrap_text(text: str, max_width: int):
+    """Return list of lines wrapped to fit max_width using FONT metrics."""
+    lines = []
+    cur = ""
+    for ch in text:
+        test = cur + ch
+        w, _ = FONT.size(test)
+        if w <= max_width or cur == "":
+            cur = test
+        else:
+            lines.append(cur)
+            cur = ch
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def compute_layout(win_w: int, win_h: int):
+    """Compute common layout metrics used by draw_panel and input handling.
+    Returns a dict with keys:
+        left_margin, left_panel_width, right_panel_width, right_panel_x,
+        board_left, board_top, board_size, board_area_top, board_area_height,
+        card_area_top, scale
+    """
+    # Compute a uniform scale relative to a base UI resolution so that
+    # fullscreen and windowed modes scale UI elements consistently.
+    try:
+        scale_w = float(win_w) / float(BASE_UI_W)
+        scale_h = float(win_h) / float(BASE_UI_H)
+        scale = min(scale_w, scale_h)
+    except Exception:
+        scale = 1.0
+
+    # Base measurements (from BASE_UI_W / BASE_UI_H) then scaled
+    base_left_margin = max(8, int(BASE_UI_W * 0.018))
+    base_left_panel_width = max(120, min(420, int(BASE_UI_W * 0.16)))
+    base_right_panel_width = max(160, min(420, int(BASE_UI_W * 0.16)))
+    base_board_area_top = max(12, int(BASE_UI_H * 0.02))
+    inner_gap = int(20 * scale)
+
+    left_margin = max(12, int(base_left_margin * scale))
+    left_panel_width = max(12, int(base_left_panel_width * scale))
+    right_panel_width = max(12, int(base_right_panel_width * scale))
+    # 右側に一定割合の外側余白を確保して、表示サイズが変わっても見やすさを維持
+    # 画面幅に対する割合で設定（例: 6%）。最小値は12pxを確保。
+    try:
+        right_outer_margin = max(12, int(win_w * 0.06))
+    except Exception:
+        right_outer_margin = 20
+
+    board_area_top = max(8, int(base_board_area_top * scale))
+
+    central_left = left_margin + left_panel_width + inner_gap
+    # 右パネルの右側に right_outer_margin を設ける
+    central_right = win_w - right_outer_margin - right_panel_width - inner_gap
+    central_width = max(0, central_right - central_left)
+
+    # reserve bottom area for hand display (card height scaled)
+    # On large screens, prefer larger card thumbnails so cards can be "big" as requested.
+    # Increase base card size slightly and make the upscaling more aggressive on large displays.
+    base_card_h = max(140, int(BASE_UI_H * 0.22))
+    if scale > 1.02:
+        # more aggressive growth so cards become prominently larger on fullscreen
+        extra = min(2.6, 1.0 + (scale - 1.0) * 1.4)
+        base_card_h = int(base_card_h * extra)
+    card_h = max(48, int(base_card_h * scale))
+    reserved_bottom = card_h + int(80 * scale)
+    avail_height = win_h - board_area_top - reserved_bottom
+
+    board_size = max(64, min(central_width, avail_height))
+    # If the UI is being upscaled (fullscreen), prefer to keep the board
+    # slightly smaller so card art and UI elements have room and appear larger.
+    try:
+        if scale > 1.0:
+            board_size = max(64, int(board_size * 0.9))
+    except Exception:
+        pass
+    # center board within central region, but bias position for large screens
+    # so the board moves toward the left/top to make room for larger cards and reduce top whitespace
+    center_dx = max(0, (central_width - board_size) // 2)
+    # horizontal bias: on larger scales, shift the board left by a larger fraction of available space
+    try:
+        # stronger left shift so board moves noticeably left on large displays
+        horiz_bias = int(max(0, (scale - 1.0) * central_width * 0.28))
+    except Exception:
+        horiz_bias = 0
+    board_left = central_left + max(0, center_dx - horiz_bias)
+
+    # vertical bias: if there is extra vertical slack, push the board upward to minimize top whitespace
+    slack = avail_height - board_size
+    if slack > 0:
+        # remove almost all of the top slack so the board moves up; keep a tiny safe margin
+        move_up = int(slack * 0.98)
+        # allow board to go very near the top (but not negative)
+        board_top = max(4, board_area_top - move_up)
+    else:
+        board_top = board_area_top
+
+    right_panel_x = win_w - right_outer_margin - right_panel_width
+
+    card_area_top = board_top + board_size + int(20 * scale)
+
+    # expose computed card height so draw_panel can size card thumbnails consistently
+    # start from the scaled base size
+    card_h = max(48, int(base_card_h * scale))
+
+    # If there is extra vertical space below the board, use it to enlarge card artwork
+    # while keeping sensible caps so cards don't become absurdly large.
+    try:
+        space_below = win_h - (board_top + board_size) - int(20 * scale)
+        # leave a small padding; effective available for the card itself
+        avail_for_card = max(0, space_below - int(24 * scale))
+        if avail_for_card > card_h:
+            # allow card to grow up to a fraction of board_size or a capped multiplier
+            # allow cards to grow more aggressively into the freed vertical space
+            # increase cap: allow up to 75% of board height or a larger multiple of base
+            max_by_board = int(board_size * 0.75)
+            max_by_base = int(base_card_h * scale * 3.5)
+            target_h = min(avail_for_card, max_by_board, max_by_base)
+            # smoothly increase (don't shrink if target smaller)
+            if target_h > card_h:
+                card_h = target_h
+    except Exception:
+        pass
+
+    return {
+        'left_margin': left_margin,
+        'left_panel_width': left_panel_width,
+        'right_panel_width': right_panel_width,
+        'right_panel_x': right_panel_x,
+        'right_outer_margin': right_outer_margin,
+        'board_left': board_left,
+        'board_top': board_top,
+        'board_size': board_size,
+        'board_area_top': board_area_top,
+        'board_area_height': board_size,
+        'card_area_top': card_area_top,
+    'card_h': card_h,
+        'central_left': central_left,
+        'central_right': central_right,
+        'scale': scale,
+    }
 
 
 def draw_panel():
@@ -3348,7 +3984,8 @@ def draw_panel():
         except Exception:
             pass
 
-    # レイアウト設定: 左側基本情報、右側チェス盤
+    # === レイアウト設定: 左側に基本情報、その右にチェス盤を画面上部から配置 ===
+    # Use shared responsive layout so left/right panels and board stay balanced
     layout = compute_layout(W, H)
     left_panel_width = layout['left_panel_width']
     left_margin = layout['left_margin']
@@ -3358,45 +3995,133 @@ def draw_panel():
     info_x = left_margin
     info_y = top_margin
     line_height = 35
-    # 左パネルの太字表示に合わせて縦間隔を少し広げる
-    left_line_step = 44
     
     # ターン数
-    draw_text(screen, f"ターン: {game.turn}", info_x, info_y, bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
-    info_y += left_line_step
+    draw_text(screen, f"ターン: {game.turn}", info_x, info_y)
+    info_y += line_height
     
     # PP
-    draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y, bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
-    info_y += left_line_step
+    draw_text(screen, f"PP: {game.player.pp_current}/{game.player.pp_max}", info_x, info_y)
+    info_y += line_height
+    # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
+    # PPの下の表示を非表示（下部に表示されるため）
+    # try:
+    #     w_check = is_in_check_for_display(chess.pieces, 'white')
+    #     b_check = is_in_check_for_display(chess.pieces, 'black')
+    #     if w_check or b_check:
+    #         col = (230, 120, 0)
+    #         if w_check:
+    #             draw_text(screen, "白チェック中", info_x, info_y, col)
+    #             info_y += line_height - 10
+    #         if b_check:
+    #             draw_text(screen, "黒チェック中", info_x, info_y, col)
+    #             info_y += line_height - 10
+    # except Exception:
+    #     pass
     # 簡易エフェクト表示: 次に発動する特別アクションを左パネルに表示
     # 表記ルール: 「次：飛越可」「次：追加行動×n」
     if getattr(game.player, 'next_move_can_jump', False):
-        draw_text(screen, "次：飛越可", info_x, info_y, (10, 40, 180), scale=layout.get('scale', 1.0))
-        info_y += left_line_step - 6
+        draw_text(screen, "次：飛越可", info_x, info_y, (10, 40, 180))
+        info_y += line_height - 6
     # 迅雷効果の表示（player_consecutive_turnsを使用）
     consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
     if consecutive_turns > 0:
         info_y += 6
         label = "次：追加行動" if consecutive_turns == 1 else f"次：追加行動×{consecutive_turns}"
-        draw_text(screen, label, info_x, info_y, (10, 120, 10), scale=layout.get('scale', 1.0))
-        info_y += left_line_step - 6
-    info_y += left_line_step
+        draw_text(screen, label, info_x, info_y, (10, 120, 10))
+        info_y += line_height - 6
+    info_y += line_height
     
     # 山札
-    draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
-    info_y += left_line_step
+    draw_text(screen, f"山札: {len(game.player.deck.cards)}枚", info_x, info_y, (40,40,90))
+    info_y += line_height
     
     # 墓地表示（クリック可能領域として矩形を保存）
     grave_text = f"墓地: {len(game.player.graveyard)}枚"
     global grave_label_rect
-    grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
-    info_y += left_line_step
+    grave_label_rect = draw_text(screen, grave_text, info_x, info_y, (90,40,40))
+    info_y += line_height
     
     # 相手の手札表示（クリック可能領域として矩形を保存）
     opponent_hand_text = f"相手の手札: {get_opponent_hand_count()}枚"
     global opponent_hand_rect
-    opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
-    info_y += left_line_step
+    opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
+    info_y += line_height
+    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+    try:
+        # プレイヤー側
+        if getattr(game.player, 'iron_wall_active', False):
+            label_txt = "鉄壁発動中"
+            pad_x = 10
+            pad_y = 6
+            txt_surf = FONT.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            # high-contrast cyan background with rounded corners
+            try:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+            except Exception:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+
+        # 相手側（AI）が鉄壁発動中なら表示
+        if getattr(ai_player, 'iron_wall_active', False):
+            label_txt = "相手: 鉄壁発動中"
+            pad_x = 8
+            pad_y = 4
+            txt_surf = SMALL.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            try:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+            except Exception:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+    except Exception:
+        # fail-safe: don't break UI if something goes wrong
+        pass
+
+    # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
+    try:
+        # プレイヤー側
+        if getattr(game.player, 'iron_wall_active', False):
+            label_txt = "鉄壁発動中"
+            pad_x = 10
+            pad_y = 6
+            txt_surf = FONT.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            # high-contrast cyan background with rounded corners
+            try:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
+            except Exception:
+                pygame.draw.rect(screen, (6, 160, 200), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+
+        # 相手側（AI）が鉄壁発動中なら表示
+        if getattr(ai_player, 'iron_wall_active', False):
+            label_txt = "相手: 鉄壁発動中"
+            pad_x = 8
+            pad_y = 4
+            txt_surf = SMALL.render(label_txt, True, (255,255,255))
+            box_w = txt_surf.get_width() + pad_x*2
+            box_h = txt_surf.get_height() + pad_y*2
+            box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
+            try:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
+            except Exception:
+                pygame.draw.rect(screen, (6, 120, 160), box_rect)
+            screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
+            info_y += box_h + 6
+    except Exception:
+        # fail-safe: don't break UI if something goes wrong
+        pass
 
     # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
     global start_turn_rect
@@ -3407,16 +4132,9 @@ def draw_panel():
     bg_col = (60, 140, 220) if can_start else (140, 140, 140)
     pygame.draw.rect(screen, bg_col, start_turn_rect)
     pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
-    # Scale the button label so it follows the UI scale used on the right-side rendering
-    ui_scale = layout.get('scale', 1.0)
-    try:
-        lab_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(12, int(FONT.get_height() * ui_scale)), bold=True)
-        lab = lab_font.render("バトル開始 (T)", True, (255,255,255))
-        screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
-    except Exception:
-        lab = FONT.render("バトル開始 (T)", True, (255,255,255))
-        screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
-    info_y += left_line_step
+    lab = FONT.render("バトル開始 (T)", True, (255,255,255))
+    screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+    info_y += line_height
     
     # 保留中表示（基本情報の下）
     if getattr(game, 'pending', None) is not None:
@@ -3450,7 +4168,7 @@ def draw_panel():
         # add more vertical gap between items for improved readability
         help_y += 40
 
-    # チェス盤エリア: 左側パネルの右、画面上部から配置
+    # === チェス盤エリア: 左側パネルの右、画面上部から開始 ===
     board_area_left = layout['central_left']
     board_area_top = layout['board_top']
     # board_size and position computed by compute_layout
@@ -3499,45 +4217,19 @@ def draw_panel():
                 label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
 
-    # カード効果視覚化（封鎖マス・凍結駒のオーバーレイ）
+    # --- カード効果の視覚化オーバーレイ ---
+    # 表示: 封鎖マス (赤の半透明)、凍結駒 (青の半透明に「凍」マーク)
     try:
-        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
-            # raw may be legacy int or new list of entries
-            try:
-                if isinstance(raw, list):
-                    entries = raw
-                elif isinstance(raw, dict):
-                    entries = [raw]
-                else:
-                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
-            except Exception:
-                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
-
-            # only show overlay if any entry has turns > 0
-            any_active = False
-            for e in entries:
-                try:
-                    if int(e.get('turns', 0)) > 0:
-                        any_active = True
-                        break
-                except Exception:
-                    continue
-            if not any_active:
-                continue
-
+        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
             bx = board_left + bc * square_w
             by = board_top + br * square_h
             s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
             s.fill((200, 30, 30, 120))
             screen.blit(s, (bx, by))
-            # ターン数を小さく表示 (join multiple turns if present)
-            try:
-                turns_text = ','.join(str(int(e.get('turns', 0))) for e in entries if int(e.get('turns', 0)) > 0)
-            except Exception:
-                turns_text = str(getattr(game, 'blocked_tiles_owner', {}).get((br, bc)) or '')
-            ttxt = TINY.render(turns_text, True, (255,255,255))
+            # ターン数を小さく表示
+            ttxt = TINY.render(str(turns), True, (255,255,255))
             screen.blit(ttxt, (bx + 4, by + 4))
-            # 所有者表示（白/黒の頭文字） - use legacy owner mapping for display
+            # 所有者表示（白/黒の頭文字）
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             if owner:
                 ot = TINY.render(owner[0].upper(), True, (255,255,255))
@@ -3566,16 +4258,14 @@ def draw_panel():
 
     # Play heat GIF animation if active (centered on selected board square)
     try:
-        # animation.pyのheat_gif_animを参照
-        _heat_gif_anim = _animation_module.heat_gif_anim if _animation_module else {}
-        if _heat_gif_anim.get('playing') and _heat_gif_anim.get('frames'):
-            elapsed = _ct_time.time() - _heat_gif_anim.get('start_time', 0.0)
-            total = _heat_gif_anim.get('total_duration', 0.0)
-            frames = _heat_gif_anim.get('frames')
-            durations = _heat_gif_anim.get('durations') or [1000]
+        if heat_gif_anim.get('playing') and heat_gif_anim.get('frames'):
+            elapsed = _ct_time.time() - heat_gif_anim.get('start_time', 0.0)
+            total = heat_gif_anim.get('total_duration', 0.0)
+            frames = heat_gif_anim.get('frames')
+            durations = heat_gif_anim.get('durations') or [1000]
             if elapsed >= total:
                 # stop animation
-                _heat_gif_anim['playing'] = False
+                heat_gif_anim['playing'] = False
             else:
                 # determine current frame by elapsed ms
                 acc = 0.0
@@ -3588,7 +4278,7 @@ def draw_panel():
                         break
                 frame = frames[idx]
                 # compute position centered on target square
-                pos = _heat_gif_anim.get('pos')
+                pos = heat_gif_anim.get('pos')
                 if pos is not None:
                     r, c = pos
                     fx = board_left + c * square_w
@@ -3608,15 +4298,13 @@ def draw_panel():
 
     # Play ice GIF animation if active (centered on target/frozen piece square)
     try:
-        # animation.pyのic_gif_animを参照
-        _ic_gif_anim = _animation_module.ic_gif_anim if _animation_module else {}
-        if _ic_gif_anim.get('playing') and _ic_gif_anim.get('frames'):
-            elapsed = _ct_time.time() - _ic_gif_anim.get('start_time', 0.0)
-            total = _ic_gif_anim.get('total_duration', 0.0)
-            frames = _ic_gif_anim.get('frames')
-            durations = _ic_gif_anim.get('durations') or [1000]
+        if ic_gif_anim.get('playing') and ic_gif_anim.get('frames'):
+            elapsed = _ct_time.time() - ic_gif_anim.get('start_time', 0.0)
+            total = ic_gif_anim.get('total_duration', 0.0)
+            frames = ic_gif_anim.get('frames')
+            durations = ic_gif_anim.get('durations') or [1000]
             if elapsed >= total:
-                _ic_gif_anim['playing'] = False
+                ic_gif_anim['playing'] = False
             else:
                 # determine current frame
                 acc = 0.0
@@ -3628,7 +4316,7 @@ def draw_panel():
                         idx = i
                         break
                 frame = frames[idx]
-                pos = _ic_gif_anim.get('pos')
+                pos = ic_gif_anim.get('pos')
                 if pos is not None:
                     r, c = pos
                     # scale animation so it FITS INSIDE the tile while preserving aspect ratio
@@ -3660,19 +4348,11 @@ def draw_panel():
     except Exception:
         pass
 
-    # 封鎖タイルGIFループ再生 (Image_MG.gif/Image_MG_2P.gif)
+    # --- 封鎖タイルでのループ再生: Image_MG.gif (player) / Image_MG_2P.gif (AI) ---
     try:
         # ensure both variants are loaded (2P may fallback to standard MG)
         _ensure_mg_gif_loaded()
         _ensure_mg_gif_2p_loaded()
-
-        # animation.pyからmg_gif関連の変数を取得
-        mg_gif_frames_cache = _animation_module.mg_gif_frames_cache if _animation_module else None
-        mg_gif_2p_frames_cache = _animation_module.mg_gif_2p_frames_cache if _animation_module else None
-        mg_gif_durations = _animation_module.mg_gif_durations if _animation_module else None
-        mg_gif_2p_durations = _animation_module.mg_gif_2p_durations if _animation_module else None
-        mg_gif_total_duration = _animation_module.mg_gif_total_duration if _animation_module else 0.0
-        mg_gif_2p_total_duration = _animation_module.mg_gif_2p_total_duration if _animation_module else 0.0
 
         # if neither is available, skip
         if not (mg_gif_frames_cache or mg_gif_2p_frames_cache):
@@ -3681,34 +4361,14 @@ def draw_panel():
         # We'll compute per-variant total_ms as needed
         now_ms = int(_ct_time.time() * 1000)
 
-        for (br, bc), raw in getattr(game, 'blocked_tiles', {}).items():
-            # raw may be legacy int or new list of entries
-            try:
-                if isinstance(raw, list):
-                    entries = raw
-                elif isinstance(raw, dict):
-                    entries = [raw]
-                else:
-                    entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
-            except Exception:
-                entries = [{'owner': getattr(game, 'blocked_tiles_owner', {}).get((br, bc)), 'turns': raw}]
-
-            # only show while any turns > 0
-            any_active = False
-            for e in entries:
-                try:
-                    if int(e.get('turns', 0)) > 0:
-                        any_active = True
-                        break
-                except Exception:
-                    continue
-            if not any_active:
+        for (br, bc), turns in getattr(game, 'blocked_tiles', {}).items():
+            # only show while turns > 0
+            if not turns:
                 continue
-
             bx = board_left + bc * square_w
             by = board_top + br * square_h
 
-            # select which gif variant to use based on blocked_tiles_owner (legacy first-owner)
+            # select which gif variant to use based on blocked_tiles_owner
             owner = getattr(game, 'blocked_tiles_owner', {}).get((br, bc))
             use_2p = False
             try:
@@ -3753,7 +4413,7 @@ def draw_panel():
     except Exception:
         pass
 
-    # ターン表示テロップ（中央・1秒表示）
+    # --- ターン表示テロップ（中央・1秒表示） ---
     try:
         if turn_telop_msg and _ct_time.time() < turn_telop_until:
             # 中央に大きめのテキストを表示（ボード内に表示）
@@ -3927,7 +4587,7 @@ def draw_panel():
     pygame.draw.rect(screen, (20,20,20), (board_left, board_top-3, 8 * square_w, 6))
     pygame.draw.rect(screen, (20,20,20), (board_left, board_top + 8 * square_h - 3, 8 * square_w, 6))
     
-    # チェック中の表示（凍結・カード効果を含む）
+    # === チェック中の表示（Chess Main準拠）===
     if not game_over:
         check_colors = []
         # 表示用には凍結駒も含めた全ての脅威を表示
@@ -3967,7 +4627,7 @@ def draw_panel():
                 pygame.draw.rect(screen, (255, 165, 0), bg_rect, 2)
                 screen.blit(check_text, (check_x, check_y + idx * (text_h + 10)))
 
-    # 右側エリア: ログ（切替式、スクロール対応）
+    # === 右側エリア: ログ（切替式）===
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
     if show_log:
         # Preferred log panel sits to the right of the board when enough room exists.
@@ -4121,11 +4781,9 @@ def draw_panel():
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
         # タイトル（クリックで閉じる）
-        # 1行分の余白をタイトル上部に入れる（視認性向上）
-        top_line_h = FONT.get_height()
-        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8 + top_line_h, (60, 60, 100))
+        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
         # 見出しのすぐ下にスクロールのヒントを表示
-        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
+        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30, (100, 100, 120))
 
         # ログの折り返し処理
         wrapped_lines = []
@@ -4136,18 +4794,11 @@ def draw_panel():
 
         # スクロールオフセットの範囲制限
         global log_scroll_offset
-        # 行高さは現在のフォントから取得し、各文章ごとに1行分の余白を入れる
-        line_h = FONT.get_height()
-        # 表示行のステップはテキスト行 + 空行分（＝行高 * 2）
-        line_step = line_h * 2
         # 下部に余白を設けて見やすくする（最後の行が枠にくっつかないように）
         bottom_padding_px = 28  # ここを調整すると余白サイズを変更できます
-        max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // line_step)
+        max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // 22)
         max_scroll = max(0, len(wrapped_lines) - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
-        # グローバル変数に保存（スクロールバードラッグ処理で使用）
-        global _max_scroll
-        _max_scroll = max_scroll
 
         # 表示範囲を計算（最新が下）
         if len(wrapped_lines) <= max_lines_visible:
@@ -4158,13 +4809,11 @@ def draw_panel():
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
         # ログ描画開始位置（見出しとヒントの下）
-        # 先ほどタイトルの上に1行分の余白を入れたので、描画開始位置も同じ分だけ下げる
-        log_y = log_panel_top + 56 + top_line_h
+        log_y = log_panel_top + 56
         for wline in visible_lines:
             if log_y < log_panel_top + log_panel_height - bottom_padding_px:
                 draw_text(screen, wline, log_panel_left + 10, log_y, (60, 60, 60))
-                # 次の文章は空行を挟んで描画する
-                log_y += line_step
+                log_y += 22
 
         # スクロールバー表示
         if max_scroll > 0:
@@ -4199,7 +4848,8 @@ def draw_panel():
         except Exception:
             draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
 
-    # 下部エリア: 手札（横並び最大7枚、クリックで拡大）
+    # === 下部エリア: 手札（左から横並び最大7枚） ===
+    # ボードの下に左詰めで横並びで表示
     card_area_top = layout['card_area_top']
     hand_title_x = layout['left_margin']  # 左マージンから開始
     hand_title_y = card_area_top
@@ -4289,7 +4939,22 @@ def draw_panel():
             screen.blit(num_surf, (num_x, num_y))
 
 
-    # 墓地オーバーレイ ([G]で表示/非表示)
+    # === 状態表示（右下）===
+    # ご要望により、右下の『封鎖/凍結/追加行動/次』の簡易表示は非表示にします。
+    # （必要になったら下記を有効化してください）
+    # state_x = layout['right_panel_x'] + 12
+    # state_y = layout['card_area_top'] + 40
+    # draw_text(screen, f"封鎖: {len(getattr(game, 'blocked_tiles', {}))}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # draw_text(screen, f"凍結: {len(getattr(game, 'frozen_pieces', {}))}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # consecutive_turns = getattr(game, 'player_consecutive_turns', 0)
+    # draw_text(screen, f"追加行動: {consecutive_turns}", state_x, state_y, (80, 80, 80))
+    # state_y += 20
+    # if game.player.next_move_can_jump:
+    #     draw_text(screen, "次: 飛越可", state_x, state_y, (0, 120, 0))
+
+    # === 墓地オーバーレイ ===
     if show_grave:
         overlay_w = 600
         overlay_h = 500
@@ -4328,7 +4993,7 @@ def draw_panel():
                 if gx > overlay_x + overlay_w - 100:
                     break
 
-    # 相手手札オーバーレイ ([H]で表示/非表示)
+    # === 相手の手札オーバーレイ ===
     if show_opponent_hand:
         overlay_w = 600
         overlay_h = 400
@@ -4376,7 +5041,7 @@ def draw_panel():
             # 中央にテキスト
             draw_text(screen, "?", cx + card_back_w // 2 - 8, actual_cy + card_back_h // 2 - 10, (80, 80, 90))
 
-    # カード拡大表示オーバーレイ（手札または墓地から）
+    # === カード拡大表示オーバーレイ ===
     if enlarged_card_index is not None and 0 <= enlarged_card_index < len(game.player.hand.cards):
         c = game.player.hand.cards[enlarged_card_index]
         
@@ -4410,7 +5075,7 @@ def draw_panel():
         large_img = get_card_image(enlarged_card_name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
 
-    # 保留中操作の説明オーバーレイ（捨て札選択、ターゲット指定等）
+    # === 保留中の操作説明オーバーレイ ===
     if getattr(game, 'pending', None) is not None:
         # 操作説明テキストを決定
         if game.pending.kind == 'discard':
@@ -4547,7 +5212,7 @@ def draw_panel():
             screen.blit(yes_s, (confirm_yes_rect.centerx - yes_s.get_width()//2, confirm_yes_rect.centery - yes_s.get_height()//2))
             screen.blit(no_s, (confirm_no_rect.centerx - no_s.get_width()//2, confirm_no_rect.centery - no_s.get_height()//2))
 
-    # プロモーション選択オーバーレイ (Q/R/B/N)
+    # === プロモーション選択オーバーレイ ===
     if chess.promotion_pending is not None:
         promot = chess.promotion_pending
         opts = ['Q','R','B','N']
@@ -4630,7 +5295,7 @@ def draw_panel():
     except Exception:
         pass
 
-    # ゲーム終了画面（勝敗表示と再戦ボタン）
+    # --- ゲーム終了画面（勝敗表示と再戦ボタン） ---
     if game_over:
         # 半透明オーバーレイを全画面に表示
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -4709,38 +5374,16 @@ def draw_panel():
         draw_panel.quit_rect = quit_rect
 
 
-def start_player_turn(ai_end_msg: str = None):
+def start_player_turn():
     """Centralized helper that starts a player's card-game turn and shows the YOUR TURN telop.
 
     Use this wrapper instead of calling `game.start_turn()` directly from the UI so
     the visual telop is always displayed when a turn begins (manual or automatic).
-
-    If `ai_end_msg` is provided, append that message to the game log after the
-    turn-start processing. This ensures any draw logs produced by `game.start_turn()`
-    appear before the AI end message when the AI triggers an automatic player turn.
     """
     global turn_telop_msg, turn_telop_until, log_scroll_offset
     try:
         # start_turn handles PP reset and the 1-card draw
-        if ai_end_msg:
-            # If caller provided an AI-end message, capture new log entries
-            # produced by start_turn so we can reorder draw-related lines
-            prev_log_len = len(game.log)
-            game.start_turn()
-            # extract newly added entries
-            new_entries = game.log[prev_log_len:]
-            # identify draw-only entries produced by draw_to_hand() which start with "ドロー:"
-            draw_entries = [e for e in new_entries if isinstance(e, str) and e.strip().startswith("ドロー:")]
-            # keep other new entries (including the full "ターンN開始: ...ドロー...PP..." message)
-            non_draw_new = [e for e in new_entries if e not in draw_entries]
-            # rebuild game.log keeping only non-draw new entries (we will NOT append draw_entries or the AI-end message)
-            try:
-                game.log = game.log[:prev_log_len] + non_draw_new
-            except Exception:
-                # fallback: if direct assignment fails, leave as-is
-                pass
-        else:
-            game.start_turn()
+        game.start_turn()
     except Exception:
         return
     try:
@@ -4752,10 +5395,6 @@ def start_player_turn(ai_end_msg: str = None):
         log_scroll_offset = 0
     except Exception:
         pass
-    # If an AI-provided end message is requested, do NOT append it here
-    # and also do NOT append the per-card "ドロー:" lines. This keeps the
-    # full turn-start message ("ターンN開始: ...ドロー...PP...") intact while
-    # hiding the AI-end and standalone draw-name lines as requested.
 
 
 def attempt_start_turn():
@@ -4840,7 +5479,7 @@ def handle_keydown(key):
             show_grave = False
         return
 
-    # DEBUG: F1-F4で盤面セットショートカット
+    # --- DEBUG: 盤面セットショートカット ---
     if key == pygame.K_F1:
         debug_setup_castling()
         return
@@ -4856,6 +5495,13 @@ def handle_keydown(key):
     if key == pygame.K_F5:
         debug_setup_checkmate()
         return
+    # F8とF9のデバッグ機能を無効化（通常プレイ時に誤操作を防ぐため）
+    # if key == pygame.K_F8:
+    #     debug_setup_counter_check_white()
+    #     return
+    # if key == pygame.K_F9:
+    #     debug_setup_simul_check_start()
+    #     return
     
     # 1-9 キーでカード使用
     if pygame.K_1 <= key <= pygame.K_9:
@@ -5066,17 +5712,7 @@ def handle_mouse_click(pos):
                 show_start_screen()
             except Exception:
                 pass
-            # After show_start_screen() returns it may have created a new
-            # `game`/`ai_player`. Reset board/UI state without prompting
-            # for deck selection again.
-            try:
-                _prepare_new_battle_after_deck_already_selected()
-            except Exception:
-                # fallback to full restart which will prompt if necessary
-                try:
-                    restart_game()
-                except Exception:
-                    pass
+            restart_game()
             return
         if hasattr(draw_panel, 'quit_rect') and draw_panel.quit_rect.collidepoint(pos):
             pygame.quit()
@@ -5360,7 +5996,7 @@ def handle_mouse_click(pos):
                     game.player.spend_pp(card.cost)
                     game.player.hand.remove_at(hand_idx)
                     game.player.graveyard.append(card)
-                    # card usage already logged by game.play_card(); avoid duplicate log
+                    game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
                     _debug_mark_card_played()
                 game.pending = PendingAction(kind='target_piece_unfreeze', info={'note': '自分の凍結駒を選択してください'})
                 return
@@ -5372,7 +6008,7 @@ def handle_mouse_click(pos):
                 game.player.spend_pp(card.cost)
                 game.player.hand.remove_at(hand_idx)
                 game.player.graveyard.append(card)
-                # card usage already logged by game.play_card(); avoid duplicate log
+                game.log.append(f"『{card.name}』（コスト{card.cost}）を使用。PPは{game.player.pp_current}/{game.player.pp_max}。")
                 _debug_mark_card_played()
             info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
             game.pending = PendingAction(kind='target_tiles_multi', info=info)
@@ -5420,27 +6056,16 @@ def handle_mouse_click(pos):
                 enlarged_card_index = idx
             return
 
-    # プロモーション選択オーバーレイクリック対応
+    # --- プロモーション選択オーバーレイクリック対応 ---
     if chess.promotion_pending is not None and hasattr(draw_panel, 'promo_rects'):
         for r, o in draw_panel.promo_rects:
             if r.collidepoint(pos):
-                # chess.rulesモジュールでプロモーション処理を実行
-                try:
-                    success = chess_rules.handle_promotion_selection(chess, game, o)
-                    if not success:
-                        # フォールバック: 従来の処理
-                        piece = chess.promotion_pending.get('piece')
-                        if piece is not None:
-                            piece.name = o
-                            game.log.append(f"昇格: ポーンを{o}に昇格させました。")
-                        chess.promotion_pending = None
-                except Exception:
-                    # chess_rulesモジュールが利用できない場合、従来のロジックを実行
-                    piece = chess.promotion_pending.get('piece')
-                    if piece is not None:
-                        piece.name = o
-                        game.log.append(f"昇格: ポーンを{o}に昇格させました。")
-                    chess.promotion_pending = None
+                # 選択された昇格駒で置き換え
+                piece = chess.promotion_pending.get('piece')
+                if piece is not None:
+                    piece.name = o
+                    game.log.append(f"昇格: ポーンを{o}に昇格させました。")
+                chess.promotion_pending = None
                 # clear selection/highlights just in case
                 selected_piece = None
                 highlight_squares = []
@@ -5485,15 +6110,19 @@ def handle_mouse_click(pos):
                     # assume card used by player -> applies to opponent color
                     applies_to = game.pending.info.get('for_color', 'black')
                     try:
-                        # append a blocked-tile entry (new representation)
-                        game.add_blocked_tile((row, col), applies_to, turns)
+                        ok = game.apply_blocked_tile((row, col), turns, applies_to=applies_to, source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                        if not ok:
+                            # prevented by iron wall
+                            game.log.append(f"鉄壁が効果を防ぎました。 {(row,col)} への封鎖は適用されませんでした。")
+                        else:
+                            try:
+                                # ensure owner mapping is recorded if helper didn't set it
+                                game.blocked_tiles_owner[(row, col)] = applies_to
+                            except Exception:
+                                pass
                     except Exception:
-                        # Fallback to legacy behavior: overwrite single int mapping
-                        try:
-                            game.blocked_tiles[(row, col)] = turns
-                            game.blocked_tiles_owner[(row, col)] = applies_to
-                        except Exception:
-                            game.blocked_tiles[(row, col)] = turns
+                        # Fallback to simple int-only mapping
+                        game.blocked_tiles[(row, col)] = turns
                     try:
                         play_heat_gif_at(row, col)
                     except Exception:
@@ -5531,16 +6160,21 @@ def handle_mouse_click(pos):
                         if len(sel) >= tmax:
                             turns = game.pending.info.get('turns', 2)
                             applies_to = game.pending.info.get('for_color', 'black')
+                            applied = []
                             for (r, c) in sel:
                                 try:
-                                    game.add_blocked_tile((r, c), applies_to, turns)
+                                    ok = game.apply_blocked_tile((r, c), turns, applies_to=applies_to, source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                                    if ok:
+                                        applied.append((r, c))
                                 except Exception:
                                     try:
                                         game.blocked_tiles[(r, c)] = turns
                                         game.blocked_tiles_owner[(r, c)] = applies_to
+                                        applied.append((r, c))
                                     except Exception:
                                         game.blocked_tiles[(r, c)] = turns
-                            game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                                        applied.append((r, c))
+                            game.log.append(f"封鎖: {applied if applied else sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
                 else:
@@ -5628,26 +6262,40 @@ def handle_mouse_click(pos):
                     except Exception:
                         engine_piece = None
                     if engine_piece is not None:
-                        # record on canonical engine piece
+                        # record on canonical engine piece, using helper to respect iron-wall
                         try:
-                            game.frozen_pieces[id(engine_piece)] = turns
+                            applied = game.apply_freeze_piece(engine_piece, turns, target_color=getattr(engine_piece, 'color', None), source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                            if not applied:
+                                game.log.append(f"鉄壁が効果を防ぎました。{engine_piece} の凍結は適用されませんでした。")
+                                game.pending = None
+                                return
                         except Exception:
-                            game.frozen_pieces[id(engine_piece)] = turns
-                        try:
-                            setattr(engine_piece, 'frozen_turns', turns)
-                        except Exception:
-                            pass
+                            try:
+                                game.frozen_pieces[id(engine_piece)] = turns
+                            except Exception:
+                                game.frozen_pieces[id(engine_piece)] = turns
+                            try:
+                                setattr(engine_piece, 'frozen_turns', turns)
+                            except Exception:
+                                pass
                         target_for_log = engine_piece
                     else:
                         # fallback: record on clicked object (dict or other)
                         try:
-                            game.frozen_pieces[id(clicked)] = turns
+                            applied = game.apply_freeze_piece(clicked, turns, target_color=getattr(clicked, 'color', None) if hasattr(clicked, 'color') else (clicked.get('color') if isinstance(clicked, dict) else None), source_color=game.pending.info.get('source_color'), source_card_name=game.pending.info.get('source_card_name'))
+                            if not applied:
+                                game.log.append(f"鉄壁が効果を防ぎました。{clicked} の凍結は適用されませんでした。")
+                                game.pending = None
+                                return
                         except Exception:
-                            game.frozen_pieces[id(clicked)] = turns
-                        try:
-                            setattr(clicked, 'frozen_turns', turns)
-                        except Exception:
-                            pass
+                            try:
+                                game.frozen_pieces[id(clicked)] = turns
+                            except Exception:
+                                game.frozen_pieces[id(clicked)] = turns
+                            try:
+                                setattr(clicked, 'frozen_turns', turns)
+                            except Exception:
+                                pass
                         target_for_log = clicked
                     # try to get a readable name
                     try:
@@ -5900,9 +6548,11 @@ def handle_mouse_click(pos):
             else:
                 # If the player clicked a square that is blocked for their color, show a notice
                 try:
-                    # Use centralized tile-blocked check so owner-aware logic applies
-                    try:
-                        if getattr(game, 'is_tile_blocked_for', None) is not None and game.is_tile_blocked_for((row, col), chess_current_turn):
+                    bmap = getattr(game, 'blocked_tiles', {}) or {}
+                    bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
+                    if (row, col) in bmap:
+                        owner = bowner.get((row, col))
+                        if owner == chess_current_turn:
                             msg = "灼熱状態なので通れません"
                             game.log.append(msg)
                             try:
@@ -5911,21 +6561,6 @@ def handle_mouse_click(pos):
                             except Exception:
                                 pass
                             return
-                    except Exception:
-                        # Fallback to legacy mapping
-                        bmap = getattr(game, 'blocked_tiles', {}) or {}
-                        bowner = getattr(game, 'blocked_tiles_owner', {}) or {}
-                        if (row, col) in bmap:
-                            owner = bowner.get((row, col))
-                            if owner == chess_current_turn:
-                                msg = "灼熱状態なので通れません"
-                                game.log.append(msg)
-                                try:
-                                    notice_msg = msg
-                                    notice_until = _ct_time.time() + 1.0
-                                except Exception:
-                                    pass
-                                return
                 except Exception:
                     pass
                 # select another own piece, toggle deselect if clicking the same piece, or cancel
@@ -6015,40 +6650,47 @@ def main_loop():
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
                     # スクロールバーつまみのドラッグ開始判定
-                    # overlayモジュールのhandle_scrollbar_drag_start関数を使用
-                    try:
-                        if not overlay.handle_scrollbar_drag_start(event.pos, show_log, scrollbar_rect, log_scroll_offset):
-                            handle_mouse_click(event.pos)
-                    except Exception:
-                        # フォールバック: 従来の処理
-                        if show_log and scrollbar_rect and scrollbar_rect.collidepoint(event.pos):
-                            dragging_scrollbar = True
-                            drag_start_y = event.pos[1]
-                            drag_start_offset = log_scroll_offset
-                        else:
-                            handle_mouse_click(event.pos)
+                    if show_log and scrollbar_rect and scrollbar_rect.collidepoint(event.pos):
+                        dragging_scrollbar = True
+                        drag_start_y = event.pos[1]
+                        drag_start_offset = log_scroll_offset
+                    else:
+                        handle_mouse_click(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
-                    # overlayモジュールのhandle_scrollbar_drag_end関数を使用
-                    try:
-                        overlay.handle_scrollbar_drag_end()
-                    except Exception:
-                        # フォールバック: 従来の処理
-                        dragging_scrollbar = False
+                    dragging_scrollbar = False
             elif event.type == pygame.MOUSEMOTION:
-                # overlayモジュールのhandle_scrollbar_motion関数を使用
-                try:
-                    log_scroll_offset = overlay.handle_scrollbar_motion(event.pos, show_log, scrollbar_rect, log_scroll_offset, _max_scroll)
-                except Exception:
-                    # フォールバック: 従来の処理
-                    if dragging_scrollbar and show_log and scrollbar_rect:
-                        # ドラッグ量に応じてスクロールオフセットを変更
-                        dy = event.pos[1] - drag_start_y
-                        # scrollbar_rectの高さを使って比率計算
-                        if scrollbar_rect.height > 0 and _max_scroll > 0:
-                            scroll_delta = -dy * _max_scroll / scrollbar_rect.height
-                            new_offset = drag_start_offset + scroll_delta
-                            log_scroll_offset = int(max(0, min(new_offset, _max_scroll)))
+                if dragging_scrollbar and show_log and scrollbar_rect:
+                    # ドラッグ量に応じてスクロールオフセットを変更
+                    thumb_top = scrollbar_rect.top
+                    thumb_height = scrollbar_rect.height
+                    # スクロールバー全体の高さ
+                    bar_top = scrollbar_rect.top - (log_scroll_offset / max(1, log_scroll_offset)) * thumb_height
+                    bar_height = scrollbar_rect.height / max(1, thumb_height)
+                    # ドラッグした距離
+                    dy = event.pos[1] - drag_start_y
+                    # スクロールバーの移動量をログオフセットに変換
+                    # draw_panelで計算したmax_scroll, scrollbar_height, thumb_heightを再利用
+                    # ここではスクロールバーの移動量をmax_scrollに比例させる
+                    # まずdraw_panelを呼び出して最新の値を取得
+                    # ただし、draw_panelは毎フレーム呼ばれるので、ここではlog_scroll_offsetのみ更新
+                    # スクロールバーの高さ（draw_panelで定義）
+                    # つまみの移動可能範囲 = scrollbar_height - thumb_height
+                    # dy / (scrollbar_height - thumb_height) = scroll_ratioの変化
+                    # scroll_ratio = log_scroll_offset / max_scroll
+                    # 新しいscroll_ratio = (thumb_y + dy - scrollbar_y) / (scrollbar_height - thumb_height)
+                    # まずdraw_panelで必要な値を取得
+                    # draw_panel()の中でmax_scroll, scrollbar_height, thumb_height, scrollbar_yが定義されている
+                    # ここではそれらをグローバル変数にしておくと良い
+                    # ただし、draw_panel()の中でしか値が確定しないので、
+                    # ここでは簡易的にdyをscroll_offsetに変換
+                    # つまみの移動可能範囲
+                    move_range = max(1, scrollbar_rect.height * 10)  # 仮の値（実際はdraw_panelの値を使うべき）
+                    # 仮のmax_scroll（draw_panelの値を使うべき）
+                    max_scroll = 30  # 仮の値（実際はdraw_panelの値を使うべき）
+                    # dyをmax_scrollに比例させる
+                    new_offset = drag_start_offset + int(dy * max_scroll / move_range)
+                    log_scroll_offset = max(0, min(new_offset, max_scroll))
             elif event.type == pygame.MOUSEWHEEL:
                 # マウスホイールでログスクロール（ログ表示中のみ）
                 if show_log:
@@ -6057,7 +6699,8 @@ def main_loop():
                     elif event.y < 0:  # 下スクロール
                         log_scroll_offset = max(0, log_scroll_offset - 1)
 
-        # チェック/同時チェックの監視と勝敗処理
+        # --- チェック/同時チェックの監視と勝敗処理 ---
+        # チェス手番の開始を検知（色が切り替わったフレーム）
         if globals().get('last_turn_color', None) != chess_current_turn:
             # 手番インデックス更新
             if chess_current_turn == 'white':
@@ -6066,7 +6709,7 @@ def main_loop():
                 globals()['black_turn_index'] = globals().get('black_turn_index', 0) + 1
             globals()['last_turn_color'] = chess_current_turn
 
-            # 白番に戻った際のテロップ表示（2ターン目以降）
+            # --- 追加: 白番に戻った際のテロップ表示（2ターン目以降） ---
             try:
                 # 条件: 色が白に変わった、プレイヤーが既に1ターン以上開始している、
                 # プロモーション選択や保留中のUIが無く、テロップを出すべきタイミング
@@ -6188,7 +6831,8 @@ def main_loop():
             except Exception:
                 pass
 
-        # チェックメイト判定と勝利条件チェック
+        # --- チェックメイト判定と勝利条件チェック ---
+        # 迅雷使用中はキング取得判定を常に行う（同時チェック中でも即座に勝敗判定）
         if chess_current_turn == 'white':
             lightning_active = getattr(game, 'player_consecutive_turns', 0) > 0
         else:
@@ -6276,33 +6920,22 @@ def main_loop():
                         globals()['simul_white_result'] = 'none'
                         globals()['simul_black_result'] = 'none'
         
-        # チェックメイトとステイルメイトの判定（chess.rulesモジュールに委譲）
+        # チェックメイトとステイルメイトの判定（同時チェック中はスキップ）
         if not game_over and not globals().get('simul_check_active', False):
-            try:
-                is_over, winner = chess_rules.check_game_over_conditions(
-                    game, 
-                    chess, 
-                    is_in_check, 
-                    has_legal_moves_with_cards,
-                    simul_check_active=globals().get('simul_check_active', False)
-                )
-                if is_over:
-                    game_over = True
-                    game_over_winner = winner
-            except Exception:
-                # chess_rulesモジュールが利用できない場合、従来のロジックを実行
-                if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
-                    game_over = True
-                    game_over_winner = 'black'
-                    game.log.append("YOU LOSE！黒の勝利！")
-                elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
-                    game_over = True
-                    game_over_winner = 'white'
-                    game.log.append("YOU WIN！白の勝利！")
-                elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
-                    game_over = True
-                    game_over_winner = 'draw'
-                    game.log.append("ステイルメイト（引き分け）")
+            # どちらかが詰みの場合も勝利判定（カード効果込みの合法手判定を使用）
+            if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
+                game_over = True
+                game_over_winner = 'black'
+                game.log.append("YOU LOSE！黒の勝利！")
+            elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
+                game_over = True
+                game_over_winner = 'white'
+                game.log.append("YOU WIN！白の勝利！")
+            # ステイルメイト（合法手がないがチェックでない）の判定（カード効果込み）
+            elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
+                game_over = True
+                game_over_winner = 'draw'
+                game.log.append("ステイルメイト（引き分け）")
 
         # === 自動処理されるpending ===
         if getattr(game, 'pending', None) is not None:
@@ -6419,16 +7052,6 @@ def main_loop():
                         chess_current_turn = 'black'
                         cpu_wait = True
                         cpu_wait_start = _ct_time.time()
-                        # mark the player's card-game turn as consumed so the
-                        # automatic player-turn start will occur after the AI finishes.
-                        try:
-                            game.turn_active = False
-                            game.player_moved_this_turn = True
-                            # force the auto-start after AI finishes in case
-                            # turn accounting elsewhere prevents the normal check
-                            game._force_start_player_after_ai = True
-                        except Exception:
-                            pass
                         game.log.append("自ターンをスキップします。")
 
                 game.pending = None
@@ -6449,28 +7072,17 @@ def main_loop():
                 # call AI move
                 ai_make_move()
                 # After AI move, check if AI has extra consecutive turns (迅雷)
-                # Determine AI extra-turns (迅雷) robustly: prefer the global
-                # counter if present, otherwise fall back to a game attribute.
                 try:
-                    a_cct = globals().get('ai_consecutive_turns', None)
-                    if a_cct is None:
-                        a_cct = getattr(game, 'ai_consecutive_turns', 0)
+                    a_cct = getattr(game, 'ai_consecutive_turns', 0)
                 except Exception:
                     a_cct = 0
 
                 if a_cct and a_cct > 0:
                     # consume one AI extra-turn and schedule another AI think cycle
                     try:
-                        if 'ai_consecutive_turns' in globals():
-                            globals()['ai_consecutive_turns'] = max(0, globals().get('ai_consecutive_turns', 0) - 1)
-                        else:
-                            # fall back to mutating game attribute when global not used
-                            game.ai_consecutive_turns = max(0, a_cct - 1)
+                        game.ai_consecutive_turns -= 1
                     except Exception:
-                        try:
-                            setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
-                        except Exception:
-                            pass
+                        setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
                     # keep AI's turn so it moves again
                     chess_current_turn = 'black'
                     # Mark that the next AI move is a continuation of the '迅雷' extra-turn
@@ -6507,25 +7119,18 @@ def main_loop():
                     try:
                         # game.turn は start_turn() が呼ばれると 1,2,... と増えるため
                         # ここでは既にプレイヤーが1ターン以上開始している場合のみ自動開始する。
-                        # auto-start if either the player already had at least one
-                        # started turn OR a caller requested forcing the start after AI
-                        should_auto = getattr(game, 'turn', 0) >= 1 or getattr(game, '_force_start_player_after_ai', False)
-                        if should_auto:
+                        if getattr(game, 'turn', 0) >= 1:
                             # pending がある、または既に turn_active の場合は自動開始しない
                             if getattr(game, 'pending', None) is None and not getattr(game, 'turn_active', False):
                                 try:
-                                    start_player_turn("AI終了: 自動でターン開始と1枚ドローを行いました。")
+                                    # Use the centralized helper so telop is shown consistently
+                                    start_player_turn()
+                                    try:
+                                        game.log.append("AI終了: 自動でターン開始と1枚ドローを行いました。")
+                                    except Exception:
+                                        pass
                                 except Exception:
-                                    pass
-                            # Clear the force-start flag so it doesn't persist
-                            try:
-                                if getattr(game, '_force_start_player_after_ai', False):
-                                    delattr(game, '_force_start_player_after_ai')
-                            except Exception:
-                                try:
-                                    if '_force_start_player_after_ai' in game.__dict__:
-                                        del game.__dict__['_force_start_player_after_ai']
-                                except Exception:
+                                    # 失敗してもゲームループを壊さない
                                     pass
                     except Exception:
                         pass
@@ -6534,14 +7139,42 @@ def main_loop():
 
 
 if __name__ == "__main__":
-    # show start screen to choose AI difficulty before starting
-    show_start_screen()
-    # Ensure game/ai_player created according to DECK_MODE (start screen may have set it)
+    # Top-level entry: run start screen and main loop.
+    # Wrap in KeyboardInterrupt handler so Ctrl+C (or other interrupts)
+    # do not produce an unhandled traceback and ensure pygame quits cleanly.
     try:
-        if globals().get('game') is None:
-            globals()['game'] = new_game_with_mode(DECK_MODE)
-        if globals().get('ai_player') is None:
-            globals()['ai_player'] = build_ai_player(DECK_MODE)
-    except Exception:
+        # show start screen to choose AI difficulty before starting
+        show_start_screen()
+        # Ensure game/ai_player created according to DECK_MODE (start screen may have set it)
+        try:
+            if globals().get('game') is None:
+                globals()['game'] = new_game_with_mode(DECK_MODE)
+            if globals().get('ai_player') is None:
+                globals()['ai_player'] = build_ai_player(DECK_MODE)
+        except Exception:
+            pass
+        main_loop()
+    except KeyboardInterrupt:
+        # User requested interruption (Ctrl+C). Exit gracefully.
+        try:
+            print("Interrupted by user. Exiting...")
+        except Exception:
+            pass
+    except SystemExit:
+        # allow normal sys.exit() to proceed
         pass
-    main_loop()
+    except Exception:
+        # Unexpected exception: print traceback for debugging, but still try to shutdown
+        try:
+            traceback.print_exc()
+        except Exception:
+            pass
+    finally:
+        try:
+            pygame.quit()
+        except Exception:
+            pass
+        try:
+            sys.exit(0)
+        except Exception:
+            pass

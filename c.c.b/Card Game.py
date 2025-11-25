@@ -5563,6 +5563,12 @@ def handle_mouse_click(pos):
                 # must select one own frozen piece to unfreeze
                 # assume player controls white pieces
                 player_color = 'white'
+                
+                # Debug: Show what was clicked
+                if clicked is None:
+                    game.log.append("そのマスには駒がありません。凍結している自分の駒を選択してください。")
+                    return
+                
                 clicked_color = None
                 try:
                     clicked_color = clicked.color
@@ -5571,42 +5577,65 @@ def handle_mouse_click(pos):
                         clicked_color = clicked.get('color') if clicked is not None else None
                     except Exception:
                         clicked_color = None
-                if clicked is not None and clicked_color is not None and clicked_color == player_color:
-                    pid = None
-                    try:
-                        pid = id(clicked)
-                    except Exception:
-                        try:
-                            pid = clicked.get('id')
-                        except Exception:
-                            pid = None
-                    if pid is not None and pid in game.frozen_pieces:
-                        try:
-                            del game.frozen_pieces[pid]
-                        except Exception:
-                            pass
-                            # Also clear transient attribute on the piece object if present
-                            try:
-                                if clicked is not None and hasattr(clicked, 'frozen_turns'):
-                                    try:
-                                        delattr(clicked, 'frozen_turns')
-                                    except Exception:
-                                        try:
-                                            del clicked.frozen_turns
-                                        except Exception:
-                                            pass
-                            except Exception:
-                                pass
-                        try:
-                            name = clicked.name
-                        except Exception:
-                            name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
-                        game.log.append(f"凍結解除: {name} の凍結を解除しました。")
-                        game.pending = None
-                    else:
-                        game.log.append("その駒は凍結されていません。自分の凍結駒を選択してください。")
-                else:
+                
+                if clicked_color != player_color:
                     game.log.append("自分の駒を選択してください。")
+                    return
+                
+                # Get piece ID
+                pid = None
+                try:
+                    pid = id(clicked)
+                except Exception:
+                    try:
+                        pid = clicked.get('id')
+                    except Exception:
+                        pass
+                
+                if pid is None:
+                    game.log.append("駒の識別に失敗しました。もう一度お試しください。")
+                    return
+                
+                # Check if piece is frozen
+                is_frozen = False
+                frozen_map = getattr(game, 'frozen_pieces', {})
+                
+                # Check both frozen_pieces dict and frozen_turns attribute
+                if pid in frozen_map and frozen_map.get(pid, 0) > 0:
+                    is_frozen = True
+                elif hasattr(clicked, 'frozen_turns') and getattr(clicked, 'frozen_turns', 0) > 0:
+                    is_frozen = True
+                
+                if not is_frozen:
+                    try:
+                        piece_name = clicked.name
+                    except Exception:
+                        piece_name = clicked.get('name', '駒') if clicked is not None else '駒'
+                    game.log.append(f"その駒（{piece_name}）は凍結されていません。凍結している自分の駒を選択してください。")
+                    return
+                
+                # Unfreeze the piece
+                # Remove from frozen_pieces dictionary
+                if pid in frozen_map:
+                    try:
+                        del frozen_map[pid]
+                    except Exception:
+                        pass
+                
+                # Clear frozen_turns attribute on the piece object
+                if hasattr(clicked, 'frozen_turns'):
+                    try:
+                        clicked.frozen_turns = 0
+                    except Exception:
+                        pass
+                
+                try:
+                    name = clicked.name
+                except Exception:
+                    name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                
+                game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                game.pending = None
                 return
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece':
                 # must select an opponent piece

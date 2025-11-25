@@ -3325,6 +3325,7 @@ HELP_LINES = [
 
 
 def draw_panel():
+    global game_over, game_over_winner
     # 背景画像があればそれを描画し、なければ従来の塗りつぶしを行う
     global log_toggle_rect, play_bg_img, play_bg_surf
     try:
@@ -3946,7 +3947,6 @@ def draw_panel():
         # チェック中かつ合法手なし（詰み）ならゲーム終了処理
         for color in check_colors:
             if not has_legal_moves_with_cards(color):
-                global game_over, game_over_winner
                 game_over = True
                 game_over_winner = 'black' if color == 'white' else 'white'
                 # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）

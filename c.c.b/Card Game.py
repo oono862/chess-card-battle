@@ -3942,26 +3942,34 @@ def draw_panel():
             check_colors.append('white')
         if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
-        
+
+        # チェック中かつ合法手なし（詰み）ならゲーム終了処理
+        for color in check_colors:
+            if not has_legal_moves_with_cards(color):
+                global game_over, game_over_winner
+                game_over = True
+                game_over_winner = 'black' if color == 'white' else 'white'
+                # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）
+
         if check_colors:
             # チェック状態の変化を追跡
             if not hasattr(draw_panel, "last_check_colors"):
                 draw_panel.last_check_colors = []
             if check_colors != draw_panel.last_check_colors:
                 draw_panel.last_check_colors = check_colors.copy()
-            
+
             # 左パネルの中央付近に表示（手札と被らない位置）
             check_x = left_margin + 10
             check_y = H // 2 - 50
-            
+
             for idx, color in enumerate(draw_panel.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
                 check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
                 check_text = check_font.render(msg, True, (255, 165, 0))
-                
+
                 text_w = check_text.get_width()
                 text_h = check_text.get_height()
-                
+
                 # 背景を半透明の黒で塗りつぶして視認性を向上
                 bg_rect = pygame.Rect(check_x - 5, check_y - 3 + idx * (text_h + 10), text_w + 10, text_h + 6)
                 try:

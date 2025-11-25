@@ -2921,9 +2921,9 @@ def ai_make_move():
         # Ensure assignments to module-level AI flags affect globals (nested function)
         global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
         # aggressiveness / per-attempt probability by difficulty
-        # increased base play probability so AI uses cards more often on Easy/Normal
-        probs = {1: 0.35, 2: 0.60, 3: 0.80, 4: 0.98}
-        p_play = probs.get(CPU_DIFFICULTY, 0.45)
+        # significantly increased to make AI use cards more frequently
+        probs = {1: 0.55, 2: 0.75, 3: 0.90, 4: 0.99}
+        p_play = probs.get(CPU_DIFFICULTY, 0.65)
         if not ai_player.hand.cards:
             try:
                 game.log.append(f"AI: 手札が空です（カード使用をスキップ）")
@@ -2958,7 +2958,8 @@ def ai_make_move():
             highest_opp_val = 0
 
         # decide how many attempts to try this turn (higher difficulty => more plays)
-        max_attempts = {1: 1, 2: 2, 3: 3, 4: 4}.get(CPU_DIFFICULTY, 2)
+        # increased to make AI play more cards per turn
+        max_attempts = {1: 2, 2: 3, 3: 4, 4: 5}.get(CPU_DIFFICULTY, 3)
         attempts = 0
         made_any = False
         played_names = set()  # avoid repeating the same card multiple times in one AI think session
@@ -3121,41 +3122,69 @@ def ai_make_move():
                         # base score from preference order (higher better)
                         base = 0
                         if name in prefer:
-                            base = (len(prefer) - prefer.index(name)) * 10
+                            base = (len(prefer) - prefer.index(name)) * 12
                         else:
-                            base = 5
+                            base = 6
                         score = base
-                        # heuristics per card
+                        # Enhanced heuristics per card
                         if name == '暴風':
                             added = estimate_jump_added()
                             # reward if jump actually increases mobility
-                            score += max(0, added) * 8
+                            score += max(0, added) * 10
+                            # bonus if AI is under pressure (low mobility)
+                            if my_move_count < opp_move_count:
+                                score += 15
                         elif name == '氷結':
                             # prefer freezing non-king high-value pieces
                             try:
                                 best_v = 0
+                                piece_count = 0
                                 for p in chess.pieces:
                                     if getattr(p, 'color', None) == 'white' and getattr(p, 'name', '') != 'K':
                                         v = {'P':1,'N':3,'B':3,'R':5,'Q':9}.get(getattr(p, 'name', ''), 0)
                                         best_v = max(best_v, v)
-                                score += best_v * 6
+                                        piece_count += 1
+                                score += best_v * 10
+                                # bonus for having multiple good targets
+                                if piece_count >= 3:
+                                    score += 12
                             except Exception:
                                 pass
                         elif name == '灼熱':
                             # useful when opponent mobility >> ours
-                            score += max(0, opp_move_count - my_move_count) * 6
+                            mob_diff = opp_move_count - my_move_count
+                            score += max(0, mob_diff) * 8
+                            # bonus for blocking opponent's key squares
+                            if mob_diff > 5:
+                                score += 20
                         elif name == '迅雷':
                             # prefer if capture opportunities exist or we have mobility to exploit
-                            score += capture_ops * 8
+                            score += capture_ops * 12
                             # also prefer when AI mobility is lower than opponent
                             if my_move_count < opp_move_count:
-                                score += 6
+                                score += 10
+                            # bonus if AI has pieces near opponent king
+                            try:
+                                opp_king = next((p for p in chess.pieces if getattr(p, 'color', None) == 'white' and getattr(p, 'name', '') == 'K'), None)
+                                if opp_king:
+                                    kr, kc = getattr(opp_king, 'row', 0), getattr(opp_king, 'col', 0)
+                                    nearby = sum(1 for p in chess.pieces if getattr(p, 'color', None) == 'black' and abs(getattr(p, 'row', 0) - kr) <= 2 and abs(getattr(p, 'col', 0) - kc) <= 2)
+                                    score += nearby * 8
+                            except Exception:
+                                pass
                         elif name == '2ドロー':
-                            if len(ai_player.hand.cards) <= 2:
-                                score += 20
+                            # prefer when hand is low
+                            hand_size = len(ai_player.hand.cards)
+                            if hand_size <= 2:
+                                score += 25
+                            elif hand_size <= 4:
+                                score += 15
                         elif name == '錬成':
-                            # small preference to generate immediate value
-                            score += 5
+                            # prefer to generate card advantage
+                            score += 8
+                            # bonus if deck has more cards
+                            if len(getattr(ai_player.deck, 'cards', [])) > 5:
+                                score += 10
                         scores[idx] = score
                     except Exception:
                         scores[idx] = 0

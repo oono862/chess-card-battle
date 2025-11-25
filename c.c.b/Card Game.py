@@ -6557,26 +6557,25 @@ def main_loop():
                 # call AI move
                 ai_make_move()
                 # After AI move, check if AI has extra consecutive turns (迅雷)
-                # Determine AI extra-turns (迅雷) robustly: prefer the global
-                # counter if present, otherwise fall back to a game attribute.
+                # Prefer game.ai_consecutive_turns over global for consistency
                 try:
-                    a_cct = globals().get('ai_consecutive_turns', None)
-                    if a_cct is None:
-                        a_cct = getattr(game, 'ai_consecutive_turns', 0)
+                    a_cct = getattr(game, 'ai_consecutive_turns', 0)
+                    if a_cct == 0:
+                        a_cct = globals().get('ai_consecutive_turns', 0)
                 except Exception:
-                    a_cct = 0
+                    a_cct = globals().get('ai_consecutive_turns', 0)
 
                 if a_cct and a_cct > 0:
                     # consume one AI extra-turn and schedule another AI think cycle
                     try:
-                        if 'ai_consecutive_turns' in globals():
-                            globals()['ai_consecutive_turns'] = max(0, globals().get('ai_consecutive_turns', 0) - 1)
-                        else:
-                            # fall back to mutating game attribute when global not used
-                            game.ai_consecutive_turns = max(0, a_cct - 1)
+                        # Update game attribute first
+                        game.ai_consecutive_turns = max(0, a_cct - 1)
+                        # Sync to globals
+                        globals()['ai_consecutive_turns'] = game.ai_consecutive_turns
                     except Exception:
                         try:
-                            setattr(game, 'ai_consecutive_turns', max(0, a_cct-1))
+                            if 'ai_consecutive_turns' in globals():
+                                globals()['ai_consecutive_turns'] = max(0, globals().get('ai_consecutive_turns', 0) - 1)
                         except Exception:
                             pass
                     # keep AI's turn so it moves again

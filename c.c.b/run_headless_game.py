@@ -28,11 +28,11 @@ print('=== run_headless_game.py starting ===')
 print('logfile:', logfile)
 logging.getLogger().info('run_headless_game.py starting; logfile=%s', logfile)
 
-ns = runpy.run_path('Card Game.py', run_name='cardgame_module')
+ns = runpy.run_path('card_game.py', run_name='cardgame_module')
 main_loop = ns.get('main_loop')
 if main_loop is None:
-    print('ERROR: main_loop not found in Card Game.py')
-    logging.getLogger().error('main_loop not found in Card Game.py')
+    print('ERROR: main_loop not found in card_game.py')
+    logging.getLogger().error('main_loop not found in card_game.py')
     sys.exit(1)
 
 

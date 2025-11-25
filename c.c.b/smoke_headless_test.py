@@ -4,7 +4,7 @@ import os, runpy, traceback
 # Set SDL_VIDEODRIVER=dummy before running this (done by caller)
 try:
     os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
-    ns = runpy.run_path('Card Game.py', run_name='cardgame_module')
+    ns = runpy.run_path('card_game.py', run_name='cardgame_module')
     keys = sorted(k for k in ns.keys() if not k.startswith('__'))
     print('MODULE_KEYS:', keys)
     print('has_get_valid_moves:', 'get_valid_moves' in ns)

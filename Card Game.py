@@ -60,6 +60,82 @@ TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
 # Help/operation text: slightly bolder and with more spacing for readability
 HELP_FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
 
+
+def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0):
+    """Lightweight, local draw_text fallback used by the UI.
+
+    This implementation avoids importing the larger `ui.layout` module
+    so the root `Card Game.py` can run standalone for tests. It supports
+    basic `bold` and `scale` and ignores per-letter spacing for
+    simplicity.
+    """
+    # Micro-optimized draw_text: cache fonts to avoid repeated SysFont calls
+    try:
+        # fast-path: use module FONT when no scaling/bold/letter-spacing requested
+        if (not bold) and (letter_spacing == 0) and (float(scale) == 1.0):
+            try:
+                img = FONT.render(str(text), True, color)
+                return surf.blit(img, (x, y))
+            except Exception:
+                pass
+
+        # font cache keyed by (size, bold)
+        if '_font_cache' not in globals():
+            globals()['_font_cache'] = {}
+        _font_cache = globals()['_font_cache']
+
+        try:
+            base_h = max(10, FONT.get_height())
+        except Exception:
+            base_h = 20
+        size = max(10, int(base_h * float(scale)))
+
+        key = (size, bool(bold))
+        font = _font_cache.get(key)
+        if font is None:
+            try:
+                font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=bool(bold))
+            except Exception:
+                font = pygame.font.Font(None, size)
+            _font_cache[key] = font
+
+        if letter_spacing <= 0:
+            img = font.render(str(text), True, color)
+            return surf.blit(img, (x, y))
+
+        # per-character rendering with spacing
+        cur_x = x
+        spacing_px = max(0, int(letter_spacing * float(scale)))
+        max_h = 0
+        for ch in str(text):
+            ch_surf = font.render(ch, True, color)
+            surf.blit(ch_surf, (cur_x, y))
+            cur_x += ch_surf.get_width() + spacing_px
+            if ch_surf.get_height() > max_h:
+                max_h = ch_surf.get_height()
+        return pygame.Rect(x, y, cur_x - x, max_h)
+    except Exception:
+        try:
+            f = pygame.font.Font(None, 24)
+            img = f.render(str(text), True, color)
+            return surf.blit(img, (x, y))
+        except Exception:
+            return pygame.Rect(x, y, 0, 0)
+
+
+HELP_LINES = [
+    "[T] 次のターン開始",
+    "[1-7] カード使用",
+    "[D] 保留中: 捨て札確定",
+    "[L] ログ表示切替",
+    "[G] 墓地表示切替",
+    "[H] 相手の手札表示",
+    "[クリック] カード拡大",
+    "[Esc] 終了",
+]
+
+
+
 # ギミック発動方式: 'number_key' | 'click_enlarged' | 'double_click'
 gimmick_activation_mode = 'number_key'
 # When top-level "カードをクリックして発動" is selected we keep a submode

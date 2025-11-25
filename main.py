@@ -23,7 +23,7 @@ if __name__ == "__main__":
     # Card Game.pyの内容をインポートして実行
     try:
         # C.C.Bフォルダ内のCard Game.pyを直接実行
-        card_game_path = os.path.join(ccb_dir, 'Card Game.py')
+        card_game_path = os.path.join(ccb_dir, 'card_game.py')
         with open(card_game_path, 'r', encoding='utf-8') as f:
             code = f.read()
         

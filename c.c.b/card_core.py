@@ -1081,7 +1081,18 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
         if player is game.player:
             game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
         else:
+            # AIの場合: game属性とglobalsの両方を設定
             game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
+            # globalsも更新（Card Game.pyで参照される）
+            try:
+                import sys
+                # Card Game.pyのグローバル名前空間を取得
+                for module_name, module in sys.modules.items():
+                    if hasattr(module, 'ai_consecutive_turns') and module_name.endswith('Card Game'):
+                        module.ai_consecutive_turns = game.ai_consecutive_turns
+                        break
+            except Exception:
+                pass
     except Exception:
         if player is game.player:
             setattr(game, 'player_consecutive_turns', 1)

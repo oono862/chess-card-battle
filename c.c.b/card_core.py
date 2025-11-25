@@ -894,6 +894,79 @@ class Game:
         player.graveyard.append(card)
         self.log.append(f"AI: 『{card.name}』を使用しました。 {msg}")
         return True, f"AI: 『{card.name}』を使用しました。 {msg}"
+    
+    def check_no_lose_trigger(self, player_color: str = 'white') -> bool:
+        """「負けるわけないだろwww」カードの発動条件をチェック
+        
+        発動条件:
+        1. 手札に「負けるわけないだろwww」がある
+        2. 手札に「摂取」がある
+        3. PPが3以上ある
+        
+        Returns:
+            発動可能な場合True
+        """
+        # プレイヤーかどうかを判定
+        if player_color == 'white':
+            target_player = self.player
+        else:
+            # AIの場合は発動しない（プレイヤー専用）
+            return False
+        
+        # 1. PPチェック
+        if target_player.pp_current < 3:
+            return False
+        
+        # 2. 手札に「負けるわけないだろwww」があるか
+        has_no_lose = any(c.name == "負けるわけないだろwww" for c in target_player.hand.cards)
+        if not has_no_lose:
+            return False
+        
+        # 3. 手札に「摂取」があるか
+        has_leech = any(c.name == "摂取" for c in target_player.hand.cards)
+        if not has_leech:
+            return False
+        
+        return True
+    
+    def trigger_no_lose(self, player_color: str = 'white') -> bool:
+        """「負けるわけないだろwww」カードを発動
+        
+        効果:
+        1. 手札から「負けるわけないだろwww」を墓地へ
+        2. 3PPを消費
+        3. 盤面を最初の状態にリセット（手札、山札、墓地はそのまま）
+        
+        Returns:
+            発動に成功した場合True
+        """
+        if player_color == 'white':
+            target_player = self.player
+        else:
+            return False
+        
+        # カードを手札から探す
+        card_index = None
+        for i, c in enumerate(target_player.hand.cards):
+            if c.name == "負けるわけないだろwww":
+                card_index = i
+                break
+        
+        if card_index is None:
+            return False
+        
+        # PPを消費
+        target_player.spend_pp(3)
+        
+        # カードを墓地に移動
+        card = target_player.hand.cards[card_index]
+        target_player.hand.remove_at(card_index)
+        target_player.graveyard.append(card)
+        
+        self.log.append(f"★★★ 「負けるわけないだろwww」が発動！ ★★★")
+        self.log.append("盤面を最初の状態にリセットします！")
+        
+        return True
 
 
 # -----------------------------
@@ -1149,10 +1222,10 @@ def make_rule_cards_deck() -> Deck:
         Card("錬成", 0, eff_alchemy),
         # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
         Card("墓地ルーレット", 1, eff_graveyard_roulette),
-        Card("\u6442\u53d6", 1, eff_leech_pp2),
+        Card("摂取", 1, eff_leech_pp2),
         # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
         # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        # Card("負けるわけないだろwww", 4, eff_no_lose),
+        Card("負けるわけないだろwww", 4, eff_no_lose),
         # Card("鉄壁", 2, eff_iron_wall),
         # Card("ハンです☆", 2, eff_hand_discard),
     ]

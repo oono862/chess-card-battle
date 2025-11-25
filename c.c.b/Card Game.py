@@ -5901,9 +5901,46 @@ def handle_mouse_click(pos):
                     else:
                         # 通常モード: 即座に勝敗判定
                         if not white_king_exists:
-                            game_over = True
-                            game_over_winner = 'black'
-                            game.log.append("YOU LOSE！黒の勝利！")
+                            # 白キングが取られた → プレイヤーの負け
+                            # 「負けるわけないだろwww」の発動チェック
+                            if game.check_no_lose_trigger('white'):
+                                # 発動条件を満たしている
+                                if game.trigger_no_lose('white'):
+                                    # 発動成功 → 盤面をリセット
+                                    chess.pieces[:] = chess.create_pieces()
+                                    chess.en_passant_target = None
+                                    # プロモーション状態をクリア
+                                    try:
+                                        chess_rules.clear_promotion_state(chess)
+                                    except Exception:
+                                        chess.promotion_pending = None
+                                    
+                                    # ゲーム状態フラグをリセット
+                                    global simul_check_active, simul_white_result, simul_black_result
+                                    simul_check_active = False
+                                    simul_white_result = 'none'
+                                    simul_black_result = 'none'
+                                    
+                                    # ターンをプレイヤーに戻す
+                                    chess_current_turn = 'white'
+                                    
+                                    game.log.append("盤面が初期状態にリセットされました！")
+                                    game.log.append("ゲームを続行します。")
+                                    
+                                    # ゲームオーバーフラグは立てない
+                                    # 選択状態をクリア
+                                    selected_piece = None
+                                    highlight_squares = []
+                                else:
+                                    # 発動失敗（通常通り負け）
+                                    game_over = True
+                                    game_over_winner = 'black'
+                                    game.log.append("YOU LOSE！黒の勝利！")
+                            else:
+                                # 発動条件を満たしていない（通常通り負け）
+                                game_over = True
+                                game_over_winner = 'black'
+                                game.log.append("YOU LOSE！黒の勝利！")
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'

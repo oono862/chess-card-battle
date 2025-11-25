@@ -1535,11 +1535,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-<<<<<<< HEAD
                                 logger.debug("show_deck_modal starting battle, names=%s", names)
-=======
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
->>>>>>> c296b4d (鉄壁改善)
                                 if names and 'build_game_from_card_names' in globals():
                                     globals()['game'] = build_game_from_card_names(names)
                                 else:
@@ -1866,7 +1862,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
 
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
-                                        if discard_rect.collidepoint(wmx, wmy):
+                                    if discard_rect.collidepoint(wmx, wmy):
                                         logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
@@ -4028,15 +4024,7 @@ def draw_panel():
     info_y += line_height
     # 現在のチェック状態を左パネル上部に明示（同時チェック時は両方表示）
     # PPの下の表示を非表示（下部に表示されるため）
-                            try:
-                                logger.debug("show_deck_modal starting battle, names=%s", names)
-    #             draw_text(screen, "白チェック中", info_x, info_y, col)
-    #             info_y += line_height - 10
-    #         if b_check:
-    #             draw_text(screen, "黒チェック中", info_x, info_y, col)
-    #             info_y += line_height - 10
-    # except Exception:
-    #     pass
+    # (debug logging for deck modal shown elsewhere)
     # 簡易エフェクト表示: 次に発動する特別アクションを左パネルに表示
     # 表記ルール: 「次：飛越可」「次：追加行動×n」
     if getattr(game.player, 'next_move_can_jump', False):
@@ -4066,8 +4054,6 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100))
     info_y += line_height
-<<<<<<< HEAD
-=======
 
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:
@@ -4106,7 +4092,6 @@ def draw_panel():
     except Exception:
         # fail-safe: don't break UI if something goes wrong
         pass
->>>>>>> c296b4d (鉄壁改善)
 
     # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
     try:
@@ -4346,51 +4331,15 @@ def draw_panel():
                     fy = board_top + r * square_h
                     # scale animation to exactly the square size so it fits the tile
                     try:
-    
-                        # --- 鉄壁発動中の明示的表示（プレイヤー／相手） ---
-                        try:
-                            # プレイヤー側
-                            if getattr(game.player, 'iron_wall_active', False):
-                                label_txt = "鉄壁発動中"
-                                pad_x = 10
-                                pad_y = 6
-                                txt_surf = FONT.render(label_txt, True, (255,255,255))
-                                box_w = txt_surf.get_width() + pad_x*2
-                                box_h = txt_surf.get_height() + pad_y*2
-                                box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
-                                # high-contrast cyan background with rounded corners
-                                try:
-                                    pygame.draw.rect(screen, (6, 160, 200), box_rect, border_radius=8)
-                                except Exception:
-                                    pygame.draw.rect(screen, (6, 160, 200), box_rect)
-                                screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
-                                info_y += box_h + 6
-
-                            # 相手側（AI）が鉄壁発動中なら表示
-                            if getattr(ai_player, 'iron_wall_active', False):
-                                label_txt = "相手: 鉄壁発動中"
-                                pad_x = 8
-                                pad_y = 4
-                                txt_surf = SMALL.render(label_txt, True, (255,255,255))
-                                box_w = txt_surf.get_width() + pad_x*2
-                                box_h = txt_surf.get_height() + pad_y*2
-                                box_rect = pygame.Rect(info_x, info_y, box_w, box_h)
-                                try:
-                                    pygame.draw.rect(screen, (6, 120, 160), box_rect, border_radius=6)
-                                except Exception:
-                                    pygame.draw.rect(screen, (6, 120, 160), box_rect)
-                                screen.blit(txt_surf, (box_rect.x + pad_x, box_rect.y + pad_y))
-                                info_y += box_h + 6
-                        except Exception:
-                            # fail-safe: don't break UI if something goes wrong
-                            pass
-                        fw = f_surf.get_width()
-                        fh = f_surf.get_height()
-                    # center the scaled animation INSIDE the tile
-                    fx = board_left + c * square_w + (square_w - fw) // 2
-                    fy = board_top + r * square_h + (square_h - fh) // 2
+                        fw = int(square_w)
+                        fh = int(square_h)
+                        f_surf = pygame.transform.smoothscale(frame, (fw, fh))
+                    except Exception:
+                        f_surf = frame
+                    # draw aligned to the tile's top-left so it occupies the tile area
                     screen.blit(f_surf, (fx, fy))
     except Exception:
+        # Don't let animation errors break UI
         pass
 
     # --- 封鎖タイルでのループ再生: Image_MG.gif (player) / Image_MG_2P.gif (AI) ---

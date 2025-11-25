@@ -1,5 +1,5 @@
 import importlib.util, os, sys
-p = os.path.join(os.getcwd(), 'Card Game.py')
+p = os.path.join(os.getcwd(), 'card_game.py')
 spec = importlib.util.spec_from_file_location('card_game', p)
 cg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cg)

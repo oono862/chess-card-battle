@@ -1,16 +1,65 @@
 #カードゲーム部分実装
 import pygame
 from pygame import Rect
-import sys, traceback, os, json, logging
+import sys, traceback, os, json, logging, unicodedata
 from datetime import datetime
 import time as _ct_time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# Enable optional detailed image lookup logging when env var is set
+if os.environ.get('CCB_DEBUG_IMG', '') == '1':
+    h = logging.StreamHandler()
+    h.setLevel(logging.DEBUG)
+    fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
+    h.setFormatter(fmt)
+    logger.addHandler(h)
 # 親ディレクトリのcard_coreモジュールをインポート
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Try to robustly add the project root to sys.path so imports like `game`, `ui`,
+# `assets` resolve regardless of the current working directory or nested copies.
+def _find_project_root(start_path: str) -> str | None:
+    p = os.path.abspath(start_path)
+    last = None
+    while p and p != last:
+        # heuristics: look for directories we expect in project root
+        if any(os.path.isdir(os.path.join(p, d)) for d in ('game', 'ui', 'assets')):
+            return p
+        last = p
+        p = os.path.dirname(p)
+    return None
+
+_file_dir = os.path.dirname(os.path.abspath(__file__))
+# Always add the directory containing this file and several parent levels to sys.path
+for i in range(0, 5):
+    candidate = _file_dir
+    # climb i levels
+    for _ in range(i):
+        candidate = os.path.dirname(candidate)
+    if candidate and candidate not in sys.path:
+        sys.path.insert(0, candidate)
+
+# Also keep the heuristic project root if found
+_possible_root = _find_project_root(_file_dir)
+if _possible_root and _possible_root not in sys.path:
+    sys.path.insert(0, _possible_root)
+# Runtime verification prints to ensure the running process loads this updated file
+if os.environ.get('CCB_DEBUG_IMG', '') == '1':
+    try:
+        try:
+            file_path = os.path.abspath(__file__)
+            mtime = os.path.getmtime(file_path)
+        except Exception:
+            file_path = '<unknown>'
+            mtime = None
+        sd_candidate = os.path.join(_possible_root or _file_dir, 'saved_decks.json')
+        print(f"IMGDBG: Card Game.py loaded from={file_path} mtime={mtime}")
+        print(f"IMGDBG: _file_dir={_file_dir}")
+        print(f"IMGDBG: _possible_root={_possible_root}")
+        print(f"IMGDBG: saved_decks.json exists={os.path.exists(sd_candidate)} path={sd_candidate}")
+        print("IMGDBG: sys.path=")
+        for p in sys.path:
+            print("IMGDBG:  ", p)
+    except Exception as _e:
+        print("IMGDBG: runtime verify error:", _e)
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
@@ -110,7 +159,99 @@ except Exception:
         return f
     def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0): pass
     def wrap_text(text: str, max_width: int): return [text]
-    def compute_layout(win_w: int, win_h: int): return {}
+    def compute_layout(win_w: int, win_h: int):
+        """Fallback compute_layout: provide conservative defaults so UI code
+        can run even when `ui.layout` is unavailable. Returns the keys
+        expected by draw_panel and other UI code.
+        """
+        try:
+            scale_w = float(win_w) / float(BASE_UI_W)
+            scale_h = float(win_h) / float(BASE_UI_H)
+            scale = min(scale_w, scale_h)
+        except Exception:
+            scale = 1.0
+
+        base_left_margin = max(8, int(BASE_UI_W * 0.018))
+        base_left_panel_width = max(120, min(420, int(BASE_UI_W * 0.16)))
+        base_right_panel_width = max(160, min(420, int(BASE_UI_W * 0.16)))
+        base_board_area_top = max(12, int(BASE_UI_H * 0.02))
+        inner_gap = int(20 * scale)
+
+        left_margin = max(12, int(base_left_margin * scale))
+        left_panel_width = max(12, int(base_left_panel_width * scale))
+        right_panel_width = max(12, int(base_right_panel_width * scale))
+        try:
+            right_outer_margin = max(12, int(win_w * 0.06))
+        except Exception:
+            right_outer_margin = 20
+
+        board_area_top = max(8, int(base_board_area_top * scale))
+        central_left = left_margin + left_panel_width + inner_gap
+        central_right = win_w - right_outer_margin - right_panel_width - inner_gap
+        central_width = max(0, central_right - central_left)
+
+        base_card_h = max(140, int(BASE_UI_H * 0.22))
+        if scale > 1.02:
+            extra = min(2.6, 1.0 + (scale - 1.0) * 1.4)
+            base_card_h = int(base_card_h * extra)
+        card_h = max(48, int(base_card_h * scale))
+        reserved_bottom = card_h + int(80 * scale)
+        avail_height = win_h - board_area_top - reserved_bottom
+
+        board_size = max(64, min(central_width, avail_height))
+        try:
+            if scale > 1.0:
+                board_size = max(64, int(board_size * 0.9))
+        except Exception:
+            pass
+
+        center_dx = max(0, (central_width - board_size) // 2)
+        try:
+            horiz_bias = int(max(0, (scale - 1.0) * central_width * 0.28))
+        except Exception:
+            horiz_bias = 0
+        board_left = central_left + max(0, center_dx - horiz_bias)
+
+        slack = avail_height - board_size
+        if slack > 0:
+            move_up = int(slack * 0.98)
+            board_top = max(4, board_area_top - move_up)
+        else:
+            board_top = board_area_top
+
+        right_panel_x = win_w - right_outer_margin - right_panel_width
+        card_area_top = board_top + board_size + int(20 * scale)
+        card_h = max(48, int(base_card_h * scale))
+
+        try:
+            space_below = win_h - (board_top + board_size) - int(20 * scale)
+            avail_for_card = max(0, space_below - int(24 * scale))
+            if avail_for_card > card_h:
+                max_by_board = int(board_size * 0.75)
+                max_by_base = int(base_card_h * scale * 3.5)
+                target_h = min(avail_for_card, max_by_board, max_by_base)
+                if target_h > card_h:
+                    card_h = target_h
+        except Exception:
+            pass
+
+        return {
+            'left_margin': left_margin,
+            'left_panel_width': left_panel_width,
+            'right_panel_width': right_panel_width,
+            'right_panel_x': right_panel_x,
+            'right_outer_margin': right_outer_margin,
+            'board_left': board_left,
+            'board_top': board_top,
+            'board_size': board_size,
+            'board_area_top': board_area_top,
+            'board_area_height': board_size,
+            'card_area_top': card_area_top,
+            'card_h': card_h,
+            'central_left': central_left,
+            'central_right': central_right,
+            'scale': scale,
+        }
     # フォールバックのoverlay関数を定義
     class _FallbackOverlay:
         def handle_scrollbar_drag_start(self, pos, show_log, scrollbar_rect, log_scroll_offset): return False
@@ -162,9 +303,177 @@ try:
     IC_GIF_SCALE = animation.IC_GIF_SCALE
     _animation_module = animation
 except Exception:
-    logger.exception("Failed to import assets modules")
+    # Assets package not available: keep quiet (use fallback loader defined below)
+    logger.debug("Assets package not available; using internal fallback image loader")
     IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images")
-    def get_card_image(name: str, size=(72, 96)): return None
+    # Robust fallback image loader: try several filename variants and search IMG_DIR
+    _image_cache = {}
+
+    # Normalize helper: NFKC, strip whitespace and punctuation/symbols for filename matching
+    def _normalize_name_for_lookup(s: str) -> str:
+        try:
+            s = unicodedata.normalize('NFKC', s)
+        except Exception:
+            pass
+        # remove whitespace
+        s = ''.join(ch for ch in s if not ch.isspace())
+        # remove punctuation and symbols (so '☆' etc. won't block matching)
+        s = ''.join(ch for ch in s if not unicodedata.category(ch).startswith(('P','S')))
+        return s.lower()
+
+    # Build a normalized-name -> filepath map by walking IMG_DIR once at startup.
+    _normalized_image_map = {}
+    try:
+        if os.path.isdir(IMG_DIR):
+            for root, _dirs, files in os.walk(IMG_DIR):
+                for f in files:
+                    fn, ext = os.path.splitext(f)
+                    if ext.lower() not in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']:
+                        continue
+                    try:
+                        key = _normalize_name_for_lookup(fn)
+                    except Exception:
+                        key = fn.lower()
+                    # prefer png over others if duplicate keys; keep first seen otherwise
+                    if key in _normalized_image_map:
+                        # if existing is not png and this is png, prefer png
+                        try:
+                            if not _normalized_image_map[key].lower().endswith('.png') and f.lower().endswith('.png'):
+                                _normalized_image_map[key] = os.path.join(root, f)
+                        except Exception:
+                            pass
+                    else:
+                        _normalized_image_map[key] = os.path.join(root, f)
+    except Exception:
+        _normalized_image_map = {}
+
+    # Debug dump of normalized image map to help with diagnosis
+    try:
+        if _normalized_image_map:
+            dump_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'run_cardgame_img_map.json')
+            try:
+                with open(dump_path, 'w', encoding='utf-8') as _f:
+                    json.dump(_normalized_image_map, _f, ensure_ascii=False, indent=2)
+                logger.info("Wrote normalized image map to %s", dump_path)
+            except Exception:
+                logger.exception("Failed to write normalized image map")
+    except Exception:
+        pass
+
+    def get_card_image(name: str, size=(72, 96)):
+        key = (name, size)
+        if key in _image_cache:
+            return _image_cache[key]
+        surf = None
+        # candidate filenames: exact, common extensions, gif
+        candidates = [f"{name}.png", f"{name}.PNG", f"{name}.jpg", f"{name}.jpeg", f"{name}.gif", f"{name}.webp", f"{name}.bmp"]
+        # also try replacing spaces with nothing or underscore, and half-width variants
+        name_no_space = name.replace(' ', '')
+        candidates += [f"{name_no_space}.png", f"{name_no_space}.gif", f"{name_no_space}.jpg"]
+        name_us = name.replace(' ', '_')
+        candidates += [f"{name_us}.png", f"{name_us}.gif"]
+        # Try direct candidates in IMG_DIR
+        try:
+            tried = []
+            for cand in candidates:
+                path = os.path.join(IMG_DIR, cand)
+                tried.append(path)
+                if os.path.exists(path):
+                    try:
+                        img = pygame.image.load(path).convert_alpha()
+                        surf = pygame.transform.smoothscale(img, size)
+                        # Debug: always emit a console-visible line so user logs capture it
+                        try:
+                            print(f"IMGDBG: Loaded image for '{name}' from candidate {path}")
+                        except Exception:
+                            logger.debug("Loaded image for '%s' from candidate %s", name, path)
+                        break
+                    except Exception:
+                        try:
+                            print(f"IMGDBG: Failed to load candidate {path} for '{name}'")
+                        except Exception:
+                            logger.debug("Failed to load image file: %s", path)
+                        continue
+        except Exception:
+            pass
+
+        # If not found yet, use prebuilt normalized map for a fast lookup
+        if surf is None and _normalized_image_map:
+            try:
+                base_l = _normalize_name_for_lookup(name)
+            except Exception:
+                base_l = ''.join(name.split()).lower()
+            mapped = _normalized_image_map.get(base_l)
+            # also try simple relaxed variants (remove common particles/symbols)
+            if not mapped:
+                try:
+                    # remove Japanese possessive particle 'の' which may be present in card names
+                    base_no_no = base_l.replace('の', '')
+                    if base_no_no != base_l:
+                        mapped = _normalized_image_map.get(base_no_no)
+                    # try removing middle dot and long dash as well
+                    if not mapped:
+                        base_no_sym = base_l.replace('・', '').replace('ー', '').replace('-', '')
+                        if base_no_sym != base_l:
+                            mapped = _normalized_image_map.get(base_no_sym)
+                except Exception:
+                    mapped = mapped
+            if mapped and os.path.exists(mapped):
+                try:
+                    img = pygame.image.load(mapped).convert_alpha()
+                    surf = pygame.transform.smoothscale(img, size)
+                    try:
+                        print(f"IMGDBG: Loaded image for '{name}' from normalized map {mapped}")
+                    except Exception:
+                        logger.debug("Loaded image for '%s' from normalized map %s", name, mapped)
+                except Exception:
+                    try:
+                        print(f"IMGDBG: Failed to load normalized map path {mapped} for '{name}'")
+                    except Exception:
+                        logger.debug("Failed to load image from normalized map: %s", mapped)
+
+            # relaxed substring match against keys
+            if surf is None:
+                for k, mapped_path in _normalized_image_map.items():
+                    try:
+                        if base_l in k or k in base_l:
+                            if os.path.exists(mapped_path):
+                                try:
+                                    img = pygame.image.load(mapped_path).convert_alpha()
+                                    surf = pygame.transform.smoothscale(img, size)
+                                    try:
+                                        print(f"IMGDBG: Loaded image for '{name}' via relaxed match {mapped_path}")
+                                    except Exception:
+                                        logger.debug("Loaded image for '%s' via normalized-map relaxed match %s", name, mapped_path)
+                                    break
+                                except Exception:
+                                    try:
+                                        print(f"IMGDBG: Failed relaxed load from {mapped_path} for '{name}'")
+                                    except Exception:
+                                        logger.debug("Failed relaxed load from normalized map: %s", mapped_path)
+                                    continue
+                    except Exception:
+                        continue
+            # If debug mode, log all tried paths
+            if surf is None and os.environ.get('CCB_DEBUG_IMG', '') == '1':
+                logger.debug("Image lookup for '%s' tried candidates: %s", name, tried)
+                logger.debug("Image lookup walked and tried: %s", tried_walk if 'tried_walk' in locals() else [])
+        # Fallback: placeholder surface with the name
+        if surf is None:
+            surf = pygame.Surface(size, pygame.SRCALPHA)
+            surf.fill((220, 220, 230))
+            pygame.draw.rect(surf, (80, 80, 80), (0, 0, size[0], size[1]), 2)
+            try:
+                txt = SMALL.render(name, True, (30, 30, 30))
+                surf.blit(txt, ((size[0]-txt.get_width())//2, (size[1]-txt.get_height())//2))
+            except Exception:
+                pass
+                try:
+                    print(f"IMGDBG: Using placeholder for '{name}' (no image found)")
+                except Exception:
+                    logger.debug("Using placeholder for '%s' (no image found)", name)
+        _image_cache[key] = surf
+        return surf
     def get_piece_image_surface(name: str, color: str, size: tuple): return None
     def play_heat_gif_at(row: int, col: int): pass
     def play_ic_gif_at(row: int, col: int): pass
@@ -183,8 +492,27 @@ except Exception:
     logger.exception("Failed to import game modules")
     import os as _os
     DECK_SAVE_FILE = _os.path.join(_os.path.dirname(__file__), 'saved_decks.json')
-    def load_saved_decks(): return [None] * 9
-    def save_decks_to_file(decks): pass
+    def load_saved_decks():
+        """保存されたデッキをJSONファイルから読み込む。最大9個。"""
+        if not os.path.exists(DECK_SAVE_FILE):
+            return [None] * 9
+        try:
+            with open(DECK_SAVE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                decks = data.get('decks', [])
+                while len(decks) < 9:
+                    decks.append(None)
+                return decks[:9]
+        except Exception:
+            return [None] * 9
+
+    def save_decks_to_file(decks):
+        """デッキリストをJSONファイルに保存"""
+        try:
+            with open(DECK_SAVE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({'decks': decks}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"デッキ保存エラー: {e}")
     def list_custom_decks(): return []
     def load_custom_deck_by_name(name: str): return None
     def build_deck_for_mode(mode: str):
@@ -282,10 +610,22 @@ ai_player = None
 try:
     if game is None:
         try:
-            game = new_game_with_sample_deck()
-            # Register GIF animation hook
-            if game and _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
-                game.play_ic_gif = _animation_module.play_ic_gif_at
+            # Only auto-create a sample game if there are no saved custom decks.
+            has_saved = False
+            try:
+                if 'load_saved_decks' in globals():
+                    saved = load_saved_decks()
+                    has_saved = any(d for d in saved if d)
+            except Exception:
+                has_saved = False
+            if not has_saved:
+                game = new_game_with_sample_deck()
+                # Register GIF animation hook
+                if game and _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
+                    game.play_ic_gif = _animation_module.play_ic_gif_at
+            else:
+                # Defer creation: a custom deck will be used later when starting a battle
+                game = None
         except Exception:
             # best-effort fallback: leave game as None if creation fails
             game = None
@@ -320,7 +660,15 @@ bgm_volume = 0.8
 current_bgm_mode = None
 
 # デッキモード: 'fixed'=ルールデッキ(24枚), 'custom'=作成デッキ(20枚)
+# デフォルトは固定だが、保存デッキが存在する場合は自動的に 'custom' を使う
 DECK_MODE = 'fixed'
+try:
+    if 'load_saved_decks' in globals():
+        saved = load_saved_decks()
+        if any(d for d in saved if d):
+            DECK_MODE = 'custom'
+except Exception:
+    pass
 
 # デッキ管理関数(_custom_decks_dir, list_custom_decks, load_custom_deck_by_name, 
 # build_game_from_card_names, build_deck_for_mode, build_ai_player)は
@@ -593,12 +941,52 @@ def restart_game():
             selected = False
 
         if not selected:
-            # User cancelled deck re-selection; fall back to previous DECK_MODE
-            game = new_game_with_mode(DECK_MODE)
+            # User cancelled deck re-selection; prefer a saved custom deck if present
             try:
-                ai_player = build_ai_player(DECK_MODE)
+                decks = []
+                if 'load_saved_decks' in globals():
+                    decks = load_saved_decks()
+                # find first non-empty saved deck
+                first = None
+                for d in decks:
+                    if isinstance(d, dict) and d.get('cards'):
+                        first = d
+                        break
+                if first:
+                    # auto-start with this saved deck
+                    DECK_MODE = 'custom'
+                    names = []
+                    cards_field = first.get('cards', [])
+                    if isinstance(cards_field, list):
+                        if cards_field and isinstance(cards_field[0], dict):
+                            names = [str(c.get('name')) for c in cards_field if c and 'name' in c]
+                        else:
+                            names = [str(x) for x in cards_field]
+                    if names and 'build_game_from_card_names' in globals():
+                        globals()['game'] = build_game_from_card_names(names)
+                    else:
+                        globals()['game'] = new_game_with_mode('custom')
+                    try:
+                        globals()['ai_player'] = build_ai_player('custom')
+                    except Exception:
+                        globals()['ai_player'] = None
+                else:
+                    # no saved decks: fallback to previous DECK_MODE
+                    game = new_game_with_mode(DECK_MODE)
+                    try:
+                        ai_player = build_ai_player(DECK_MODE)
+                    except Exception:
+                        ai_player = None
             except Exception:
-                ai_player = None
+                try:
+                    game = new_game_with_mode(DECK_MODE)
+                    ai_player = build_ai_player(DECK_MODE)
+                except Exception:
+                    game = new_game_with_mode('fixed')
+                    try:
+                        ai_player = build_ai_player('fixed')
+                    except Exception:
+                        ai_player = None
         else:
             # If user selected custom, open deck list to pick which custom deck to use
             if DECK_MODE == 'custom':

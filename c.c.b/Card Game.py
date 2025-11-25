@@ -639,8 +639,15 @@ def restart_game():
                 ai_player = None
     log_scroll_offset = 0
     
+    # ターン開始フラグを初期化（1ターン目はボタン押下が必要）
+    try:
+        game.turn_active = False
+        game.player_moved_this_turn = False
+    except Exception:
+        pass
+    
     game.log.append("=== ゲームを再開しました ===")
-    game.log.append("白のターンです。")
+    game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
 
 
 def _prepare_new_battle_after_deck_already_selected():
@@ -684,7 +691,7 @@ def _prepare_new_battle_after_deck_already_selected():
     try:
         if game is not None:
             try:
-                game.turn_active = True
+                game.turn_active = False
                 game.player_moved_this_turn = False
             except Exception:
                 pass
@@ -695,7 +702,7 @@ def _prepare_new_battle_after_deck_already_selected():
     try:
         if game is not None:
             game.log.append("=== ゲームを再開しました ===")
-            game.log.append("白のターンです。")
+            game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
     except Exception:
         pass
 
@@ -2914,9 +2921,9 @@ def ai_make_move():
         # Ensure assignments to module-level AI flags affect globals (nested function)
         global ai_next_move_can_jump, ai_extra_moves_this_turn, ai_consecutive_turns
         # aggressiveness / per-attempt probability by difficulty
-        # increased base play probability so AI uses cards more often on Easy/Normal
-        probs = {1: 0.35, 2: 0.60, 3: 0.80, 4: 0.98}
-        p_play = probs.get(CPU_DIFFICULTY, 0.45)
+        # significantly increased to make AI use cards more frequently
+        probs = {1: 0.55, 2: 0.75, 3: 0.90, 4: 0.99}
+        p_play = probs.get(CPU_DIFFICULTY, 0.65)
         if not ai_player.hand.cards:
             try:
                 game.log.append(f"AI: 手札が空です（カード使用をスキップ）")
@@ -2951,7 +2958,8 @@ def ai_make_move():
             highest_opp_val = 0
 
         # decide how many attempts to try this turn (higher difficulty => more plays)
-        max_attempts = {1: 1, 2: 2, 3: 3, 4: 4}.get(CPU_DIFFICULTY, 2)
+        # increased to make AI play more cards per turn
+        max_attempts = {1: 2, 2: 3, 3: 4, 4: 5}.get(CPU_DIFFICULTY, 3)
         attempts = 0
         made_any = False
         played_names = set()  # avoid repeating the same card multiple times in one AI think session
@@ -3114,41 +3122,69 @@ def ai_make_move():
                         # base score from preference order (higher better)
                         base = 0
                         if name in prefer:
-                            base = (len(prefer) - prefer.index(name)) * 10
+                            base = (len(prefer) - prefer.index(name)) * 12
                         else:
-                            base = 5
+                            base = 6
                         score = base
-                        # heuristics per card
+                        # Enhanced heuristics per card
                         if name == '暴風':
                             added = estimate_jump_added()
                             # reward if jump actually increases mobility
-                            score += max(0, added) * 8
+                            score += max(0, added) * 10
+                            # bonus if AI is under pressure (low mobility)
+                            if my_move_count < opp_move_count:
+                                score += 15
                         elif name == '氷結':
                             # prefer freezing non-king high-value pieces
                             try:
                                 best_v = 0
+                                piece_count = 0
                                 for p in chess.pieces:
                                     if getattr(p, 'color', None) == 'white' and getattr(p, 'name', '') != 'K':
                                         v = {'P':1,'N':3,'B':3,'R':5,'Q':9}.get(getattr(p, 'name', ''), 0)
                                         best_v = max(best_v, v)
-                                score += best_v * 6
+                                        piece_count += 1
+                                score += best_v * 10
+                                # bonus for having multiple good targets
+                                if piece_count >= 3:
+                                    score += 12
                             except Exception:
                                 pass
                         elif name == '灼熱':
                             # useful when opponent mobility >> ours
-                            score += max(0, opp_move_count - my_move_count) * 6
+                            mob_diff = opp_move_count - my_move_count
+                            score += max(0, mob_diff) * 8
+                            # bonus for blocking opponent's key squares
+                            if mob_diff > 5:
+                                score += 20
                         elif name == '迅雷':
                             # prefer if capture opportunities exist or we have mobility to exploit
-                            score += capture_ops * 8
+                            score += capture_ops * 12
                             # also prefer when AI mobility is lower than opponent
                             if my_move_count < opp_move_count:
-                                score += 6
+                                score += 10
+                            # bonus if AI has pieces near opponent king
+                            try:
+                                opp_king = next((p for p in chess.pieces if getattr(p, 'color', None) == 'white' and getattr(p, 'name', '') == 'K'), None)
+                                if opp_king:
+                                    kr, kc = getattr(opp_king, 'row', 0), getattr(opp_king, 'col', 0)
+                                    nearby = sum(1 for p in chess.pieces if getattr(p, 'color', None) == 'black' and abs(getattr(p, 'row', 0) - kr) <= 2 and abs(getattr(p, 'col', 0) - kc) <= 2)
+                                    score += nearby * 8
+                            except Exception:
+                                pass
                         elif name == '2ドロー':
-                            if len(ai_player.hand.cards) <= 2:
-                                score += 20
+                            # prefer when hand is low
+                            hand_size = len(ai_player.hand.cards)
+                            if hand_size <= 2:
+                                score += 25
+                            elif hand_size <= 4:
+                                score += 15
                         elif name == '錬成':
-                            # small preference to generate immediate value
-                            score += 5
+                            # prefer to generate card advantage
+                            score += 8
+                            # bonus if deck has more cards
+                            if len(getattr(ai_player.deck, 'cards', [])) > 5:
+                                score += 10
                         scores[idx] = score
                     except Exception:
                         scores[idx] = 0
@@ -5556,6 +5592,12 @@ def handle_mouse_click(pos):
                 # must select one own frozen piece to unfreeze
                 # assume player controls white pieces
                 player_color = 'white'
+                
+                # Debug: Show what was clicked
+                if clicked is None:
+                    game.log.append("そのマスには駒がありません。凍結している自分の駒を選択してください。")
+                    return
+                
                 clicked_color = None
                 try:
                     clicked_color = clicked.color
@@ -5564,42 +5606,65 @@ def handle_mouse_click(pos):
                         clicked_color = clicked.get('color') if clicked is not None else None
                     except Exception:
                         clicked_color = None
-                if clicked is not None and clicked_color is not None and clicked_color == player_color:
-                    pid = None
-                    try:
-                        pid = id(clicked)
-                    except Exception:
-                        try:
-                            pid = clicked.get('id')
-                        except Exception:
-                            pid = None
-                    if pid is not None and pid in game.frozen_pieces:
-                        try:
-                            del game.frozen_pieces[pid]
-                        except Exception:
-                            pass
-                            # Also clear transient attribute on the piece object if present
-                            try:
-                                if clicked is not None and hasattr(clicked, 'frozen_turns'):
-                                    try:
-                                        delattr(clicked, 'frozen_turns')
-                                    except Exception:
-                                        try:
-                                            del clicked.frozen_turns
-                                        except Exception:
-                                            pass
-                            except Exception:
-                                pass
-                        try:
-                            name = clicked.name
-                        except Exception:
-                            name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
-                        game.log.append(f"凍結解除: {name} の凍結を解除しました。")
-                        game.pending = None
-                    else:
-                        game.log.append("その駒は凍結されていません。自分の凍結駒を選択してください。")
-                else:
+                
+                if clicked_color != player_color:
                     game.log.append("自分の駒を選択してください。")
+                    return
+                
+                # Get piece ID
+                pid = None
+                try:
+                    pid = id(clicked)
+                except Exception:
+                    try:
+                        pid = clicked.get('id')
+                    except Exception:
+                        pass
+                
+                if pid is None:
+                    game.log.append("駒の識別に失敗しました。もう一度お試しください。")
+                    return
+                
+                # Check if piece is frozen
+                is_frozen = False
+                frozen_map = getattr(game, 'frozen_pieces', {})
+                
+                # Check both frozen_pieces dict and frozen_turns attribute
+                if pid in frozen_map and frozen_map.get(pid, 0) > 0:
+                    is_frozen = True
+                elif hasattr(clicked, 'frozen_turns') and getattr(clicked, 'frozen_turns', 0) > 0:
+                    is_frozen = True
+                
+                if not is_frozen:
+                    try:
+                        piece_name = clicked.name
+                    except Exception:
+                        piece_name = clicked.get('name', '駒') if clicked is not None else '駒'
+                    game.log.append(f"その駒（{piece_name}）は凍結されていません。凍結している自分の駒を選択してください。")
+                    return
+                
+                # Unfreeze the piece
+                # Remove from frozen_pieces dictionary
+                if pid in frozen_map:
+                    try:
+                        del frozen_map[pid]
+                    except Exception:
+                        pass
+                
+                # Clear frozen_turns attribute on the piece object
+                if hasattr(clicked, 'frozen_turns'):
+                    try:
+                        clicked.frozen_turns = 0
+                    except Exception:
+                        pass
+                
+                try:
+                    name = clicked.name
+                except Exception:
+                    name = clicked.get('name', str(clicked)) if clicked is not None else '駒'
+                
+                game.log.append(f"凍結解除: {name} の凍結を解除しました。")
+                game.pending = None
                 return
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_piece':
                 # must select an opponent piece
@@ -5836,9 +5901,46 @@ def handle_mouse_click(pos):
                     else:
                         # 通常モード: 即座に勝敗判定
                         if not white_king_exists:
-                            game_over = True
-                            game_over_winner = 'black'
-                            game.log.append("YOU LOSE！黒の勝利！")
+                            # 白キングが取られた → プレイヤーの負け
+                            # 「負けるわけないだろwww」の発動チェック
+                            if game.check_no_lose_trigger('white'):
+                                # 発動条件を満たしている
+                                if game.trigger_no_lose('white'):
+                                    # 発動成功 → 盤面をリセット
+                                    chess.pieces[:] = chess.create_pieces()
+                                    chess.en_passant_target = None
+                                    # プロモーション状態をクリア
+                                    try:
+                                        chess_rules.clear_promotion_state(chess)
+                                    except Exception:
+                                        chess.promotion_pending = None
+                                    
+                                    # ゲーム状態フラグをリセット
+                                    global simul_check_active, simul_white_result, simul_black_result
+                                    simul_check_active = False
+                                    simul_white_result = 'none'
+                                    simul_black_result = 'none'
+                                    
+                                    # ターンをプレイヤーに戻す
+                                    chess_current_turn = 'white'
+                                    
+                                    game.log.append("盤面が初期状態にリセットされました！")
+                                    game.log.append("ゲームを続行します。")
+                                    
+                                    # ゲームオーバーフラグは立てない
+                                    # 選択状態をクリア
+                                    selected_piece = None
+                                    highlight_squares = []
+                                else:
+                                    # 発動失敗（通常通り負け）
+                                    game_over = True
+                                    game_over_winner = 'black'
+                                    game.log.append("YOU LOSE！黒の勝利！")
+                            else:
+                                # 発動条件を満たしていない（通常通り負け）
+                                game_over = True
+                                game_over_winner = 'black'
+                                game.log.append("YOU LOSE！黒の勝利！")
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'

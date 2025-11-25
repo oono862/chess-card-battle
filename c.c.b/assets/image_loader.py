@@ -3,6 +3,7 @@
 import os
 import sys
 import pygame
+import time
 
 # Determine image directory
 try:
@@ -19,6 +20,8 @@ except Exception:
 # Image caches
 _image_cache = {}
 _piece_image_cache = {}
+# GIF animation cache: {(name, size): {'frames': [Surface], 'durations': [ms], 'current_frame': int, 'last_update': time}}
+_gif_animation_cache = {}
 
 
 def get_main_module():
@@ -38,7 +41,16 @@ def get_card_image(name: str, size=(72, 96)):
 
     Returns a pygame.Surface. Tries mapping, candidate filenames, normalized
     filenames, and finally a recursive search. Falls back to a placeholder.
+    
+    For animated GIFs, returns the current frame of the animation.
     """
+    # Check if this is an animated GIF
+    if is_animated_gif(name):
+        frame = get_current_gif_frame(name, size)
+        if frame is not None:
+            return frame
+        # If GIF loading failed, fall through to normal image loading
+    
     key = (name, size)
     if key in _image_cache:
         return _image_cache[key]
@@ -46,7 +58,8 @@ def get_card_image(name: str, size=(72, 96)):
     surf = None
 
     NAME_TO_FILE = {
-        # 全てのカードは正しいファイル名で存在しているため空にする
+        # GIF animated cards
+        '負けるわけないだろwww': '負けるわけないだろwww.gif',
     }
 
     def _normalize(s: str) -> str:
@@ -206,3 +219,162 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
     
     _piece_image_cache[key] = surf
     return surf
+
+
+def is_animated_gif(name: str) -> bool:
+    """Check if the card name corresponds to an animated GIF."""
+    NAME_TO_FILE = {
+        '負けるわけないだろwww': '負けるわけないだろwww.gif',
+    }
+    
+    def _normalize(s: str) -> str:
+        if not isinstance(s, str):
+            return s
+        s = s.strip().replace('\u3000', ' ')
+        return ' '.join(s.split())
+    
+    norm_name = _normalize(name)
+    
+    # Check NAME_TO_FILE mapping
+    for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
+        mapped = NAME_TO_FILE.get(k)
+        if mapped and mapped.lower().endswith('.gif'):
+            return True
+    
+    return False
+
+
+def get_card_gif_animation(name: str, size=(72, 96)):
+    """Load all frames from a GIF animation and cache them.
+    
+    Returns a dictionary with:
+    - 'frames': list of pygame.Surface objects
+    - 'durations': list of frame durations in milliseconds
+    - 'current_frame': current frame index
+    - 'last_update': last update timestamp
+    """
+    key = (name, size)
+    if key in _gif_animation_cache:
+        return _gif_animation_cache[key]
+    
+    # Find the GIF file
+    NAME_TO_FILE = {
+        '負けるわけないだろwww': '負けるわけないだろwww.gif',
+    }
+    
+    def _normalize(s: str) -> str:
+        if not isinstance(s, str):
+            return s
+        s = s.strip().replace('\u3000', ' ')
+        return ' '.join(s.split())
+    
+    norm_name = _normalize(name)
+    
+    # Get filename from mapping
+    gif_filename = None
+    for k in (name, norm_name, norm_name.replace(' ', ''), norm_name.replace('\u3000', '').replace(' ', '')):
+        mapped = NAME_TO_FILE.get(k)
+        if mapped:
+            gif_filename = mapped
+            break
+    
+    if not gif_filename:
+        return None
+    
+    gif_path = os.path.join(IMG_DIR, gif_filename)
+    if not os.path.exists(gif_path):
+        print(f"image_loader: GIF file not found: {gif_path}")
+        return None
+    
+    # Load all frames using PIL
+    try:
+        from PIL import Image
+        
+        gif = Image.open(gif_path)
+        frames = []
+        durations = []
+        
+        frame_count = 0
+        while True:
+            try:
+                # Get current frame
+                frame = gif.convert('RGBA')
+                
+                # Convert PIL image to pygame surface
+                mode = frame.mode
+                size_pil = frame.size
+                data = frame.tobytes()
+                
+                pygame_surf = pygame.image.fromstring(data, size_pil, mode)
+                pygame_surf = pygame.transform.smoothscale(pygame_surf, size)
+                frames.append(pygame_surf)
+                
+                # Get frame duration (in milliseconds)
+                duration = gif.info.get('duration', 100)  # default 100ms
+                durations.append(duration)
+                
+                frame_count += 1
+                gif.seek(frame_count)
+                
+            except EOFError:
+                # End of frames
+                break
+        
+        if not frames:
+            print(f"image_loader: No frames loaded from GIF: {gif_path}")
+            return None
+        
+        anim_data = {
+            'frames': frames,
+            'durations': durations,
+            'current_frame': 0,
+            'last_update': time.time()
+        }
+        
+        _gif_animation_cache[key] = anim_data
+        print(f"image_loader: Loaded {len(frames)} frames from GIF: {gif_filename}")
+        return anim_data
+        
+    except ImportError:
+        print("image_loader: PIL/Pillow is required for GIF animation support")
+        return None
+    except Exception as e:
+        print(f"image_loader: Error loading GIF animation {gif_path}: {e}")
+        return None
+
+
+def get_current_gif_frame(name: str, size=(72, 96)):
+    """Get the current frame of an animated GIF, automatically advancing frames.
+    
+    Returns the pygame.Surface of the current frame, or None if animation not loaded.
+    """
+    key = (name, size)
+    anim_data = _gif_animation_cache.get(key)
+    
+    if not anim_data:
+        # Try to load the animation
+        anim_data = get_card_gif_animation(name, size)
+        if not anim_data:
+            return None
+    
+    frames = anim_data['frames']
+    durations = anim_data['durations']
+    current_frame = anim_data['current_frame']
+    last_update = anim_data['last_update']
+    
+    if not frames:
+        return None
+    
+    # Check if we need to advance to next frame
+    current_time = time.time()
+    elapsed_ms = (current_time - last_update) * 1000
+    
+    frame_duration = durations[current_frame] if current_frame < len(durations) else 100
+    
+    if elapsed_ms >= frame_duration:
+        # Advance to next frame
+        anim_data['current_frame'] = (current_frame + 1) % len(frames)
+        anim_data['last_update'] = current_time
+        current_frame = anim_data['current_frame']
+    
+    return frames[current_frame]

@@ -622,33 +622,44 @@ class Game:
                         self.log.append(f"AI: 灼熱で自分の凍結駒 {getattr(best,'name',str(best))} を解除しました。")
                         self.pending = None
                 else:
-                    # Block up to max_tiles around strongest opponent piece
-                    target = None
-                    best_val = -1
+                    # Block up to max_tiles around strategic opponent pieces
+                    # Enhanced: consider multiple high-value targets and block escape routes
+                    target_candidates = []
                     vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+                    
                     if chess is not None:
                         try:
+                            # Collect multiple high-value targets for consideration
                             for p in chess.pieces:
                                 if getattr(p, 'color', None) == opp_color:
                                     v = vals.get(getattr(p, 'name', ''), 0)
-                                    if v > best_val:
-                                        best_val = v
-                                        target = p
+                                    pr, pc = getattr(p, 'row', None), getattr(p, 'col', None)
+                                    if pr is not None and pc is not None and v >= 3:  # Only consider valuable pieces
+                                        score = v
+                                        # Bonus for pieces near center
+                                        center_dist = abs(pr - 3.5) + abs(pc - 3.5)
+                                        score += (7 - center_dist) * 0.5
+                                        target_candidates.append((p, score))
                         except Exception:
-                            target = None
+                            pass
+                    
+                    # Sort by score and pick top target
+                    if target_candidates:
+                        target_candidates.sort(key=lambda x: x[1], reverse=True)
+                        target = target_candidates[0][0]
+                    else:
+                        target = None
+                    
                     if target is not None:
                         tr, tc = getattr(target, 'row', None), getattr(target, 'col', None)
                         placed = 0
-                        # Try to place up to max_tiles empty blocked tiles around the target.
-                        # Instead of only checking immediate 8 neighbours, expand search by
-                        # increasing Manhattan radius so AI can still place tiles if nearby
-                        # squares are occupied.
                         if tr is not None and tc is not None:
-                            # Collect candidate empty tiles in deterministic order
+                            # Enhanced blocking strategy: prioritize escape routes and key squares
                             candidates = []
                             max_radius = 3
+                            
+                            # Calculate scores for each potential blocking square
                             for radius in range(1, max_radius + 1):
-                                # produce ordered offsets for this radius: iterate dr from -radius..radius
                                 for dr in range(-radius, radius + 1):
                                     dc_base = radius - abs(dr)
                                     dc_list = [dc_base] if dc_base == 0 else [dc_base, -dc_base]
@@ -658,7 +669,8 @@ class Game:
                                             continue
                                         if not (0 <= nr < 8 and 0 <= nc < 8):
                                             continue
-                                        # ensure empty
+                                        
+                                        # Check if empty
                                         empty = True
                                         if chess is not None:
                                             try:
@@ -668,14 +680,52 @@ class Game:
                                                 empty = True
                                         if not empty:
                                             continue
-                                        # skip already blocked
+                                        
+                                        # Skip already blocked
                                         if (nr, nc) in self.blocked_tiles:
                                             continue
-                                        candidates.append((nr, nc))
-                                if len(candidates) >= max_tiles:
+                                        
+                                        # Calculate strategic value of this square
+                                        square_score = 10
+                                        
+                                        # Higher priority for squares closer to target
+                                        dist = abs(nr - tr) + abs(nc - tc)
+                                        square_score += (4 - dist) * 5
+                                        
+                                        # Bonus for center squares (more disruptive)
+                                        center_dist = abs(nr - 3.5) + abs(nc - 3.5)
+                                        square_score += (7 - center_dist) * 2
+                                        
+                                        # Bonus for blocking key files/ranks
+                                        if nc == tc:  # Same column as target
+                                            square_score += 8
+                                        if nr == tr:  # Same row as target
+                                            square_score += 8
+                                        
+                                        # Bonus for squares that block multiple opponent pieces
+                                        try:
+                                            blocking_value = 0
+                                            for p2 in chess.pieces:
+                                                if getattr(p2, 'color', None) == opp_color and p2 != target:
+                                                    p2r, p2c = getattr(p2, 'row', None), getattr(p2, 'col', None)
+                                                    if p2r is not None and p2c is not None:
+                                                        p2_dist = abs(nr - p2r) + abs(nc - p2c)
+                                                        if p2_dist <= 2:
+                                                            blocking_value += vals.get(getattr(p2, 'name', ''), 0) * 2
+                                            square_score += blocking_value
+                                        except Exception:
+                                            pass
+                                        
+                                        candidates.append(((nr, nc), square_score))
+                                
+                                if len(candidates) >= max_tiles * 2:  # Collect enough candidates
                                     break
-                            # Apply up to max_tiles from candidates (deterministic order)
-                            to_place = candidates[:max_tiles]
+                            
+                            # Sort by strategic value and pick best squares
+                            candidates.sort(key=lambda x: x[1], reverse=True)
+                            to_place = [pos for pos, score in candidates[:max_tiles]]
+                            
+                            # Apply blocking
                             applied = []
                             for (nr, nc) in to_place:
                                 try:
@@ -693,7 +743,7 @@ class Game:
                             placed = len(applied)
                             if placed:
                                 try:
-                                    self.log.append(f"AI: 灼熱で封鎖マスを適用しました: {to_place}")
+                                    self.log.append(f"AI: 灼熱で封鎖マスを適用しました: {applied}")
                                 except Exception:
                                     pass
                         if placed > 0:
@@ -705,23 +755,95 @@ class Game:
                 # AI should pick an opponent piece to freeze for the specified turns
                 turns = self.pending.info.get('turns', 1)
                 target = None
-                best_val = -1
-                # prefer non-king high-value targets; only choose king if no other targets
+                best_score = -1
+                # Enhanced target selection: consider value, position, and strategic importance
                 vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
+                
+                # Get opponent king position for strategic evaluation
+                opp_king_pos = None
                 if chess is not None:
                     try:
-                        # first, consider non-king targets
+                        for p in chess.pieces:
+                            if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
+                                opp_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                                break
+                    except Exception:
+                        pass
+                
+                if chess is not None:
+                    try:
+                        candidates = []
+                        # First pass: collect non-king targets with strategic scoring
                         for p in chess.pieces:
                             if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') != 'K':
+                                # Skip already frozen pieces
+                                if id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0:
+                                    continue
+                                if hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0:
+                                    continue
+                                
                                 v = vals.get(getattr(p, 'name', ''), 0)
-                                if v > best_val:
-                                    best_val = v
-                                    target = p
+                                score = v * 10
+                                
+                                pr, pc = getattr(p, 'row', None), getattr(p, 'col', None)
+                                if pr is not None and pc is not None:
+                                    # Bonus for pieces in center (more active)
+                                    center_dist = abs(pr - 3.5) + abs(pc - 3.5)
+                                    score += (7 - center_dist) * 2
+                                    
+                                    # Bonus for pieces near opponent's king (defensive target)
+                                    if opp_king_pos:
+                                        king_dist = abs(pr - opp_king_pos[0]) + abs(pc - opp_king_pos[1])
+                                        if king_dist <= 2:
+                                            score += 15  # High priority for king's defenders
+                                    
+                                    # Bonus for advanced pieces (closer to AI's side)
+                                    if own_color == 'black':
+                                        # Black AI: bonus for white pieces in upper rows (rows 0-3)
+                                        if pr <= 3:
+                                            score += (4 - pr) * 3
+                                    else:
+                                        # White AI: bonus for black pieces in lower rows (rows 4-7)
+                                        if pr >= 4:
+                                            score += (pr - 3) * 3
+                                    
+                                    # Extra bonus for active pieces (Knights and Bishops in good positions)
+                                    pname = getattr(p, 'name', '')
+                                    if pname == 'N' and 2 <= pr <= 5 and 2 <= pc <= 5:
+                                        score += 8  # Knights in center
+                                    elif pname == 'B' and ((pr + pc) % 2 == 0 or (pr + pc) % 2 == 1):
+                                        # Bishops on long diagonals
+                                        if pr == pc or pr + pc == 7:
+                                            score += 6
+                                
+                                candidates.append((p, score))
+                        
+                        # Select target with randomization to avoid always picking the same piece
+                        if candidates:
+                            # Sort by score
+                            candidates.sort(key=lambda x: x[1], reverse=True)
+                            
+                            # Top 40% chance to pick best, 30% for second best, 20% for third, 10% random
+                            import random
+                            roll = random.random()
+                            if roll < 0.40 and len(candidates) >= 1:
+                                target = candidates[0][0]
+                            elif roll < 0.70 and len(candidates) >= 2:
+                                target = candidates[1][0]
+                            elif roll < 0.90 and len(candidates) >= 3:
+                                target = candidates[2][0]
+                            else:
+                                # Pick randomly from top half of candidates
+                                top_half = candidates[:max(1, len(candidates)//2)]
+                                target = random.choice(top_half)[0]
+                        
                         # if no non-king targets found, fall back to considering the king
                         if target is None:
                             for p in chess.pieces:
                                 if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
-                                    target = p
+                                    # Only freeze king if not already frozen
+                                    if not (id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0):
+                                        target = p
                                     break
                     except Exception:
                         target = None
@@ -772,6 +894,79 @@ class Game:
         player.graveyard.append(card)
         self.log.append(f"AI: 『{card.name}』を使用しました。 {msg}")
         return True, f"AI: 『{card.name}』を使用しました。 {msg}"
+    
+    def check_no_lose_trigger(self, player_color: str = 'white') -> bool:
+        """「負けるわけないだろwww」カードの発動条件をチェック
+        
+        発動条件:
+        1. 手札に「負けるわけないだろwww」がある
+        2. 手札に「摂取」がある
+        3. PPが3以上ある
+        
+        Returns:
+            発動可能な場合True
+        """
+        # プレイヤーかどうかを判定
+        if player_color == 'white':
+            target_player = self.player
+        else:
+            # AIの場合は発動しない（プレイヤー専用）
+            return False
+        
+        # 1. PPチェック
+        if target_player.pp_current < 3:
+            return False
+        
+        # 2. 手札に「負けるわけないだろwww」があるか
+        has_no_lose = any(c.name == "負けるわけないだろwww" for c in target_player.hand.cards)
+        if not has_no_lose:
+            return False
+        
+        # 3. 手札に「摂取」があるか
+        has_leech = any(c.name == "摂取" for c in target_player.hand.cards)
+        if not has_leech:
+            return False
+        
+        return True
+    
+    def trigger_no_lose(self, player_color: str = 'white') -> bool:
+        """「負けるわけないだろwww」カードを発動
+        
+        効果:
+        1. 手札から「負けるわけないだろwww」を墓地へ
+        2. 3PPを消費
+        3. 盤面を最初の状態にリセット（手札、山札、墓地はそのまま）
+        
+        Returns:
+            発動に成功した場合True
+        """
+        if player_color == 'white':
+            target_player = self.player
+        else:
+            return False
+        
+        # カードを手札から探す
+        card_index = None
+        for i, c in enumerate(target_player.hand.cards):
+            if c.name == "負けるわけないだろwww":
+                card_index = i
+                break
+        
+        if card_index is None:
+            return False
+        
+        # PPを消費
+        target_player.spend_pp(3)
+        
+        # カードを墓地に移動
+        card = target_player.hand.cards[card_index]
+        target_player.hand.remove_at(card_index)
+        target_player.graveyard.append(card)
+        
+        self.log.append(f"★★★ 「負けるわけないだろwww」が発動！ ★★★")
+        self.log.append("盤面を最初の状態にリセットします！")
+        
+        return True
 
 
 # -----------------------------
@@ -1027,10 +1222,10 @@ def make_rule_cards_deck() -> Deck:
         Card("錬成", 0, eff_alchemy),
         # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
         Card("墓地ルーレット", 1, eff_graveyard_roulette),
-        Card("\u6442\u53d6", 1, eff_leech_pp2),
+        Card("摂取", 1, eff_leech_pp2),
         # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
         # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        # Card("負けるわけないだろwww", 4, eff_no_lose),
+        Card("負けるわけないだろwww", 4, eff_no_lose),
         # Card("鉄壁", 2, eff_iron_wall),
         # Card("ハンです☆", 2, eff_hand_discard),
     ]

@@ -3779,12 +3779,12 @@ def get_card_image(name: str, size=(72, 96)):
 
     surf = None
 
-    # explicit mapping for special gimmick cards
+    # explicit mapping for special gimmick cards (map to existing images)
     NAME_TO_FILE = {
-        "ハンです☆": "card_death_1.png",
-        "命がけのギャンブル": "card_kaiji_Jo.png",
-        "負けるわけないだろwww": "card_you_lose.gif",
-        "鉄壁": "card_sh.png",
+        "ハンです☆": "墓地ルーレット.png",
+        "命がけのギャンブル": "ChatGPT Image 2025年11月4日 11_12_06.png",
+        "負けるわけないだろwww": "Image_F.gif",
+        "鉄壁": "暴風.png",
     }
 
     def _normalize(n: str) -> str:

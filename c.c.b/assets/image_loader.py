@@ -50,11 +50,12 @@ def get_card_image(name: str, size=(72, 96)):
     surf = None
     # explicit name -> file mapping for special cards
     NAME_TO_FILE = {
-        # map card display name to an image filename in images/
-        "ハンです☆": "card_death_1.png",
-        "命がけのギャンブル": "card_kaiji_Jo.png",
-        "負けるわけないだろwww": "card_you_lose.gif",
-        "鉄壁": "card_sh.png",
+        # map card display name to an existing image filename in images/
+        # Use existing non-corrupt assets so the UI shows visible artwork.
+        "ハンです☆": "墓地ルーレット.png",
+        "命がけのギャンブル": "ChatGPT Image 2025年11月4日 11_12_06.png",
+        "負けるわけないだろwww": "Image_F.gif",
+        "鉄壁": "暴風.png",
     }
 
     def _normalize(n: str) -> str:

@@ -639,8 +639,15 @@ def restart_game():
                 ai_player = None
     log_scroll_offset = 0
     
+    # ターン開始フラグを初期化（1ターン目はボタン押下が必要）
+    try:
+        game.turn_active = False
+        game.player_moved_this_turn = False
+    except Exception:
+        pass
+    
     game.log.append("=== ゲームを再開しました ===")
-    game.log.append("白のターンです。")
+    game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
 
 
 def _prepare_new_battle_after_deck_already_selected():
@@ -684,7 +691,7 @@ def _prepare_new_battle_after_deck_already_selected():
     try:
         if game is not None:
             try:
-                game.turn_active = True
+                game.turn_active = False
                 game.player_moved_this_turn = False
             except Exception:
                 pass
@@ -695,7 +702,7 @@ def _prepare_new_battle_after_deck_already_selected():
     try:
         if game is not None:
             game.log.append("=== ゲームを再開しました ===")
-            game.log.append("白のターンです。")
+            game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
     except Exception:
         pass
 

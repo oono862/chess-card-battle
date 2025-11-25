@@ -50,6 +50,7 @@ def get_card_image(name: str, size=(72, 96)):
     }
 
     def _normalize(s: str) -> str:
+        
         if not isinstance(s, str):
             return s
         s = s.strip().replace('\u3000', ' ')

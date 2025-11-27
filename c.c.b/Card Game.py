@@ -3404,6 +3404,28 @@ def ai_make_move():
     p, mv = sel
     apply_move(p, mv[0], mv[1])
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
+    
+    # AI自動昇格処理: 昇格が保留中の場合、自動的にクイーンに昇格させる
+    if chess.promotion_pending is not None:
+        try:
+            promoted_piece = chess.promotion_pending.get('piece')
+            piece_color = chess.promotion_pending.get('color')
+            if promoted_piece is not None and piece_color == 'black':
+                # AIは基本的にクイーンに昇格（難易度によって選択を変えることも可能）
+                promotion_choice = 'Q'
+                if CPU_DIFFICULTY >= 3:
+                    # 高難易度では状況に応じて最適な駒を選択
+                    # 簡易判定: ナイトが有効な場合もあるが、通常はクイーンが最善
+                    promotion_choice = 'Q'
+                
+                promoted_piece.name = promotion_choice
+                game.log.append(f"AI: ポーンを{promotion_choice}に昇格させました。")
+                chess.promotion_pending = None
+        except Exception as e:
+            # エラーが発生した場合でもpendingをクリア
+            chess.promotion_pending = None
+            game.log.append(f"AI昇格処理エラー: {e}")
+    
     # consume AI jump flag or extra moves
     try:
         # Prefer game-level flag if present (set by card_core), fallback to module-level
@@ -4756,65 +4778,71 @@ def draw_panel():
             screen.blit(yes_s, (confirm_yes_rect.centerx - yes_s.get_width()//2, confirm_yes_rect.centery - yes_s.get_height()//2))
             screen.blit(no_s, (confirm_no_rect.centerx - no_s.get_width()//2, confirm_no_rect.centery - no_s.get_height()//2))
 
-    # プロモーション選択オーバーレイ (Q/R/B/N)
+    # プロモーション選択オーバーレイ (Q/R/B/N) - プレイヤー（白）の駒のみ
     if chess.promotion_pending is not None:
         promot = chess.promotion_pending
-        opts = ['Q','R','B','N']
-        # サイズ・配置
-        box_w = 460
-        box_h = 160
-        # Prefer positioning the promotion box so it stays within the chessboard area.
-        # If possible, center the box over the promotion square; otherwise clamp to board bounds.
-        try:
-            piece = promot.get('piece')
-            # tile origin (top-left) for the piece's square
-            pr = getattr(piece, 'row', None)
-            pc = getattr(piece, 'col', None)
-            tile_x = board_left + (pc * (board_size // 8)) if pc is not None else None
-            tile_y = board_top + (pr * (board_size // 8)) if pr is not None else None
-        except Exception:
-            tile_x = None
-            tile_y = None
+        promo_color = promot.get('color', None)
+        
+        # AIの駒（黒）の昇格は自動処理されるべきなので、UIは表示しない
+        if promo_color == 'white':
+            opts = ['Q','R','B','N']
+            # サイズ・配置
+            box_w = 460
+            box_h = 160
+            # Prefer positioning the promotion box so it stays within the chessboard area.
+            # If possible, center the box over the promotion square; otherwise clamp to board bounds.
+            try:
+                piece = promot.get('piece')
+                # tile origin (top-left) for the piece's square
+                pr = getattr(piece, 'row', None)
+                pc = getattr(piece, 'col', None)
+                tile_x = board_left + (pc * (board_size // 8)) if pc is not None else None
+                tile_y = board_top + (pr * (board_size // 8)) if pr is not None else None
+            except Exception:
+                tile_x = None
+                tile_y = None
 
-        # center promotion box within the chessboard area
-        try:
-            box_x = board_left + (board_size - box_w) // 2
-            box_y = board_top + (board_size - box_h) // 2
-        except Exception:
-            # fallback to screen center if board metrics aren't available
-            box_x = (W - box_w)//2
-            box_y = (H - box_h)//2
-        pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
-        pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
-        # ヘッダ
-        header_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
-        hdr = header_font.render("昇格する駒を選択", True, (40,40,40))
-        screen.blit(hdr, (box_x + (box_w - hdr.get_width())//2, box_y + 8))
+            # center promotion box within the chessboard area
+            try:
+                box_x = board_left + (board_size - box_w) // 2
+                box_y = board_top + (board_size - box_h) // 2
+            except Exception:
+                # fallback to screen center if board metrics aren't available
+                box_x = (W - box_w)//2
+                box_y = (H - box_h)//2
+            pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
+            pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
+            # ヘッダ
+            header_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+            hdr = header_font.render("昇格する駒を選択", True, (40,40,40))
+            screen.blit(hdr, (box_x + (box_w - hdr.get_width())//2, box_y + 8))
 
-        # 選択肢を横並びに描画（駒画像を使う）
-        opt_w = 96
-        spacing = (box_w - 24 - len(opts)*opt_w) // (len(opts)-1)
-        ox = box_x + 12
-        oy = box_y + 48
-        promo_rects = []
-        for i,o in enumerate(opts):
-            r = pygame.Rect(ox + i*(opt_w+spacing), oy, opt_w, opt_w)
-            pygame.draw.rect(screen, (230,230,230), r)
-            pygame.draw.rect(screen, (120,120,120), r, 2)
-            # piece image for promot['color']
-            img = get_piece_image_surface(o, promot['color'], (opt_w-8, opt_w-8))
-            if img is not None:
-                screen.blit(img, (r.x + 4, r.y + 4))
-            else:
-                lab = FONT.render(o, True, (0,0,0))
-                screen.blit(lab, (r.x + (r.w - lab.get_width())//2, r.y + (r.h - lab.get_height())//2))
-            promo_rects.append((r, o))
-        draw_panel.promo_rects = promo_rects
+            # 選択肢を横並びに描画（駒画像を使う）
+            opt_w = 96
+            spacing = (box_w - 24 - len(opts)*opt_w) // (len(opts)-1)
+            ox = box_x + 12
+            oy = box_y + 48
+            promo_rects = []
+            for i,o in enumerate(opts):
+                r = pygame.Rect(ox + i*(opt_w+spacing), oy, opt_w, opt_w)
+                pygame.draw.rect(screen, (230,230,230), r)
+                pygame.draw.rect(screen, (120,120,120), r, 2)
+                # piece image for promot['color']
+                img = get_piece_image_surface(o, promot['color'], (opt_w-8, opt_w-8))
+                if img is not None:
+                    screen.blit(img, (r.x + 4, r.y + 4))
+                else:
+                    lab = FONT.render(o, True, (0,0,0))
+                    screen.blit(lab, (r.x + (r.w - lab.get_width())//2, r.y + (r.h - lab.get_height())//2))
+                promo_rects.append((r, o))
+            draw_panel.promo_rects = promo_rects
 
     # AI 思考中オーバーレイ
     try:
-        # Do not show AI thinking overlay while a promotion selection is pending.
-        if cpu_wait and THINKING_ENABLED and not game_over and getattr(chess, 'promotion_pending', None) is None:
+        # Do not show AI thinking overlay while a player (white) promotion selection is pending.
+        promotion_obj = getattr(chess, 'promotion_pending', None)
+        player_promotion_pending = promotion_obj is not None and promotion_obj.get('color') == 'white'
+        if cpu_wait and THINKING_ENABLED and not game_over and not player_promotion_pending:
             import time
             # Restrict overlay to the board area so it stays within the chessboard
             bs = board_size
@@ -6866,12 +6894,25 @@ def main_loop():
         # Non-blocking AI wait handling (ゲーム終了時は無効化)
         if cpu_wait and THINKING_ENABLED and not game_over:
             import time
-            # If a promotion selection is pending, postpone AI until the promotion is resolved by the player.
-            # This avoids the AI automatically playing while the UI is waiting for the player to choose
-            # the promotion piece.
-            if getattr(chess, 'promotion_pending', None) is not None:
-                # reset timer so AI wait restarts after promotion is handled
-                cpu_wait_start = time.time()
+            # If a promotion selection is pending for a WHITE piece, postpone AI until the promotion is resolved by the player.
+            # However, if it's a BLACK (AI) piece promotion, it should already have been auto-resolved in ai_make_move.
+            # This check prevents race conditions where the UI is waiting for player promotion choice.
+            pending_promo = getattr(chess, 'promotion_pending', None)
+            if pending_promo is not None:
+                promo_color = pending_promo.get('color', None)
+                if promo_color == 'white':
+                    # Player's piece needs promotion - wait for player to select
+                    cpu_wait_start = time.time()
+                else:
+                    # This shouldn't happen (AI promotion should be auto-handled), but clear it defensively
+                    try:
+                        promoted_piece = pending_promo.get('piece')
+                        if promoted_piece is not None:
+                            promoted_piece.name = 'Q'
+                            game.log.append("AI: ポーンをQに昇格させました（待機ループ内での防御処理）。")
+                        chess.promotion_pending = None
+                    except Exception:
+                        chess.promotion_pending = None
             elif time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move
                 ai_make_move()

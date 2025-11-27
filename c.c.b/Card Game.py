@@ -1,7 +1,7 @@
 #カードゲーム部分実装
 import pygame
 from pygame import Rect
-import sys, traceback, os, json, logging
+import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
 logging.basicConfig(level=logging.INFO)
@@ -3423,6 +3423,19 @@ def draw_panel():
         label = "次：追加行動" if consecutive_turns == 1 else f"次：追加行動×{consecutive_turns}"
         draw_text(screen, label, info_x, info_y, (10, 120, 10), scale=layout.get('scale', 1.0))
         info_y += left_line_step - 6
+    
+    # 鉄壁効果の表示（1回限りの防御）
+    if getattr(game.player, 'iron_wall_active', False):
+        info_y += 6
+        draw_text(screen, "🛡 鉄壁：敵の妨害を防御", info_x, info_y, (200, 80, 0), bold=True, scale=layout.get('scale', 1.0))
+        info_y += left_line_step - 6
+    
+    # 鉄壁保護効果の表示（1ターン保護）
+    ironwall_protection = getattr(game, 'player_ironwall_protection_turns', 0)
+    if ironwall_protection > 0:
+        info_y += 6
+        draw_text(screen, "🛡 鉄壁：1ターン保護", info_x, info_y, (220, 140, 20), bold=True, scale=layout.get('scale', 1.0))
+        info_y += left_line_step - 6
     info_y += left_line_step
     
     # 山札
@@ -3440,6 +3453,32 @@ def draw_panel():
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
     info_y += left_line_step
+    
+    # 相手（AI）の鉄壁効果の表示
+    ai_has_ironwall_active = False
+    ai_has_ironwall_protection = False
+    try:
+        # AI player の iron_wall_active を確認
+        if hasattr(game, 'ai_player'):
+            ai_has_ironwall_active = getattr(game.ai_player, 'iron_wall_active', False)
+        # game レベルのフラグも確認
+        if not ai_has_ironwall_active:
+            ai_has_ironwall_active = getattr(game, 'ai_iron_wall_active', False)
+        # AI の保護ターン数を確認
+        ai_has_ironwall_protection = getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+    except Exception:
+        pass
+    
+    if ai_has_ironwall_active:
+        draw_text(screen, "敵🛡 鉄壁：次の効果を防御", info_x, info_y, (200, 80, 0), bold=True, scale=layout.get('scale', 1.0))
+        info_y += left_line_step - 6
+    
+    if ai_has_ironwall_protection:
+        draw_text(screen, "敵🛡 鉄壁：1ターン保護", info_x, info_y, (220, 140, 20), bold=True, scale=layout.get('scale', 1.0))
+        info_y += left_line_step - 6
+    
+    if ai_has_ironwall_active or ai_has_ironwall_protection:
+        info_y += 10  # 区切り用の余白
 
     # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
     global start_turn_rect
@@ -3541,6 +3580,55 @@ def draw_panel():
                 pygame.draw.circle(screen, (40,40,40), (cx,cy), radius)
                 label = SMALL.render(p.name, True, (255,255,255))
             screen.blit(label, (cx - label.get_width()//2, cy - label.get_height()//2))
+    
+    # 鉄壁エフェクトの視覚化（キングの周りにバリアを表示）
+    try:
+        # プレイヤーの鉄壁チェック
+        player_has_ironwall = getattr(game.player, 'iron_wall_active', False) or getattr(game, 'player_ironwall_protection_turns', 0) > 0
+        ai_has_ironwall = getattr(game, 'ai_iron_wall_active', False) or getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+        
+        if player_has_ironwall or ai_has_ironwall:
+            for p in chess.pieces:
+                if p.name == 'K':  # キングのみ
+                    draw_barrier = False
+                    barrier_color = (220, 180, 20)  # 金色
+                    
+                    if p.color == 'white' and player_has_ironwall:
+                        draw_barrier = True
+                    elif p.color == 'black' and ai_has_ironwall:
+                        draw_barrier = True
+                    
+                    if draw_barrier:
+                        cell_x = board_left + p.col * square_w
+                        cell_y = board_top + p.row * square_h
+                        
+                        # 光るバリアエフェクト（複数の円で表現）
+                        import time
+                        pulse = abs(math.sin(time.time() * 3))  # パルス効果
+                        
+                        # 外側の大きな円
+                        outer_radius = int((square_w // 2) * (0.9 + pulse * 0.1))
+                        pygame.draw.circle(screen, barrier_color, 
+                                         (cell_x + square_w // 2, cell_y + square_h // 2), 
+                                         outer_radius, 3)
+                        
+                        # 内側の小さな円
+                        inner_radius = int((square_w // 2) * (0.7 + pulse * 0.1))
+                        alpha_surface = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                        pygame.draw.circle(alpha_surface, (*barrier_color, int(80 + pulse * 60)), 
+                                         (square_w // 2, square_h // 2), inner_radius)
+                        screen.blit(alpha_surface, (cell_x, cell_y))
+                        
+                        # 四隅に小さなシールドアイコン
+                        shield_size = max(8, square_w // 8)
+                        corner_offsets = [(2, 2), (square_w - shield_size - 2, 2), 
+                                        (2, square_h - shield_size - 2), 
+                                        (square_w - shield_size - 2, square_h - shield_size - 2)]
+                        for ox, oy in corner_offsets:
+                            shield_rect = pygame.Rect(cell_x + ox, cell_y + oy, shield_size, shield_size)
+                            pygame.draw.rect(screen, barrier_color, shield_rect, 2)
+    except Exception:
+        pass
 
     # カード効果視覚化（封鎖マス・凍結駒のオーバーレイ）
     try:
@@ -4475,6 +4563,8 @@ def draw_panel():
             instruction_text = "相手の手札からランダムで1枚墓地に送ります..."
         elif game.pending.kind == 'gamble_promote':
             instruction_text = "命がけのギャンブル発動中..."
+        elif game.pending.kind == 'board_reset':
+            instruction_text = "「負けるわけないだろwww」発動！盤面をリセットします..."
         else:
             instruction_text = "選択を完了してください"
         
@@ -5534,21 +5624,16 @@ def handle_mouse_click(pos):
                     turns = game.pending.info.get('turns', 2)
                     # assume card used by player -> applies to opponent color
                     applies_to = game.pending.info.get('for_color', 'black')
-                    try:
-                        # append a blocked-tile entry (new representation)
-                        game.add_blocked_tile((row, col), applies_to, turns)
-                    except Exception:
-                        # Fallback to legacy behavior: overwrite single int mapping
+                    # Determine source color
+                    source_color = 'white' if applies_to == 'black' else 'black'
+                    # Use apply_blocked_tile to respect iron wall
+                    blocked = game.apply_blocked_tile((row, col), turns, applies_to, source_color, '灼熱')
+                    if blocked:
                         try:
-                            game.blocked_tiles[(row, col)] = turns
-                            game.blocked_tiles_owner[(row, col)] = applies_to
+                            play_heat_gif_at(row, col)
                         except Exception:
-                            game.blocked_tiles[(row, col)] = turns
-                    try:
-                        play_heat_gif_at(row, col)
-                    except Exception:
-                        pass
-                    game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
+                            pass
+                        game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
                     game.pending = None
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
@@ -5581,15 +5666,14 @@ def handle_mouse_click(pos):
                         if len(sel) >= tmax:
                             turns = game.pending.info.get('turns', 2)
                             applies_to = game.pending.info.get('for_color', 'black')
+                            source_color = 'white' if applies_to == 'black' else 'black'
+                            blocked_count = 0
                             for (r, c) in sel:
-                                try:
-                                    game.add_blocked_tile((r, c), applies_to, turns)
-                                except Exception:
-                                    try:
-                                        game.blocked_tiles[(r, c)] = turns
-                                        game.blocked_tiles_owner[(r, c)] = applies_to
-                                    except Exception:
-                                        game.blocked_tiles[(r, c)] = turns
+                                if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱'):
+                                    blocked_count += 1
+                            if blocked_count > 0:
+                                game.log.append(f"{blocked_count}マスを {turns} ターン封鎖しました")
+                            game.pending = None
                             game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
@@ -5913,6 +5997,7 @@ def handle_mouse_click(pos):
                             # 「負けるわけないだろwww」の発動チェック
                             if game.check_no_lose_trigger('white'):
                                 # 発動条件を満たしている
+                                game.log.append("「負けるわけないだろwww」の発動条件を満たしています...")
                                 if game.trigger_no_lose('white'):
                                     # 発動成功 → 盤面をリセット
                                     chess.pieces[:] = chess.create_pieces()
@@ -5932,6 +6017,10 @@ def handle_mouse_click(pos):
                                     # ターンをプレイヤーに戻す
                                     chess_current_turn = 'white'
                                     
+                                    # カードゲームターンもリセット
+                                    game.turn_active = False
+                                    game.player_moved_this_turn = False
+                                    
                                     game.log.append("盤面が初期状態にリセットされました！")
                                     game.log.append("ゲームを続行します。")
                                     
@@ -5943,6 +6032,7 @@ def handle_mouse_click(pos):
                                     # 発動失敗（通常通り負け）
                                     game_over = True
                                     game_over_winner = 'black'
+                                    game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
                                     game.log.append("YOU LOSE！黒の勝利！")
                             else:
                                 # 発動条件を満たしていない（通常通り負け）
@@ -6547,6 +6637,46 @@ def main_loop():
                             pass
                         game.log.append("自ターンをスキップします。")
 
+                game.pending = None
+
+            # 盤面リセット（「負けるわけないだろwww」カード）
+            elif game.pending.kind == 'board_reset':
+                try:
+                    # 盤面を初期状態にリセット
+                    chess.pieces[:] = chess.create_pieces()
+                    chess.en_passant_target = None
+                    
+                    # プロモーション状態をクリア
+                    try:
+                        chess_rules.clear_promotion_state(chess)
+                    except Exception:
+                        chess.promotion_pending = None
+                    
+                    # ゲーム状態フラグをリセット
+                    global simul_check_active, simul_white_result, simul_black_result
+                    simul_check_active = False
+                    simul_white_result = 'none'
+                    simul_black_result = 'none'
+                    
+                    # 選択状態をクリア
+                    selected_piece = None
+                    highlight_squares = []
+                    
+                    # ターンをプレイヤーに戻す
+                    chess_current_turn = 'white'
+                    
+                    # カードゲームターンもリセット
+                    game.turn_active = False
+                    game.player_moved_this_turn = False
+                    
+                    game.log.append("★★★ 盤面が初期状態にリセットされました！ ★★★")
+                    game.log.append("ゲームを続行します。")
+                    
+                except Exception as e:
+                    game.log.append(f"盤面リセット中にエラーが発生しました: {e}")
+                    import traceback
+                    traceback.print_exc()
+                
                 game.pending = None
 
         draw_panel()

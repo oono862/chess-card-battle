@@ -141,6 +141,9 @@ class Game:
     ai_consecutive_turns: int = 0
     # AI-specific single-move jump flag (暴風) stored here so card effects can set it
     ai_next_move_can_jump: bool = False
+    # Iron wall protection: protects from harmful gimmick cards for 1 turn
+    player_ironwall_protection_turns: int = 0
+    ai_ironwall_protection_turns: int = 0
 
     # ---- draw helper with hand limit ----
     def draw_to_hand(self, n: int = 1) -> List[Tuple[Optional[Card], bool]]:
@@ -206,6 +209,20 @@ class Game:
         If `ended_color` is None, behave like the legacy behavior and decrement
         all status counters.
         """
+        # Decay ironwall protection turns
+        if ended_color is None or ended_color == 'white':
+            if getattr(self, 'player_ironwall_protection_turns', 0) > 0:
+                try:
+                    self.player_ironwall_protection_turns -= 1
+                except Exception:
+                    pass
+        if ended_color is None or ended_color == 'black':
+            if getattr(self, 'ai_ironwall_protection_turns', 0) > 0:
+                try:
+                    self.ai_ironwall_protection_turns -= 1
+                except Exception:
+                    pass
+        
         # Decay blocked tiles: only decrement tiles that belong to the color
         # whose turn just ended (if provided).
         for k in list(self.blocked_tiles.keys()):
@@ -915,18 +932,22 @@ class Game:
         
         # 1. PPチェック
         if target_player.pp_current < 3:
+            self.log.append(f"[発動失敗] PP不足 (現在: {target_player.pp_current}, 必要: 3)")
             return False
         
         # 2. 手札に「負けるわけないだろwww」があるか
         has_no_lose = any(c.name == "負けるわけないだろwww" for c in target_player.hand.cards)
         if not has_no_lose:
+            self.log.append("[発動失敗] 手札に「負けるわけないだろwww」がありません")
             return False
         
         # 3. 手札に「摂取」があるか
         has_leech = any(c.name == "摂取" for c in target_player.hand.cards)
         if not has_leech:
+            self.log.append("[発動失敗] 手札に「摂取」がありません")
             return False
         
+        self.log.append("[発動可能] 全ての条件を満たしています")
         return True
     
     def trigger_no_lose(self, player_color: str = 'white') -> bool:
@@ -1060,6 +1081,19 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
 
 def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
     """暴風(1): 駒を一つ飛び越えられる（次の移動1回に有効）。"""
+    # Check if opponent has ironwall protection (暴風 benefits the user, so opponent is affected)
+    try:
+        if player is game.player:
+            # Player using card, AI is affected
+            if getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                return "相手の鉄壁により効果が無効化されました。"
+        else:
+            # AI using card, player is affected
+            if getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                return "鉄壁の保護により効果が無効化されました。"
+    except Exception:
+        pass
+    
     # Mark the flag on the PlayerState so human benefits immediately.
     player.next_move_can_jump = True
     # If the effect was played by AI (player is not the human player), also mark
@@ -1074,6 +1108,19 @@ def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
     """迅雷(1): このターンに1回だけ追加の全行動（合計で2ターン分）。"""
+    # Check if opponent has ironwall protection (迅雷 benefits the user, so opponent is affected)
+    try:
+        if player is game.player:
+            # Player using card, AI is affected
+            if getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                return "相手の鉄壁により効果が無効化されました。"
+        else:
+            # AI using card, player is affected
+            if getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                return "鉄壁の保護により効果が無効化されました。"
+    except Exception:
+        pass
+    
     # Grant one extra full chess turn to the player (so player gets this turn + 1 more).
     # If the effect is played by the human (game.player), set player_consecutive_turns;
     # otherwise (AI) set ai_consecutive_turns so the AI benefits.
@@ -1149,9 +1196,28 @@ def eff_leech_pp2(game: Game, player: PlayerState) -> str:
 def eff_risky_gamble(game: Game, player: PlayerState) -> str:
     """命がけのギャンブル(3): 25%の確率で自分のルーク・キング以外の駒がクイーンに変わる。外れたら相手側が変わる。自ターンスキップ。"""
     import random
+    
+    # Check if user has ironwall protection (失敗時の不利な効果を防ぐ)
+    user_has_protection = False
+    # Check if opponent has ironwall protection (成功時の効果を防ぐ)
+    opponent_has_protection = False
+    try:
+        if player is game.player:
+            user_has_protection = getattr(game, 'player_ironwall_protection_turns', 0) > 0
+            opponent_has_protection = getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+        else:
+            user_has_protection = getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+            opponent_has_protection = getattr(game, 'player_ironwall_protection_turns', 0) > 0
+    except Exception:
+        pass
+    
     success = random.random() < 0.25  # 25%の確率
     
     if success:
+        # 当たり: 相手に鉄壁保護があれば無効化
+        if opponent_has_protection:
+            return "25%の確率に成功！しかし相手の鉄壁により効果は無効化されました。"
+        
         # 当たり: 自分のルークとキング以外の駒をクイーンに変更
         game.pending = PendingAction(
             kind="gamble_promote",
@@ -1163,6 +1229,11 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
         # 成功時はターンスキップを行わない（UI側で判定）
         return "25%の確率に成功！自分のルークとキング以外の駒がクイーンに変わります。"
     else:
+        # 外れ: 鉄壁保護があれば失敗効果を無効化
+        if user_has_protection:
+            # 失敗したが鉄壁により相手への効果は発動しない（ターンスキップは発生）
+            return "25%の確率に失敗...しかし鉄壁の保護により相手への効果は無効化されました。自ターンスキップ。"
+        
         # 外れ: 相手のルークとキング以外の駒をクイーンに変更
         game.pending = PendingAction(
             kind="gamble_promote",
@@ -1176,18 +1247,62 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
 
 
 def eff_no_lose(game: Game, player: PlayerState) -> str:
-    """負けるわけないだろwww(4): 3PPあって手札に「摂取」あり自分が負けるとき自動発動。盤面を最初の状態にする。"""
-    # この効果は自動発動なので、実際の発動処理はゲームロジック側で行う
-    # ここでは効果の説明のみ返す
-    return "負けるとき自動発動の準備完了（3PP+手札に摂取が必要）"
+    """負けるわけないだろwww(4): 3PPと手札に「摂取」があれば、盤面を最初の状態にリセット。自分が負けるとき自動発動。"""
+    # 手動使用時: 盤面リセットを保留アクションとして設定
+    # UI側で実際のリセット処理を行う
+    game.pending = PendingAction(
+        kind="board_reset",
+        info={
+            "note": "盤面を最初の状態にリセットします。",
+            "triggered_by": "manual",
+        }
+    )
+    return "「負けるわけないだろwww」発動！\n盤面を最初の状態にリセットします！"
+
+
+def precheck_no_lose(game: Game, player: PlayerState) -> dict:
+    """「負けるわけないだろwww」の使用条件チェック
+    
+    使用条件:
+    1. 手札に「摂取」がある
+    2. PPい3以上ある
+    """
+    # 1. 手札に「摂取」があるか
+    has_leech = any(c.name == "摂取" for c in player.hand.cards)
+    if not has_leech:
+        return {
+            "can_use": False,
+            "message": "「負けるわけないだろwww」の使用には\n手札に「摂取」が必要です。"
+        }
+    
+    # 2. PPい3以上あるか（コスト4なので通常はコストチェックで弾かれるが、一応確認）
+    if player.pp_current < 3:
+        return {
+            "can_use": False,
+            "message": "「負けるわけないだろwww」の使用には\n3PP以上必要です。"
+        }
+    
+    return {"can_use": True}
 
 
 def eff_iron_wall(game: Game, player: PlayerState) -> str:
-    """鉄壁(2): 一度だけ相手の攻撃や妨害を防御できる（相手の効果を受けるまで解除されない）"""
+    """鉄壁(2): 二重の防御効果
+    1) 次に受ける相手の効果を1回だけ防御（氷結、灼熱など）
+    2) 1ターンの間、暴風・迅雷・ハンです☆・命がけギャンブル（成功時/失敗時）の不利な効果を無効化"""
     # プレイヤーに防御フラグを立てる
     if not hasattr(player, 'iron_wall_active'):
         player.iron_wall_active = False
     player.iron_wall_active = True
+    
+    # Set 1-turn protection from harmful gimmick cards
+    try:
+        if player is game.player:
+            game.player_ironwall_protection_turns = 1
+        else:
+            game.ai_ironwall_protection_turns = 1
+    except Exception:
+        pass
+    
     # If the effect was applied to the AI's PlayerState, also keep a game-level
     # flag so game-side helpers can check AI iron wall.
     try:
@@ -1195,11 +1310,24 @@ def eff_iron_wall(game: Game, player: PlayerState) -> str:
             setattr(game, 'ai_iron_wall_active', True)
     except Exception:
         pass
-    return "鉄壁発動！次に受ける相手の効果を1回だけ防御します。"
+    return "鉄壁発動！\n① 次に受ける相手の効果を1回防御\n② 1ターンの間、暴風・迅雷・ハンです☆・命がけギャンブルの効果を無効化"
 
 
 def eff_hand_discard(game: Game, player: PlayerState) -> str:
     """ハンです☆(2): 相手のカードをランダムで一枚墓地に送る"""
+    # Check if opponent has ironwall protection
+    try:
+        if player is game.player:
+            # Player using card, AI is affected
+            if getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                return "相手の鉄壁により効果が無効化されました。"
+        else:
+            # AI using card, player is affected
+            if getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                return "鉄壁の保護により効果が無効化されました。"
+    except Exception:
+        pass
+    
     # pending actionで相手の手札を捨てる処理を保留
     game.pending = PendingAction(
         kind="discard_opponent_hand",
@@ -1236,8 +1364,8 @@ def make_rule_cards_deck() -> Deck:
         Card("摂取", 1, eff_leech_pp2),
         # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
         # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        Card("負けるわけないだろwww", 4, eff_no_lose),
-        # Card("鉄壁", 2, eff_iron_wall),
+        Card("負けるわけないだろwww", 4, eff_no_lose, precheck_no_lose),
+        Card("鉄壁", 2, eff_iron_wall),
         # Card("ハンです☆", 2, eff_hand_discard),
     ]
     pool = []

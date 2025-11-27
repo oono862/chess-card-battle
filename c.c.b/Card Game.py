@@ -603,6 +603,10 @@ def restart_game():
             game = new_game_with_mode(DECK_MODE)
             try:
                 ai_player = build_ai_player(DECK_MODE)
+                try:
+                    _init_ai_start_hand(ai_player, 4, game)
+                except Exception:
+                    pass
             except Exception:
                 ai_player = None
         else:
@@ -617,6 +621,10 @@ def restart_game():
                     game = new_game_with_mode(DECK_MODE)
                     try:
                         ai_player = build_ai_player(DECK_MODE)
+                        try:
+                            _init_ai_start_hand(ai_player, 4, game)
+                        except Exception:
+                            pass
                     except Exception:
                         ai_player = None
             else:
@@ -624,6 +632,10 @@ def restart_game():
                 game = new_game_with_mode('fixed')
                 try:
                     ai_player = build_ai_player('fixed')
+                    try:
+                        _init_ai_start_hand(ai_player, 4, game)
+                    except Exception:
+                        pass
                 except Exception:
                     ai_player = None
     except Exception:
@@ -631,10 +643,18 @@ def restart_game():
         try:
             game = new_game_with_mode(DECK_MODE)
             ai_player = build_ai_player(DECK_MODE)
+            try:
+                _init_ai_start_hand(ai_player, 4, game)
+            except Exception:
+                pass
         except Exception:
             game = new_game_with_mode('fixed')
             try:
                 ai_player = build_ai_player('fixed')
+                try:
+                    _init_ai_start_hand(ai_player, 4, game)
+                except Exception:
+                    pass
             except Exception:
                 ai_player = None
     log_scroll_offset = 0
@@ -704,6 +724,54 @@ def _prepare_new_battle_after_deck_already_selected():
             game.log.append("=== ゲームを再開しました ===")
             game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
     except Exception:
+        pass
+
+def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) -> None:
+    """AIに開始時の初期手札n枚を配布する。
+
+    PlayerState互換オブジェクト（deck.draw, hand.add, hand_limit, graveyard, reset_pp）を想定。
+    ゲームログがあれば記録する。
+    """
+    try:
+        if ai is None:
+            return
+        # PPを最大へ
+        try:
+            if hasattr(ai, 'reset_pp'):
+                ai.reset_pp()
+        except Exception:
+            pass
+        # ドロー処理（手札上限に配慮）
+        for _ in range(max(0, int(n))):
+            try:
+                c = ai.deck.draw() if hasattr(ai, 'deck') else None
+            except Exception:
+                c = None
+            if c is None:
+                # 山札切れ
+                if game_obj and hasattr(game_obj, 'log'):
+                    game_obj.log.append("相手の山札が空のためドローできませんでした。")
+                continue
+            try:
+                limit = getattr(ai, 'hand_limit', 7)
+                hand_cards = getattr(getattr(ai, 'hand'), 'cards', [])
+                if len(hand_cards) >= limit:
+                    # 溢れたカードはAIの墓地へ
+                    if hasattr(ai, 'graveyard'):
+                        ai.graveyard.append(c)
+                    if game_obj and hasattr(game_obj, 'log'):
+                        game_obj.log.append(f"相手の手札上限{limit}のため『{getattr(c,'name','?')}』は相手の墓地へ。")
+                else:
+                    ai.hand.add(c)
+            except Exception:
+                try:
+                    ai.hand.add(c)
+                except Exception:
+                    pass
+        if game_obj and hasattr(game_obj, 'log'):
+            game_obj.log.append("相手はバトル開始時に手札を4枚引きました。")
+    except Exception:
+        # 失敗してもゲーム進行を止めない
         pass
 
 def create_pieces():
@@ -841,6 +909,11 @@ def show_start_screen():
                             else:
                                 globals()['game'] = new_game_with_mode(DECK_MODE)
                                 globals()['ai_player'] = build_ai_player(DECK_MODE)
+                                try:
+                                    # AIも開始時に4枚ドロー（プレイヤーと同様の初期手札）
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                                 try:
                                     gtmp = globals().get('game')
                                     print(f"DEBUG: global game set (start_screen) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
@@ -1766,6 +1839,10 @@ def show_custom_deck_selection(screen):
                             else:
                                 globals()['game'] = new_game_with_mode(DECK_MODE)
                                 globals()['ai_player'] = build_ai_player(DECK_MODE)
+                                try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                                 try:
                                     gtmp = globals().get('game')
                                     print(f"DEBUG: global game set (mouse_start) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
@@ -6377,6 +6454,47 @@ def main_loop():
                     globals()['simul_white_result'] = 'none'
                     globals()['simul_black_result'] = 'none'
 
+        # --- 早期強制チェックメイト判定（simul_check中でも適用） ---
+        if not game_over:
+            try:
+                white_in_check = is_in_check(chess.pieces, 'white')
+                white_has_moves = has_legal_moves_with_cards('white')
+                
+                # 白がチェック中かつ合法手なし = チェックメイト
+                if white_in_check and not white_has_moves:
+                    game.log.append('[強制判定] 白チェックメイト検出（合法手なし）')
+                    # 「負けるわけないだろwww」自動発動試行
+                    if game.check_no_lose_trigger('white'):
+                        game.log.append('[自動発動試行] チェックメイト直前: 条件OK')
+                        if game.trigger_no_lose('white'):
+                            game.log.append('[自動発動成功] 盤面リセット pending 設定')
+                            # board_reset に任せるため game_over にしない
+                        else:
+                            game_over = True
+                            game_over_winner = 'black'
+                            game.log.append('[自動発動失敗] カード消費失敗。YOU LOSE！黒の勝利！')
+                    else:
+                        # 条件不足の詳細をログ
+                        try:
+                            pp = getattr(game.player, 'pp_current', 'NA')
+                            has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                            has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                            game.log.append(f'[自動発動不可] 条件不足(pp={pp}, カード={has_card}, 摂取={has_leech})')
+                        except Exception:
+                            pass
+                        game_over = True
+                        game_over_winner = 'black'
+                        game.log.append('YOU LOSE！黒の勝利！（チェックメイト）')
+                    # 同時チェック状態をクリア
+                    if globals().get('simul_check_active', False):
+                        globals()['simul_check_active'] = False
+                        globals()['simul_white_deadline_turn'] = None
+                        globals()['simul_black_deadline_turn'] = None
+                        globals()['simul_white_result'] = 'none'
+                        globals()['simul_black_result'] = 'none'
+            except Exception as e:
+                game.log.append(f'[ERROR] 早期チェックメイト判定でエラー: {e}')
+
         # 新たに同時チェックに突入したか監視（カード使用や直前の手の結果で発生しうる）
         if not game_over:
             try:
@@ -6458,9 +6576,28 @@ def main_loop():
                             globals()['simul_white_result'] = 'none'
                             globals()['simul_black_result'] = 'none'
                     elif not white_king:
-                        game_over = True
-                        game_over_winner = 'black'
-                        game.log.append("YOU LOSE！黒の勝利！")
+                        # 黒勝利（白キング捕獲）直前に自動発動試行
+                        if game.check_no_lose_trigger('white'):
+                            game.log.append("[自動発動試行] 白キング捕獲による敗北前: 条件OK")
+                            if game.trigger_no_lose('white'):
+                                # pending(board_reset)に任せるので敗北フラグは立てない
+                                game.log.append("[自動発動成功] 『負けるわけないだろwww』による盤面リセットへ移行")
+                            else:
+                                game_over = True
+                                game_over_winner = 'black'
+                                game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
+                        else:
+                            # 発動条件NGの詳細を併せてログ
+                            try:
+                                pp = getattr(game.player, 'pp_current', 'NA')
+                                has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                                has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                                game.log.append(f"[自動発動不可] 条件不足(pp={pp}, noLose={has_card}, 摂取={has_leech})")
+                            except Exception:
+                                pass
+                            game_over = True
+                            game_over_winner = 'black'
+                            game.log.append("YOU LOSE！黒の勝利！")
                         # 同時チェック状態をクリア
                         if globals().get('simul_check_active', False):
                             globals()['simul_check_active'] = False
@@ -6493,8 +6630,54 @@ def main_loop():
                     simul_check_active=globals().get('simul_check_active', False)
                 )
                 if is_over:
-                    game_over = True
-                    game_over_winner = winner
+                    # 黒勝利直前で『負けるわけないだろwww』自動発動試行
+                    if winner == 'black':
+                        try:
+                            if game.check_no_lose_trigger('white'):
+                                game.log.append("[自動発動試行] チェックメイト/詰み敗北前: 条件OK")
+                                if game.trigger_no_lose('white'):
+                                    game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
+                                else:
+                                    game_over = True
+                                    game_over_winner = winner
+                                    game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
+                            else:
+                                # 条件不足詳細
+                                try:
+                                    pp = getattr(game.player, 'pp_current', 'NA')
+                                    has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                                    has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                                    game.log.append(f"[自動発動不可] 条件不足(pp={pp}, noLose={has_card}, 摂取={has_leech})")
+                                except Exception:
+                                    pass
+                                game_over = True
+                                game_over_winner = winner
+                        except Exception:
+                            # 例外時は安全側で従来通り終了
+                            game_over = True
+                            game_over_winner = winner
+                    elif winner == 'draw':
+                        # 白側が全く合法手を持たないステイルメイト（全駒操作不能）時に救済発動を試行
+                        try:
+                            white_stalemate = (not has_legal_moves_with_cards('white') and not is_in_check(chess.pieces, 'white'))
+                        except Exception:
+                            white_stalemate = False
+                        if white_stalemate and game.check_no_lose_trigger('white'):
+                            game.log.append("[自動発動試行] ステイルメイト（全駒操作不能）直前: 条件OK")
+                            if game.trigger_no_lose('white'):
+                                game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
+                                # board_reset に任せるため game_over にしない
+                            else:
+                                game.log.append("[自動発動失敗] カード消費処理失敗。引き分けで終了。")
+                                game_over = True
+                                game_over_winner = winner
+                        else:
+                            # 条件満たさず通常通り引き分け終了
+                            game_over = True
+                            game_over_winner = winner
+                    else:
+                        game_over = True
+                        game_over_winner = winner
             except Exception:
                 # chess_rulesモジュールが利用できない場合、従来のロジックを実行
                 if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
@@ -6671,6 +6854,12 @@ def main_loop():
                     
                     game.log.append("★★★ 盤面が初期状態にリセットされました！ ★★★")
                     game.log.append("ゲームを続行します。")
+                    # 敗北フラグを解除（自動/手動発動どちらでも蘇生扱い）
+                    try:
+                        game_over = False
+                        game_over_winner = None
+                    except Exception:
+                        pass
                     
                 except Exception as e:
                     game.log.append(f"盤面リセット中にエラーが発生しました: {e}")

@@ -4249,18 +4249,26 @@ def draw_panel():
                         game.log.append(f"[DEBUG] 自動発動不可: color={color}, PP={pp}, 手札={hand_names}")
                     except Exception:
                         game.log.append(f"[DEBUG] 自動発動不可: color={color} 詳細取得に失敗")
+                
+                auto_triggered = False
                 if can_auto and hasattr(game, 'auto_trigger_no_lose'):
                     if game.auto_trigger_no_lose(color):
                         who = '白' if color == 'white' else '黒'
                         game.log.append(f"{who}は『負けるわけないだろwww』を自動発動。PP3と『摂取』を消費し、盤面のみ初期化します。")
                         # 自動発動成功時はゲームオーバーにせず、次の描画サイクルでpending処理に委ねる
-                        continue
+                        auto_triggered = True
                     else:
                         game.log.append("[DEBUG] auto_trigger_no_lose が False を返しました")
-                # 自動発動不可/失敗時は通常の敗北
-                game_over = True
-                game_over_winner = 'black' if color == 'white' else 'white'
-                # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）
+                
+                # 自動発動に成功しなかった場合のみゲームオーバー
+                if not auto_triggered:
+                    game_over = True
+                    game_over_winner = 'black' if color == 'white' else 'white'
+                    who = '白' if color == 'white' else '黒'
+                    result_msg = "YOU LOSE！黒の勝利！" if color == 'white' else "YOU WIN！白の勝利！"
+                    game.log.append(f"{who}はチェックメイト！{result_msg}")
+                    # チェックメイト判定は一度だけ行う
+                    break
 
         if check_colors:
             # チェック状態の変化を追跡
@@ -6965,6 +6973,14 @@ def main_loop():
             # 盤面リセット（「負けるわけないだろwww」カード）
             elif game.pending.kind == 'board_reset':
                 try:
+                    # --- DEBUG before snapshot ---
+                    try:
+                        player_hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
+                        ai_hand_names = [c.name for c in getattr(getattr(game, 'ai_player', None).hand, 'cards', [])] if getattr(game, 'ai_player', None) else []
+                        game.log.append(f"[DEBUG board_reset before] player_hand={player_hand_names} ai_hand={ai_hand_names} player_deck={len(getattr(game.player.deck,'cards',[]))} ai_deck={len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'}")
+                        game.log.append(f"[DEBUG board_reset before] iron_wall: player={getattr(game.player,'iron_wall_active',False)} ai={getattr(game,'ai_iron_wall_active',False)}")
+                    except Exception:
+                        game.log.append("[DEBUG board_reset before] snapshot failed")
                     # 盤面を初期状態にリセット
                     chess.pieces[:] = chess.create_pieces()
                     chess.en_passant_target = None
@@ -7000,6 +7016,20 @@ def main_loop():
                         game_over_winner = None
                     except Exception:
                         pass
+                    # no_lose二重発動防止フラグをクリア
+                    try:
+                        if hasattr(game, 'no_lose_triggered'):
+                            game.no_lose_triggered = False
+                    except Exception:
+                        pass
+                    # --- DEBUG after snapshot ---
+                    try:
+                        player_hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
+                        ai_hand_names = [c.name for c in getattr(getattr(game, 'ai_player', None).hand, 'cards', [])] if getattr(game, 'ai_player', None) else []
+                        game.log.append(f"[DEBUG board_reset after] player_hand={player_hand_names} ai_hand={ai_hand_names} player_deck={len(getattr(game.player.deck,'cards',[]))} ai_deck={len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'}")
+                        game.log.append(f"[DEBUG board_reset after] iron_wall: player={getattr(game.player,'iron_wall_active',False)} ai={getattr(game,'ai_iron_wall_active',False)}")
+                    except Exception:
+                        game.log.append("[DEBUG board_reset after] snapshot failed")
                     
                 except Exception as e:
                     game.log.append(f"盤面リセット中にエラーが発生しました: {e}")

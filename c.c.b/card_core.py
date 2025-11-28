@@ -986,6 +986,17 @@ class Game:
         if player_color != 'white':
             return False
         try:
+            # 二重発動ガード（同一フレーム/同一ターン内の重複発行を防止）
+            try:
+                if getattr(self, 'no_lose_triggered', False):
+                    self.log.append("[自動発動] 既に『負けるわけないだろwww』処理中。重複を防止します。")
+                    return True
+                if self.pending is not None and getattr(self.pending, 'kind', None) == 'board_reset':
+                    self.log.append("[自動発動] board_resetが既に保留中。重複を防止します。")
+                    setattr(self, 'no_lose_triggered', True)
+                    return True
+            except Exception:
+                pass
             # 条件確認
             if self.player.pp_current < 3:
                 return False
@@ -1022,6 +1033,10 @@ class Game:
                 kind="board_reset",
                 info={"source": "auto_no_lose"}
             )
+            try:
+                setattr(self, 'no_lose_triggered', True)
+            except Exception:
+                pass
             self.log.append("★★★ 『負けるわけないだろwww』自動発動！ ★★★")
             self.log.append("盤面を最初の状態にリセットします！")
             return True
@@ -1044,6 +1059,17 @@ class Game:
             target_player = self.player
         else:
             return False
+        # 二重発動ガード（同一フレーム/同一ターン内）
+        try:
+            if getattr(self, 'no_lose_triggered', False):
+                self.log.append("[発動] 既に『負けるわけないだろwww』処理中。重複を防止します。")
+                return True
+            if self.pending is not None and getattr(self.pending, 'kind', None) == 'board_reset':
+                self.log.append("[発動] board_resetが既に保留中。重複を防止します。")
+                setattr(self, 'no_lose_triggered', True)
+                return True
+        except Exception:
+            pass
         
         # カードを手札から探す（両方必要）
         no_lose_idx = None
@@ -1096,6 +1122,10 @@ class Game:
             from dataclasses import is_dataclass
             if hasattr(self, 'pending'):
                 self.pending = PendingAction(kind='board_reset', info={'source': 'no_lose'})
+                try:
+                    setattr(self, 'no_lose_triggered', True)
+                except Exception:
+                    pass
         except Exception:
             pass
         
@@ -1487,7 +1517,7 @@ def make_rule_cards_deck() -> Deck:
         Card("摂取", 1, eff_leech_pp2),
         # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
         # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        Card("負けるわけないだろwww", 3, eff_no_lose, precheck_no_lose),
+        Card("負けるわけないだろwww", 4, eff_no_lose, precheck_no_lose),
         Card("鉄壁", 2, eff_iron_wall),
         # Card("ハンです☆", 2, eff_hand_discard),
     ]

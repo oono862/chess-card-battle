@@ -93,6 +93,7 @@ try:
     from ui.layout import draw_text, wrap_text, compute_layout, BASE_UI_W, BASE_UI_H
     from ui import card_renderer
     from ui import overlay
+    from ui.panel_renderer import draw_background
 except Exception:
     logger.exception("Failed to import ui modules")
     BASE_UI_W, BASE_UI_H = 1200, 800
@@ -122,6 +123,9 @@ except Exception:
     def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0): pass
     def wrap_text(text: str, max_width: int): return [text]
     def compute_layout(win_w: int, win_h: int): return {}
+    def draw_background(screen, W, H, IMG_DIR, PLAY_BG_FILENAME, play_bg_img, play_bg_surf):
+        screen.fill((240, 240, 245))
+        return play_bg_img, play_bg_surf
     # フォールバックのoverlay関数を定義
     class _FallbackOverlay:
         def handle_scrollbar_drag_start(self, pos, show_log, scrollbar_rect, log_scroll_offset): return False
@@ -226,11 +230,31 @@ except Exception:
     _handle_keydown_impl = None
 # モーダルダイアログをインポート
 try:
-    from ui.modals.screen_modals import show_start_screen as _show_start_screen_impl, show_settings_screen as _show_settings_screen_impl
+    from ui.modals import (
+        show_deck_choice_modal as _show_deck_choice_modal_impl,
+        show_deck_modal as _show_deck_modal_impl,
+        show_deck_editor as _show_deck_editor_impl,
+        show_deck_options as _show_deck_options_impl,
+        show_deck_battle_confirm as _show_deck_battle_confirm_impl,
+        show_deck_action_modal as _show_deck_action_modal_impl,
+        show_deck_contents_overlay as _show_deck_contents_overlay_impl,
+        show_start_screen as _show_start_screen_impl,
+        show_settings_screen as _show_settings_screen_impl
+    )
+    # custom_deck_selectionはdeck_modalsに含まれていないため個別処理
+    _modals_available = True
 except Exception:
-    logger.exception("Failed to import ui.modals.screen_modals module")
+    logger.exception("Failed to import ui.modals module")
+    _show_deck_choice_modal_impl = None
+    _show_deck_modal_impl = None
+    _show_deck_editor_impl = None
+    _show_deck_options_impl = None
+    _show_deck_battle_confirm_impl = None
+    _show_deck_action_modal_impl = None
+    _show_deck_contents_overlay_impl = None
     _show_start_screen_impl = None
     _show_settings_screen_impl = None
+    _modals_available = False
 # チェス盤描画をインポート
 try:
     from ui.board_renderer import (draw_chessboard, draw_pieces, draw_card_effects, draw_gif_animations, draw_turn_telop, draw_notice_message, draw_highlights, draw_check_indicator)
@@ -427,7 +451,11 @@ def new_game_with_mode(mode: str):
 
 def show_deck_choice_modal(screen):
     """Show a modal letting the user pick between fixed deck and created deck.
-
+    
+    NOTE: このファイル内の実装は、ui.modals.deck_modals に完全版が存在します。
+    TODO: 将来的には ui.modals.show_deck_choice_modal を直接使用するように
+          シグネチャを統一し、このファイルの実装を削除する。
+    
     Sets global `DECK_MODE` to 'fixed' or 'custom'. If user selects the
     created deck option, opens the deck list modal for inspection.
     """
@@ -3529,32 +3557,7 @@ def draw_panel():
     global game_over, game_over_winner
     # 背景画像があればそれを描画し、なければ従来の塗りつぶしを行う
     global log_toggle_rect, play_bg_img, play_bg_surf
-    try:
-        # 初回: 画像ファイルがあればロードしてキャッシュ
-        if play_bg_img is None and play_bg_surf is None:
-            try:
-                bg_path = os.path.join(IMG_DIR, PLAY_BG_FILENAME)
-                if os.path.exists(bg_path):
-                    play_bg_img = pygame.image.load(bg_path)
-            except Exception:
-                play_bg_img = None
-
-        # play_bg_img が存在すれば現在のウィンドウサイズに合わせてスケールして描画
-        if play_bg_img is not None:
-            try:
-                play_bg_surf = pygame.transform.smoothscale(play_bg_img, (W, H)).convert()
-                screen.blit(play_bg_surf, (0, 0))
-            except Exception:
-                # スケーリングや描画に失敗した場合は単色で塗りつぶす
-                screen.fill((240, 240, 245))
-        else:
-            screen.fill((240, 240, 245))
-    except Exception:
-        # どこかで例外が出ても UI が壊れないようにフォールバック
-        try:
-            screen.fill((240, 240, 245))
-        except Exception:
-            pass
+    play_bg_img, play_bg_surf = draw_background(screen, W, H, IMG_DIR, PLAY_BG_FILENAME, play_bg_img, play_bg_surf)
 
     # レイアウト設定: 左側基本情報、右側チェス盤
     layout = compute_layout(W, H)

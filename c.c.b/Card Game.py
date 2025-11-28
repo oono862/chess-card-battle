@@ -4,15 +4,20 @@ from pygame import Rect
 import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
+from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# 親ディレクトリのcard_coreモジュールをインポート
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
+local_dir = os.path.dirname(os.path.abspath(__file__))
+if local_dir not in sys.path:
+    sys.path.insert(0, local_dir)
+# 互換目的で親ディレクトリもパスに加えるが、優先度は下げる
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+    sys.path.append(parent_dir)
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
 except Exception:
     logger.exception("Failed to import card_core module")
     raise
@@ -334,6 +339,35 @@ DECK_MODE = 'fixed'
 
 # set_bgm_modeはaudio/bgm_manager.pyに移行済みのため削除しました
 
+def _generate_random_gimmick_cards(count: int = 4) -> List[Card]:
+    """ゲーム開始時にプレイヤーとAIに配布するギミックカードをランダムに生成する。
+    
+    Args:
+        count: 生成するギミックカードの枚数（デフォルト4枚）
+    
+    Returns:
+        Card オブジェクトのリスト
+    """
+    try:
+        # card_core.py の make_rule_cards_deck に定義されているギミックカード8種類
+        gimmick_pool = [
+            Card("灼熱", 2, eff_heat_block_tile),
+            Card("氷結", 2, eff_freeze_piece),
+            Card("暴風", 3, eff_storm_jump_once),
+            Card("迅雷", 3, eff_lightning_two_actions),
+            Card("2ドロー", 1, eff_draw2),
+            Card("錬成", 0, eff_alchemy),
+            Card("墓地ルーレット", 1, eff_graveyard_roulette),
+            Card("摂取", 1, eff_leech_pp2),
+        ]
+        # ランダムに count 枚選択（重複あり）
+        import random
+        selected = random.choices(gimmick_pool, k=count)
+        return selected
+    except Exception:
+        # エラー時は空リストを返す（ゲーム進行を止めない）
+        return []
+
 def new_game_with_mode(mode: str):
     """Create a new Game with player's deck and return the Game object.
 
@@ -348,10 +382,34 @@ def new_game_with_mode(mode: str):
         deck.shuffle()
         player = PlayerState(deck=deck)
         game = Game(player=player)
+        # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
-            game.setup_battle()
+            player.reset_pp()
+            game.log.append("バトル開始: PPを最大まで回復しました。")
         except Exception:
             pass
+        
+        # 固定デッキの総枚数(24)を維持するため、ギミック配布分としてデッキから4枚取り除く
+        try:
+            if hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
+                for _ in range(4):
+                    if player.deck.cards:
+                        # 先頭から取り除く（従来のドロー相当）
+                        player.deck.cards.pop(0)
+        except Exception:
+            pass
+
+        # ゲーム開始時にプレイヤーにギミックカード4枚のみを配布
+        try:
+            gimmick_cards = _generate_random_gimmick_cards(4)
+            for gc in gimmick_cards:
+                if gc is not None:
+                    player.hand.add(gc)
+            if gimmick_cards and hasattr(game, 'log'):
+                game.log.append("バトル開始: ギミックカード4枚を受け取りました。")
+        except Exception:
+            pass
+        
         # Register GIF animation hook
         try:
             if _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
@@ -603,6 +661,10 @@ def restart_game():
             game = new_game_with_mode(DECK_MODE)
             try:
                 ai_player = build_ai_player(DECK_MODE)
+                try:
+                    _init_ai_start_hand(ai_player, 4, game)
+                except Exception:
+                    pass
             except Exception:
                 ai_player = None
         else:
@@ -617,6 +679,10 @@ def restart_game():
                     game = new_game_with_mode(DECK_MODE)
                     try:
                         ai_player = build_ai_player(DECK_MODE)
+                        try:
+                            _init_ai_start_hand(ai_player, 4, game)
+                        except Exception:
+                            pass
                     except Exception:
                         ai_player = None
             else:
@@ -624,6 +690,10 @@ def restart_game():
                 game = new_game_with_mode('fixed')
                 try:
                     ai_player = build_ai_player('fixed')
+                    try:
+                        _init_ai_start_hand(ai_player, 4, game)
+                    except Exception:
+                        pass
                 except Exception:
                     ai_player = None
     except Exception:
@@ -631,10 +701,18 @@ def restart_game():
         try:
             game = new_game_with_mode(DECK_MODE)
             ai_player = build_ai_player(DECK_MODE)
+            try:
+                _init_ai_start_hand(ai_player, 4, game)
+            except Exception:
+                pass
         except Exception:
             game = new_game_with_mode('fixed')
             try:
                 ai_player = build_ai_player('fixed')
+                try:
+                    _init_ai_start_hand(ai_player, 4, game)
+                except Exception:
+                    pass
             except Exception:
                 ai_player = None
     log_scroll_offset = 0
@@ -704,6 +782,46 @@ def _prepare_new_battle_after_deck_already_selected():
             game.log.append("=== ゲームを再開しました ===")
             game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
     except Exception:
+        pass
+
+def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) -> None:
+    """AIに開始時の初期手札としてギミックカード4枚を配布する。
+
+    PlayerState互換オブジェクト（deck.draw, hand.add, hand_limit, graveyard, reset_pp）を想定。
+    ゲームログがあれば記録する。
+    注: nパラメータは互換性のために残していますが、現在は使用されません。
+    """
+    try:
+        if ai is None:
+            return
+        # PPを最大へ
+        try:
+            if hasattr(ai, 'reset_pp'):
+                ai.reset_pp()
+        except Exception:
+            pass
+        
+        # 固定デッキの総枚数(24)を維持するため、ギミック配布分としてAIのデッキから4枚取り除く
+        try:
+            if hasattr(ai, 'deck') and hasattr(ai.deck, 'cards'):
+                for _ in range(4):
+                    if ai.deck.cards:
+                        ai.deck.cards.pop(0)
+        except Exception:
+            pass
+
+        # 通常カードのドローは行わず、ギミックカード4枚のみを配布
+        try:
+            gimmick_cards = _generate_random_gimmick_cards(4)
+            for gc in gimmick_cards:
+                if gc is not None:
+                    ai.hand.add(gc)
+            if gimmick_cards and game_obj and hasattr(game_obj, 'log'):
+                game_obj.log.append("相手はバトル開始時にギミックカード4枚を受け取りました。")
+        except Exception:
+            pass
+    except Exception:
+        # 失敗してもゲーム進行を止めない
         pass
 
 def create_pieces():
@@ -802,6 +920,10 @@ def show_start_screen():
                         else:
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
+                            try:
+                                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     return
@@ -841,6 +963,11 @@ def show_start_screen():
                             else:
                                 globals()['game'] = new_game_with_mode(DECK_MODE)
                                 globals()['ai_player'] = build_ai_player(DECK_MODE)
+                                try:
+                                    # AIも開始時に4枚ドロー（プレイヤーと同様の初期手札）
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                                 try:
                                     gtmp = globals().get('game')
                                     print(f"DEBUG: global game set (start_screen) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
@@ -1073,6 +1200,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 else:
                                     globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
+                                try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                                 # debug: print resulting deck composition if possible
                                 try:
                                     g = globals().get('game')
@@ -1087,6 +1218,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
+                                try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                             # cleanly exit; outer finally will clear in-progress flag
                             return True
                         continue
@@ -1767,6 +1902,10 @@ def show_custom_deck_selection(screen):
                                 globals()['game'] = new_game_with_mode(DECK_MODE)
                                 globals()['ai_player'] = build_ai_player(DECK_MODE)
                                 try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
+                                try:
                                     gtmp = globals().get('game')
                                     print(f"DEBUG: global game set (mouse_start) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
                                 except Exception:
@@ -1783,6 +1922,10 @@ def show_custom_deck_selection(screen):
                             print(f"DEBUG: exception when creating game from names: {e}")
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
+                            try:
+                                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                            except Exception:
+                                pass
                         return
 
         # draw overlay and modal
@@ -3327,6 +3470,28 @@ def ai_make_move():
     p, mv = sel
     apply_move(p, mv[0], mv[1])
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
+    
+    # AI自動昇格処理: 昇格が保留中の場合、自動的にクイーンに昇格させる
+    if chess.promotion_pending is not None:
+        try:
+            promoted_piece = chess.promotion_pending.get('piece')
+            piece_color = chess.promotion_pending.get('color')
+            if promoted_piece is not None and piece_color == 'black':
+                # AIは基本的にクイーンに昇格（難易度によって選択を変えることも可能）
+                promotion_choice = 'Q'
+                if CPU_DIFFICULTY >= 3:
+                    # 高難易度では状況に応じて最適な駒を選択
+                    # 簡易判定: ナイトが有効な場合もあるが、通常はクイーンが最善
+                    promotion_choice = 'Q'
+                
+                promoted_piece.name = promotion_choice
+                game.log.append(f"AI: ポーンを{promotion_choice}に昇格させました。")
+                chess.promotion_pending = None
+        except Exception as e:
+            # エラーが発生した場合でもpendingをクリア
+            chess.promotion_pending = None
+            game.log.append(f"AI昇格処理エラー: {e}")
+    
     # consume AI jump flag or extra moves
     try:
         # Prefer game-level flag if present (set by card_core), fallback to module-level
@@ -4068,9 +4233,31 @@ def draw_panel():
         if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
 
-        # チェック中かつ合法手なし（詰み）ならゲーム終了処理
+        # チェック中かつ合法手なし（詰み）なら敗北処理（『負けるわけないだろwww』自動発動を優先）
         for color in check_colors:
             if not has_legal_moves_with_cards(color):
+                # 自動発動の条件を満たす場合は先に試行
+                can_auto_no_lose_exists = hasattr(game, 'can_auto_no_lose')
+                if not can_auto_no_lose_exists:
+                    game.log.append("[DEBUG] can_auto_no_lose が未定義です")
+                can_auto = can_auto_no_lose_exists and game.can_auto_no_lose(color)
+                if not can_auto:
+                    # 失敗理由の詳細を記録（手札・PPの状況を抜粋）
+                    try:
+                        pp = getattr(game.player, 'pp_current', None)
+                        hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color}, PP={pp}, 手札={hand_names}")
+                    except Exception:
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color} 詳細取得に失敗")
+                if can_auto and hasattr(game, 'auto_trigger_no_lose'):
+                    if game.auto_trigger_no_lose(color):
+                        who = '白' if color == 'white' else '黒'
+                        game.log.append(f"{who}は『負けるわけないだろwww』を自動発動。PP3と『摂取』を消費し、盤面のみ初期化します。")
+                        # 自動発動成功時はゲームオーバーにせず、次の描画サイクルでpending処理に委ねる
+                        continue
+                    else:
+                        game.log.append("[DEBUG] auto_trigger_no_lose が False を返しました")
+                # 自動発動不可/失敗時は通常の敗北
                 game_over = True
                 game_over_winner = 'black' if color == 'white' else 'white'
                 # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）
@@ -4687,65 +4874,71 @@ def draw_panel():
             screen.blit(yes_s, (confirm_yes_rect.centerx - yes_s.get_width()//2, confirm_yes_rect.centery - yes_s.get_height()//2))
             screen.blit(no_s, (confirm_no_rect.centerx - no_s.get_width()//2, confirm_no_rect.centery - no_s.get_height()//2))
 
-    # プロモーション選択オーバーレイ (Q/R/B/N)
+    # プロモーション選択オーバーレイ (Q/R/B/N) - プレイヤー（白）の駒のみ
     if chess.promotion_pending is not None:
         promot = chess.promotion_pending
-        opts = ['Q','R','B','N']
-        # サイズ・配置
-        box_w = 460
-        box_h = 160
-        # Prefer positioning the promotion box so it stays within the chessboard area.
-        # If possible, center the box over the promotion square; otherwise clamp to board bounds.
-        try:
-            piece = promot.get('piece')
-            # tile origin (top-left) for the piece's square
-            pr = getattr(piece, 'row', None)
-            pc = getattr(piece, 'col', None)
-            tile_x = board_left + (pc * (board_size // 8)) if pc is not None else None
-            tile_y = board_top + (pr * (board_size // 8)) if pr is not None else None
-        except Exception:
-            tile_x = None
-            tile_y = None
+        promo_color = promot.get('color', None)
+        
+        # AIの駒（黒）の昇格は自動処理されるべきなので、UIは表示しない
+        if promo_color == 'white':
+            opts = ['Q','R','B','N']
+            # サイズ・配置
+            box_w = 460
+            box_h = 160
+            # Prefer positioning the promotion box so it stays within the chessboard area.
+            # If possible, center the box over the promotion square; otherwise clamp to board bounds.
+            try:
+                piece = promot.get('piece')
+                # tile origin (top-left) for the piece's square
+                pr = getattr(piece, 'row', None)
+                pc = getattr(piece, 'col', None)
+                tile_x = board_left + (pc * (board_size // 8)) if pc is not None else None
+                tile_y = board_top + (pr * (board_size // 8)) if pr is not None else None
+            except Exception:
+                tile_x = None
+                tile_y = None
 
-        # center promotion box within the chessboard area
-        try:
-            box_x = board_left + (board_size - box_w) // 2
-            box_y = board_top + (board_size - box_h) // 2
-        except Exception:
-            # fallback to screen center if board metrics aren't available
-            box_x = (W - box_w)//2
-            box_y = (H - box_h)//2
-        pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
-        pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
-        # ヘッダ
-        header_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
-        hdr = header_font.render("昇格する駒を選択", True, (40,40,40))
-        screen.blit(hdr, (box_x + (box_w - hdr.get_width())//2, box_y + 8))
+            # center promotion box within the chessboard area
+            try:
+                box_x = board_left + (board_size - box_w) // 2
+                box_y = board_top + (board_size - box_h) // 2
+            except Exception:
+                # fallback to screen center if board metrics aren't available
+                box_x = (W - box_w)//2
+                box_y = (H - box_h)//2
+            pygame.draw.rect(screen, (245,245,245), (box_x, box_y, box_w, box_h))
+            pygame.draw.rect(screen, (80,80,80), (box_x, box_y, box_w, box_h), 2)
+            # ヘッダ
+            header_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+            hdr = header_font.render("昇格する駒を選択", True, (40,40,40))
+            screen.blit(hdr, (box_x + (box_w - hdr.get_width())//2, box_y + 8))
 
-        # 選択肢を横並びに描画（駒画像を使う）
-        opt_w = 96
-        spacing = (box_w - 24 - len(opts)*opt_w) // (len(opts)-1)
-        ox = box_x + 12
-        oy = box_y + 48
-        promo_rects = []
-        for i,o in enumerate(opts):
-            r = pygame.Rect(ox + i*(opt_w+spacing), oy, opt_w, opt_w)
-            pygame.draw.rect(screen, (230,230,230), r)
-            pygame.draw.rect(screen, (120,120,120), r, 2)
-            # piece image for promot['color']
-            img = get_piece_image_surface(o, promot['color'], (opt_w-8, opt_w-8))
-            if img is not None:
-                screen.blit(img, (r.x + 4, r.y + 4))
-            else:
-                lab = FONT.render(o, True, (0,0,0))
-                screen.blit(lab, (r.x + (r.w - lab.get_width())//2, r.y + (r.h - lab.get_height())//2))
-            promo_rects.append((r, o))
-        draw_panel.promo_rects = promo_rects
+            # 選択肢を横並びに描画（駒画像を使う）
+            opt_w = 96
+            spacing = (box_w - 24 - len(opts)*opt_w) // (len(opts)-1)
+            ox = box_x + 12
+            oy = box_y + 48
+            promo_rects = []
+            for i,o in enumerate(opts):
+                r = pygame.Rect(ox + i*(opt_w+spacing), oy, opt_w, opt_w)
+                pygame.draw.rect(screen, (230,230,230), r)
+                pygame.draw.rect(screen, (120,120,120), r, 2)
+                # piece image for promot['color']
+                img = get_piece_image_surface(o, promot['color'], (opt_w-8, opt_w-8))
+                if img is not None:
+                    screen.blit(img, (r.x + 4, r.y + 4))
+                else:
+                    lab = FONT.render(o, True, (0,0,0))
+                    screen.blit(lab, (r.x + (r.w - lab.get_width())//2, r.y + (r.h - lab.get_height())//2))
+                promo_rects.append((r, o))
+            draw_panel.promo_rects = promo_rects
 
     # AI 思考中オーバーレイ
     try:
-        # Do not show AI thinking overlay while a promotion selection is pending.
-        if cpu_wait and THINKING_ENABLED and not game_over and getattr(chess, 'promotion_pending', None) is None:
+        # Do not show AI thinking overlay while a player (white) promotion selection is pending.
+        promotion_obj = getattr(chess, 'promotion_pending', None)
+        player_promotion_pending = promotion_obj is not None and promotion_obj.get('color') == 'white'
+        if cpu_wait and THINKING_ENABLED and not game_over and not player_promotion_pending:
             import time
             # Restrict overlay to the board area so it stays within the chessboard
             bs = board_size
@@ -6030,15 +6223,39 @@ def handle_mouse_click(pos):
                                     highlight_squares = []
                                 else:
                                     # 発動失敗（通常通り負け）
-                                    game_over = True
-                                    game_over_winner = 'black'
-                                    game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
-                                    game.log.append("YOU LOSE！黒の勝利！")
+                                    # 手札発動が不可設定の場合、自動発動を試行
+                                    if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                        if game.auto_trigger_no_lose('white'):
+                                            # pending処理により盤面リセット・続行
+                                            selected_piece = None
+                                            highlight_squares = []
+                                            # ゲームオーバーにはしない
+                                        else:
+                                            game_over = True
+                                            game_over_winner = 'black'
+                                            game.log.append("「負けるわけないだろwww」の自動発動に失敗しました。")
+                                            game.log.append("YOU LOSE！黒の勝利！")
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
+                                        game.log.append("YOU LOSE！黒の勝利！")
                             else:
                                 # 発動条件を満たしていない（通常通り負け）
-                                game_over = True
-                                game_over_winner = 'black'
-                                game.log.append("YOU LOSE！黒の勝利！")
+                                # 自動発動の緩和条件で救済できるか試行
+                                if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                    if game.auto_trigger_no_lose('white'):
+                                        selected_piece = None
+                                        highlight_squares = []
+                                        # 続行（ゲームオーバーにしない）
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("YOU LOSE！黒の勝利！")
+                                else:
+                                    game_over = True
+                                    game_over_winner = 'black'
+                                    game.log.append("YOU LOSE！黒の勝利！")
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'
@@ -6377,6 +6594,47 @@ def main_loop():
                     globals()['simul_white_result'] = 'none'
                     globals()['simul_black_result'] = 'none'
 
+        # --- 早期強制チェックメイト判定（simul_check中でも適用） ---
+        if not game_over:
+            try:
+                white_in_check = is_in_check(chess.pieces, 'white')
+                white_has_moves = has_legal_moves_with_cards('white')
+                
+                # 白がチェック中かつ合法手なし = チェックメイト
+                if white_in_check and not white_has_moves:
+                    game.log.append('[強制判定] 白チェックメイト検出（合法手なし）')
+                    # 「負けるわけないだろwww」自動発動試行
+                    if game.check_no_lose_trigger('white'):
+                        game.log.append('[自動発動試行] チェックメイト直前: 条件OK')
+                        if game.trigger_no_lose('white'):
+                            game.log.append('[自動発動成功] 盤面リセット pending 設定')
+                            # board_reset に任せるため game_over にしない
+                        else:
+                            game_over = True
+                            game_over_winner = 'black'
+                            game.log.append('[自動発動失敗] カード消費失敗。YOU LOSE！黒の勝利！')
+                    else:
+                        # 条件不足の詳細をログ
+                        try:
+                            pp = getattr(game.player, 'pp_current', 'NA')
+                            has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                            has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                            game.log.append(f'[自動発動不可] 条件不足(pp={pp}, カード={has_card}, 摂取={has_leech})')
+                        except Exception:
+                            pass
+                        game_over = True
+                        game_over_winner = 'black'
+                        game.log.append('YOU LOSE！黒の勝利！（チェックメイト）')
+                    # 同時チェック状態をクリア
+                    if globals().get('simul_check_active', False):
+                        globals()['simul_check_active'] = False
+                        globals()['simul_white_deadline_turn'] = None
+                        globals()['simul_black_deadline_turn'] = None
+                        globals()['simul_white_result'] = 'none'
+                        globals()['simul_black_result'] = 'none'
+            except Exception as e:
+                game.log.append(f'[ERROR] 早期チェックメイト判定でエラー: {e}')
+
         # 新たに同時チェックに突入したか監視（カード使用や直前の手の結果で発生しうる）
         if not game_over:
             try:
@@ -6458,9 +6716,28 @@ def main_loop():
                             globals()['simul_white_result'] = 'none'
                             globals()['simul_black_result'] = 'none'
                     elif not white_king:
-                        game_over = True
-                        game_over_winner = 'black'
-                        game.log.append("YOU LOSE！黒の勝利！")
+                        # 黒勝利（白キング捕獲）直前に自動発動試行
+                        if game.check_no_lose_trigger('white'):
+                            game.log.append("[自動発動試行] 白キング捕獲による敗北前: 条件OK")
+                            if game.trigger_no_lose('white'):
+                                # pending(board_reset)に任せるので敗北フラグは立てない
+                                game.log.append("[自動発動成功] 『負けるわけないだろwww』による盤面リセットへ移行")
+                            else:
+                                game_over = True
+                                game_over_winner = 'black'
+                                game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
+                        else:
+                            # 発動条件NGの詳細を併せてログ
+                            try:
+                                pp = getattr(game.player, 'pp_current', 'NA')
+                                has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                                has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                                game.log.append(f"[自動発動不可] 条件不足(pp={pp}, noLose={has_card}, 摂取={has_leech})")
+                            except Exception:
+                                pass
+                            game_over = True
+                            game_over_winner = 'black'
+                            game.log.append("YOU LOSE！黒の勝利！")
                         # 同時チェック状態をクリア
                         if globals().get('simul_check_active', False):
                             globals()['simul_check_active'] = False
@@ -6493,8 +6770,54 @@ def main_loop():
                     simul_check_active=globals().get('simul_check_active', False)
                 )
                 if is_over:
-                    game_over = True
-                    game_over_winner = winner
+                    # 黒勝利直前で『負けるわけないだろwww』自動発動試行
+                    if winner == 'black':
+                        try:
+                            if game.check_no_lose_trigger('white'):
+                                game.log.append("[自動発動試行] チェックメイト/詰み敗北前: 条件OK")
+                                if game.trigger_no_lose('white'):
+                                    game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
+                                else:
+                                    game_over = True
+                                    game_over_winner = winner
+                                    game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
+                            else:
+                                # 条件不足詳細
+                                try:
+                                    pp = getattr(game.player, 'pp_current', 'NA')
+                                    has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
+                                    has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
+                                    game.log.append(f"[自動発動不可] 条件不足(pp={pp}, noLose={has_card}, 摂取={has_leech})")
+                                except Exception:
+                                    pass
+                                game_over = True
+                                game_over_winner = winner
+                        except Exception:
+                            # 例外時は安全側で従来通り終了
+                            game_over = True
+                            game_over_winner = winner
+                    elif winner == 'draw':
+                        # 白側が全く合法手を持たないステイルメイト（全駒操作不能）時に救済発動を試行
+                        try:
+                            white_stalemate = (not has_legal_moves_with_cards('white') and not is_in_check(chess.pieces, 'white'))
+                        except Exception:
+                            white_stalemate = False
+                        if white_stalemate and game.check_no_lose_trigger('white'):
+                            game.log.append("[自動発動試行] ステイルメイト（全駒操作不能）直前: 条件OK")
+                            if game.trigger_no_lose('white'):
+                                game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
+                                # board_reset に任せるため game_over にしない
+                            else:
+                                game.log.append("[自動発動失敗] カード消費処理失敗。引き分けで終了。")
+                                game_over = True
+                                game_over_winner = winner
+                        else:
+                            # 条件満たさず通常通り引き分け終了
+                            game_over = True
+                            game_over_winner = winner
+                    else:
+                        game_over = True
+                        game_over_winner = winner
             except Exception:
                 # chess_rulesモジュールが利用できない場合、従来のロジックを実行
                 if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
@@ -6671,6 +6994,12 @@ def main_loop():
                     
                     game.log.append("★★★ 盤面が初期状態にリセットされました！ ★★★")
                     game.log.append("ゲームを続行します。")
+                    # 敗北フラグを解除（自動/手動発動どちらでも蘇生扱い）
+                    try:
+                        game_over = False
+                        game_over_winner = None
+                    except Exception:
+                        pass
                     
                 except Exception as e:
                     game.log.append(f"盤面リセット中にエラーが発生しました: {e}")
@@ -6685,12 +7014,25 @@ def main_loop():
         # Non-blocking AI wait handling (ゲーム終了時は無効化)
         if cpu_wait and THINKING_ENABLED and not game_over:
             import time
-            # If a promotion selection is pending, postpone AI until the promotion is resolved by the player.
-            # This avoids the AI automatically playing while the UI is waiting for the player to choose
-            # the promotion piece.
-            if getattr(chess, 'promotion_pending', None) is not None:
-                # reset timer so AI wait restarts after promotion is handled
-                cpu_wait_start = time.time()
+            # If a promotion selection is pending for a WHITE piece, postpone AI until the promotion is resolved by the player.
+            # However, if it's a BLACK (AI) piece promotion, it should already have been auto-resolved in ai_make_move.
+            # This check prevents race conditions where the UI is waiting for player promotion choice.
+            pending_promo = getattr(chess, 'promotion_pending', None)
+            if pending_promo is not None:
+                promo_color = pending_promo.get('color', None)
+                if promo_color == 'white':
+                    # Player's piece needs promotion - wait for player to select
+                    cpu_wait_start = time.time()
+                else:
+                    # This shouldn't happen (AI promotion should be auto-handled), but clear it defensively
+                    try:
+                        promoted_piece = pending_promo.get('piece')
+                        if promoted_piece is not None:
+                            promoted_piece.name = 'Q'
+                            game.log.append("AI: ポーンをQに昇格させました（待機ループ内での防御処理）。")
+                        chess.promotion_pending = None
+                    except Exception:
+                        chess.promotion_pending = None
             elif time.time() - cpu_wait_start >= AI_THINK_DELAY:
                 # call AI move
                 ai_make_move()
@@ -6787,6 +7129,10 @@ if __name__ == "__main__":
             globals()['game'] = new_game_with_mode(DECK_MODE)
         if globals().get('ai_player') is None:
             globals()['ai_player'] = build_ai_player(DECK_MODE)
+            try:
+                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+            except Exception:
+                pass
     except Exception:
         pass
     main_loop()

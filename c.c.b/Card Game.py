@@ -4,6 +4,7 @@ from pygame import Rect
 import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
+from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # 親ディレクトリのcard_coreモジュールをインポート
@@ -13,6 +14,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
 except Exception:
     logger.exception("Failed to import card_core module")
     raise
@@ -334,6 +336,35 @@ DECK_MODE = 'fixed'
 
 # set_bgm_modeはaudio/bgm_manager.pyに移行済みのため削除しました
 
+def _generate_random_gimmick_cards(count: int = 4) -> List[Card]:
+    """ゲーム開始時にプレイヤーとAIに配布するギミックカードをランダムに生成する。
+    
+    Args:
+        count: 生成するギミックカードの枚数（デフォルト4枚）
+    
+    Returns:
+        Card オブジェクトのリスト
+    """
+    try:
+        # card_core.py の make_rule_cards_deck に定義されているギミックカード8種類
+        gimmick_pool = [
+            Card("灼熱", 2, eff_heat_block_tile),
+            Card("氷結", 2, eff_freeze_piece),
+            Card("暴風", 3, eff_storm_jump_once),
+            Card("迅雷", 3, eff_lightning_two_actions),
+            Card("2ドロー", 1, eff_draw2),
+            Card("錬成", 0, eff_alchemy),
+            Card("墓地ルーレット", 1, eff_graveyard_roulette),
+            Card("摂取", 1, eff_leech_pp2),
+        ]
+        # ランダムに count 枚選択（重複あり）
+        import random
+        selected = random.choices(gimmick_pool, k=count)
+        return selected
+    except Exception:
+        # エラー時は空リストを返す（ゲーム進行を止めない）
+        return []
+
 def new_game_with_mode(mode: str):
     """Create a new Game with player's deck and return the Game object.
 
@@ -348,10 +379,34 @@ def new_game_with_mode(mode: str):
         deck.shuffle()
         player = PlayerState(deck=deck)
         game = Game(player=player)
+        # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
-            game.setup_battle()
+            player.reset_pp()
+            game.log.append("バトル開始: PPを最大まで回復しました。")
         except Exception:
             pass
+        
+        # 固定デッキの総枚数(24)を維持するため、ギミック配布分としてデッキから4枚取り除く
+        try:
+            if hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
+                for _ in range(4):
+                    if player.deck.cards:
+                        # 先頭から取り除く（従来のドロー相当）
+                        player.deck.cards.pop(0)
+        except Exception:
+            pass
+
+        # ゲーム開始時にプレイヤーにギミックカード4枚のみを配布
+        try:
+            gimmick_cards = _generate_random_gimmick_cards(4)
+            for gc in gimmick_cards:
+                if gc is not None:
+                    player.hand.add(gc)
+            if gimmick_cards and hasattr(game, 'log'):
+                game.log.append("バトル開始: ギミックカード4枚を受け取りました。")
+        except Exception:
+            pass
+        
         # Register GIF animation hook
         try:
             if _animation_module and hasattr(_animation_module, 'play_ic_gif_at'):
@@ -727,10 +782,11 @@ def _prepare_new_battle_after_deck_already_selected():
         pass
 
 def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) -> None:
-    """AIに開始時の初期手札n枚を配布する。
+    """AIに開始時の初期手札としてギミックカード4枚を配布する。
 
     PlayerState互換オブジェクト（deck.draw, hand.add, hand_limit, graveyard, reset_pp）を想定。
     ゲームログがあれば記録する。
+    注: nパラメータは互換性のために残していますが、現在は使用されません。
     """
     try:
         if ai is None:
@@ -741,35 +797,26 @@ def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) 
                 ai.reset_pp()
         except Exception:
             pass
-        # ドロー処理（手札上限に配慮）
-        for _ in range(max(0, int(n))):
-            try:
-                c = ai.deck.draw() if hasattr(ai, 'deck') else None
-            except Exception:
-                c = None
-            if c is None:
-                # 山札切れ
-                if game_obj and hasattr(game_obj, 'log'):
-                    game_obj.log.append("相手の山札が空のためドローできませんでした。")
-                continue
-            try:
-                limit = getattr(ai, 'hand_limit', 7)
-                hand_cards = getattr(getattr(ai, 'hand'), 'cards', [])
-                if len(hand_cards) >= limit:
-                    # 溢れたカードはAIの墓地へ
-                    if hasattr(ai, 'graveyard'):
-                        ai.graveyard.append(c)
-                    if game_obj and hasattr(game_obj, 'log'):
-                        game_obj.log.append(f"相手の手札上限{limit}のため『{getattr(c,'name','?')}』は相手の墓地へ。")
-                else:
-                    ai.hand.add(c)
-            except Exception:
-                try:
-                    ai.hand.add(c)
-                except Exception:
-                    pass
-        if game_obj and hasattr(game_obj, 'log'):
-            game_obj.log.append("相手はバトル開始時に手札を4枚引きました。")
+        
+        # 固定デッキの総枚数(24)を維持するため、ギミック配布分としてAIのデッキから4枚取り除く
+        try:
+            if hasattr(ai, 'deck') and hasattr(ai.deck, 'cards'):
+                for _ in range(4):
+                    if ai.deck.cards:
+                        ai.deck.cards.pop(0)
+        except Exception:
+            pass
+
+        # 通常カードのドローは行わず、ギミックカード4枚のみを配布
+        try:
+            gimmick_cards = _generate_random_gimmick_cards(4)
+            for gc in gimmick_cards:
+                if gc is not None:
+                    ai.hand.add(gc)
+            if gimmick_cards and game_obj and hasattr(game_obj, 'log'):
+                game_obj.log.append("相手はバトル開始時にギミックカード4枚を受け取りました。")
+        except Exception:
+            pass
     except Exception:
         # 失敗してもゲーム進行を止めない
         pass
@@ -870,6 +917,10 @@ def show_start_screen():
                         else:
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
+                            try:
+                                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     return
@@ -1146,6 +1197,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 else:
                                     globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
+                                try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                                 # debug: print resulting deck composition if possible
                                 try:
                                     g = globals().get('game')
@@ -1160,6 +1215,10 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
+                                try:
+                                    _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                                except Exception:
+                                    pass
                             # cleanly exit; outer finally will clear in-progress flag
                             return True
                         continue
@@ -1860,6 +1919,10 @@ def show_custom_deck_selection(screen):
                             print(f"DEBUG: exception when creating game from names: {e}")
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
+                            try:
+                                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+                            except Exception:
+                                pass
                         return
 
         # draw overlay and modal
@@ -7009,6 +7072,10 @@ if __name__ == "__main__":
             globals()['game'] = new_game_with_mode(DECK_MODE)
         if globals().get('ai_player') is None:
             globals()['ai_player'] = build_ai_player(DECK_MODE)
+            try:
+                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
+            except Exception:
+                pass
     except Exception:
         pass
     main_loop()

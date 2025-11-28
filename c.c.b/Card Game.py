@@ -7,11 +7,14 @@ import time as _ct_time
 from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# 親ディレクトリのcard_coreモジュールをインポート
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
+local_dir = os.path.dirname(os.path.abspath(__file__))
+if local_dir not in sys.path:
+    sys.path.insert(0, local_dir)
+# 互換目的で親ディレクトリもパスに加えるが、優先度は下げる
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+    sys.path.append(parent_dir)
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
     from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
@@ -3551,12 +3554,8 @@ HELP_LINES = [
 
 
 def draw_panel():
-    """メインゲーム画面の描画処理
-    
-    NOTE: この関数は段階的にui.panel_rendererモジュールに移行中です。
-    TODO: 完全な移行後は、この関数自体をラッパーに置き換える予定。
-    """
-    # 背景画像描画（ui.panel_rendererモジュールに移行済み）
+    global game_over, game_over_winner
+    # 背景画像があればそれを描画し、なければ従来の塗りつぶしを行う
     global log_toggle_rect, play_bg_img, play_bg_surf
     play_bg_img, play_bg_surf = draw_background(screen, W, H, IMG_DIR, PLAY_BG_FILENAME, play_bg_img, play_bg_surf)
 
@@ -4236,26 +4235,55 @@ def draw_panel():
             check_colors.append('white')
         if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
-        
+
+        # チェック中かつ合法手なし（詰み）なら敗北処理（『負けるわけないだろwww』自動発動を優先）
+        for color in check_colors:
+            if not has_legal_moves_with_cards(color):
+                # 自動発動の条件を満たす場合は先に試行
+                can_auto_no_lose_exists = hasattr(game, 'can_auto_no_lose')
+                if not can_auto_no_lose_exists:
+                    game.log.append("[DEBUG] can_auto_no_lose が未定義です")
+                can_auto = can_auto_no_lose_exists and game.can_auto_no_lose(color)
+                if not can_auto:
+                    # 失敗理由の詳細を記録（手札・PPの状況を抜粋）
+                    try:
+                        pp = getattr(game.player, 'pp_current', None)
+                        hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color}, PP={pp}, 手札={hand_names}")
+                    except Exception:
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color} 詳細取得に失敗")
+                if can_auto and hasattr(game, 'auto_trigger_no_lose'):
+                    if game.auto_trigger_no_lose(color):
+                        who = '白' if color == 'white' else '黒'
+                        game.log.append(f"{who}は『負けるわけないだろwww』を自動発動。PP3と『摂取』を消費し、盤面のみ初期化します。")
+                        # 自動発動成功時はゲームオーバーにせず、次の描画サイクルでpending処理に委ねる
+                        continue
+                    else:
+                        game.log.append("[DEBUG] auto_trigger_no_lose が False を返しました")
+                # 自動発動不可/失敗時は通常の敗北
+                game_over = True
+                game_over_winner = 'black' if color == 'white' else 'white'
+                # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）
+
         if check_colors:
             # チェック状態の変化を追跡
             if not hasattr(draw_panel, "last_check_colors"):
                 draw_panel.last_check_colors = []
             if check_colors != draw_panel.last_check_colors:
                 draw_panel.last_check_colors = check_colors.copy()
-            
+
             # 左パネルの中央付近に表示（手札と被らない位置）
             check_x = left_margin + 10
             check_y = H // 2 - 50
-            
+
             for idx, color in enumerate(draw_panel.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
                 check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
                 check_text = check_font.render(msg, True, (255, 165, 0))
-                
+
                 text_w = check_text.get_width()
                 text_h = check_text.get_height()
-                
+
                 # 背景を半透明の黒で塗りつぶして視認性を向上
                 bg_rect = pygame.Rect(check_x - 5, check_y - 3 + idx * (text_h + 10), text_w + 10, text_h + 6)
                 try:
@@ -6198,15 +6226,39 @@ def handle_mouse_click(pos):
                                     highlight_squares = []
                                 else:
                                     # 発動失敗（通常通り負け）
-                                    game_over = True
-                                    game_over_winner = 'black'
-                                    game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
-                                    game.log.append("YOU LOSE！黒の勝利！")
+                                    # 手札発動が不可設定の場合、自動発動を試行
+                                    if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                        if game.auto_trigger_no_lose('white'):
+                                            # pending処理により盤面リセット・続行
+                                            selected_piece = None
+                                            highlight_squares = []
+                                            # ゲームオーバーにはしない
+                                        else:
+                                            game_over = True
+                                            game_over_winner = 'black'
+                                            game.log.append("「負けるわけないだろwww」の自動発動に失敗しました。")
+                                            game.log.append("YOU LOSE！黒の勝利！")
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
+                                        game.log.append("YOU LOSE！黒の勝利！")
                             else:
                                 # 発動条件を満たしていない（通常通り負け）
-                                game_over = True
-                                game_over_winner = 'black'
-                                game.log.append("YOU LOSE！黒の勝利！")
+                                # 自動発動の緩和条件で救済できるか試行
+                                if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                    if game.auto_trigger_no_lose('white'):
+                                        selected_piece = None
+                                        highlight_squares = []
+                                        # 続行（ゲームオーバーにしない）
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("YOU LOSE！黒の勝利！")
+                                else:
+                                    game_over = True
+                                    game_over_winner = 'black'
+                                    game.log.append("YOU LOSE！黒の勝利！")
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'

@@ -6,11 +6,14 @@ from datetime import datetime
 import time as _ct_time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# 親ディレクトリのcard_coreモジュールをインポート
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
+local_dir = os.path.dirname(os.path.abspath(__file__))
+if local_dir not in sys.path:
+    sys.path.insert(0, local_dir)
+# 互換目的で親ディレクトリもパスに加えるが、優先度は下げる
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+    sys.path.append(parent_dir)
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
 except Exception:
@@ -4068,9 +4071,31 @@ def draw_panel():
         if is_in_check_for_display(chess.pieces, 'black') or can_attack_king_with_cards(chess.pieces, 'black'):
             check_colors.append('black')
 
-        # チェック中かつ合法手なし（詰み）ならゲーム終了処理
+        # チェック中かつ合法手なし（詰み）なら敗北処理（『負けるわけないだろwww』自動発動を優先）
         for color in check_colors:
             if not has_legal_moves_with_cards(color):
+                # 自動発動の条件を満たす場合は先に試行
+                can_auto_no_lose_exists = hasattr(game, 'can_auto_no_lose')
+                if not can_auto_no_lose_exists:
+                    game.log.append("[DEBUG] can_auto_no_lose が未定義です")
+                can_auto = can_auto_no_lose_exists and game.can_auto_no_lose(color)
+                if not can_auto:
+                    # 失敗理由の詳細を記録（手札・PPの状況を抜粋）
+                    try:
+                        pp = getattr(game.player, 'pp_current', None)
+                        hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color}, PP={pp}, 手札={hand_names}")
+                    except Exception:
+                        game.log.append(f"[DEBUG] 自動発動不可: color={color} 詳細取得に失敗")
+                if can_auto and hasattr(game, 'auto_trigger_no_lose'):
+                    if game.auto_trigger_no_lose(color):
+                        who = '白' if color == 'white' else '黒'
+                        game.log.append(f"{who}は『負けるわけないだろwww』を自動発動。PP3と『摂取』を消費し、盤面のみ初期化します。")
+                        # 自動発動成功時はゲームオーバーにせず、次の描画サイクルでpending処理に委ねる
+                        continue
+                    else:
+                        game.log.append("[DEBUG] auto_trigger_no_lose が False を返しました")
+                # 自動発動不可/失敗時は通常の敗北
                 game_over = True
                 game_over_winner = 'black' if color == 'white' else 'white'
                 # 必要なら勝敗遷移処理をここで呼ぶ（例: show_result_screen() など）
@@ -6030,15 +6055,39 @@ def handle_mouse_click(pos):
                                     highlight_squares = []
                                 else:
                                     # 発動失敗（通常通り負け）
-                                    game_over = True
-                                    game_over_winner = 'black'
-                                    game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
-                                    game.log.append("YOU LOSE！黒の勝利！")
+                                    # 手札発動が不可設定の場合、自動発動を試行
+                                    if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                        if game.auto_trigger_no_lose('white'):
+                                            # pending処理により盤面リセット・続行
+                                            selected_piece = None
+                                            highlight_squares = []
+                                            # ゲームオーバーにはしない
+                                        else:
+                                            game_over = True
+                                            game_over_winner = 'black'
+                                            game.log.append("「負けるわけないだろwww」の自動発動に失敗しました。")
+                                            game.log.append("YOU LOSE！黒の勝利！")
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
+                                        game.log.append("YOU LOSE！黒の勝利！")
                             else:
                                 # 発動条件を満たしていない（通常通り負け）
-                                game_over = True
-                                game_over_winner = 'black'
-                                game.log.append("YOU LOSE！黒の勝利！")
+                                # 自動発動の緩和条件で救済できるか試行
+                                if hasattr(game, 'can_auto_no_lose') and game.can_auto_no_lose('white'):
+                                    if game.auto_trigger_no_lose('white'):
+                                        selected_piece = None
+                                        highlight_squares = []
+                                        # 続行（ゲームオーバーにしない）
+                                    else:
+                                        game_over = True
+                                        game_over_winner = 'black'
+                                        game.log.append("YOU LOSE！黒の勝利！")
+                                else:
+                                    game_over = True
+                                    game_over_winner = 'black'
+                                    game.log.append("YOU LOSE！黒の勝利！")
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'

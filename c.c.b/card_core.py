@@ -949,6 +949,84 @@ class Game:
         
         self.log.append("[発動可能] 全ての条件を満たしています")
         return True
+
+    def can_auto_no_lose(self, player_color: str = 'white') -> bool:
+        """自動発動版の条件チェック。
+        仕様: 3PPと手札の『摂取』を消費し、自分が負けるとき自動発動して盤面のみ初期化。
+
+        条件:
+        - プレイヤー色がwhite
+        - PPが3以上
+        - 手札に『負けるわけないだろwww』がある
+        - 手札に『摂取』がある
+        """
+        if player_color != 'white':
+            return False
+        try:
+            if self.player.pp_current < 3:
+                self.log.append(f"[自動発動不可] PP不足 (現在: {self.player.pp_current}, 必要: 3)")
+                return False
+            has_no_lose = any(c.name == "負けるわけないだろwww" for c in self.player.hand.cards)
+            if not has_no_lose:
+                self.log.append("[自動発動不可] 手札に『負けるわけないだろwww』がありません")
+                return False
+            has_leech = any(c.name == "摂取" for c in self.player.hand.cards)
+            if not has_leech:
+                self.log.append("[自動発動不可] 手札に『摂取』がありません")
+                return False
+            return True
+        except Exception:
+            return False
+
+    def auto_trigger_no_lose(self, player_color: str = 'white') -> bool:
+        """自動発動版『負けるわけないだろwww』。
+        3PPと手札の『摂取』を消費し、カードを墓地へ移動、盤面リセット指示（board_reset）を発行する。
+        手札・山札・墓地は基本維持（消費した2枚のみ墓地へ）。
+        """
+        if player_color != 'white':
+            return False
+        try:
+            # 条件確認
+            if self.player.pp_current < 3:
+                return False
+            idx_no_lose = None
+            idx_leech = None
+            for i, c in enumerate(self.player.hand.cards):
+                if c.name == "負けるわけないだろwww" and idx_no_lose is None:
+                    idx_no_lose = i
+                elif c.name == "摂取" and idx_leech is None:
+                    idx_leech = i
+                if idx_no_lose is not None and idx_leech is not None:
+                    break
+            if idx_no_lose is None or idx_leech is None:
+                return False
+            # 消費（PP→カード2枚を墓地）
+            self.player.spend_pp(3)
+            card_no_lose = self.player.hand.cards[idx_no_lose]
+            self.player.hand.remove_at(idx_no_lose)
+            self.player.graveyard.append(card_no_lose)
+            # 注意: 摂取のインデックスはズレる可能性があるため再検索
+            for j, cj in enumerate(self.player.hand.cards):
+                if cj.name == "摂取":
+                    idx_leech = j
+                    break
+            if idx_leech is not None:
+                card_leech = self.player.hand.cards[idx_leech]
+                self.player.hand.remove_at(idx_leech)
+                self.player.graveyard.append(card_leech)
+            else:
+                # まれに取り違えた場合は失敗扱い
+                return False
+            # 盤面リセットのpendingを発行
+            self.pending = PendingAction(
+                kind="board_reset",
+                info={"source": "auto_no_lose"}
+            )
+            self.log.append("★★★ 『負けるわけないだろwww』自動発動！ ★★★")
+            self.log.append("盤面を最初の状態にリセットします！")
+            return True
+        except Exception:
+            return False
     
     def trigger_no_lose(self, player_color: str = 'white') -> bool:
         """「負けるわけないだろwww」カードを発動

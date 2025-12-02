@@ -2220,6 +2220,68 @@ def show_deck_action_modal(screen, deck, slot_idx):
         clk.tick(30)
 
 
+def show_card_detail(screen, card_name, get_card_image):
+    """カード詳細表示（拡大表示）"""
+    clk = pygame.time.Clock()
+    
+    # 拡大カードサイズ
+    detail_w = 360
+    detail_h = 480
+    
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                return
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                return
+        
+        # 半透明オーバーレイ
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 220))
+        screen.blit(overlay, (0, 0))
+        
+        # カード画像を中央に表示
+        cx = (W - detail_w) // 2
+        cy = (H - detail_h) // 2
+        
+        if get_card_image:
+            try:
+                card_img = get_card_image(card_name, size=(detail_w, detail_h))
+                if card_img:
+                    screen.blit(card_img, (cx, cy))
+                else:
+                    raise Exception("card_img is None")
+            except Exception:
+                # フォールバック表示
+                fallback = pygame.Surface((detail_w, detail_h))
+                fallback.fill((255, 255, 255))
+                pygame.draw.rect(fallback, (100, 100, 100), (0, 0, detail_w, detail_h), 3)
+                try:
+                    name_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 24, bold=True)
+                    name_surf = name_font.render(card_name, True, (30, 30, 30))
+                except Exception:
+                    name_font = pygame.font.SysFont(None, 24)
+                    name_surf = name_font.render(card_name, True, (30, 30, 30))
+                name_rect = name_surf.get_rect(center=(detail_w // 2, detail_h // 2))
+                fallback.blit(name_surf, name_rect)
+                screen.blit(fallback, (cx, cy))
+        
+        # ヒント表示
+        try:
+            hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
+            hint = hint_font.render("クリックで閉じる", True, (255, 255, 255))
+        except Exception:
+            hint_font = pygame.font.SysFont(None, 18)
+            hint = hint_font.render("Click to close", True, (255, 255, 255))
+        hint_rect = hint.get_rect(center=(W // 2, cy + detail_h + 30))
+        screen.blit(hint, hint_rect)
+        
+        pygame.display.flip()
+        clk.tick(30)
+
+
 def show_deck_contents_overlay(screen, deck):
     """デッキ内容オーバーレイ表示（画像ベース、重複カードは×n表示）"""
     # カード画像ローダーをインポート
@@ -2252,6 +2314,9 @@ def show_deck_contents_overlay(screen, deck):
         card_counts[name] = card_counts.get(name, 0) + 1
     
     unique_cards = list(card_counts.keys())
+    
+    # カードの位置情報を保存（クリック判定用）
+    card_rects = {}
 
     while True:
         for ev in pygame.event.get():
@@ -2265,6 +2330,13 @@ def show_deck_contents_overlay(screen, deck):
                 ly = my - y
                 if (w - 34) <= lx <= (w - 8) and 8 <= ly <= 34:
                     return
+                
+                # カードクリック判定
+                for card_name, rect in card_rects.items():
+                    if rect.collidepoint(lx, ly):
+                        # カード詳細表示を呼び出し
+                        show_card_detail(screen, card_name, get_card_image)
+                        break
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
 
@@ -2286,8 +2358,8 @@ def show_deck_contents_overlay(screen, deck):
             pass
 
         # カード画像を表示（グリッド形式）
-        card_w = 120  # 90 → 120に拡大
-        card_h = 160  # 120 → 160に拡大
+        card_w = 140  # 120 → 140に拡大
+        card_h = 190  # 160 → 190に拡大
         margin = 20   # 15 → 20に拡大
         
         # カード枚数に応じて行数を決定
@@ -2313,11 +2385,17 @@ def show_deck_contents_overlay(screen, deck):
         start_x = (w - grid_width) // 2
         start_y = (h - grid_height) // 2 + 20  # タイトル分少し下げる
         
+        # カード位置情報をクリア
+        card_rects.clear()
+        
         for idx, card_name in enumerate(unique_cards):
             col = idx % cols
             row = idx // cols
             cx = start_x + col * (card_w + margin)
             cy = start_y + row * (card_h + margin + 10)
+            
+            # カード位置を記録
+            card_rects[card_name] = pygame.Rect(cx, cy, card_w, card_h)
             
             if cy + card_h > h - 40:
                 break

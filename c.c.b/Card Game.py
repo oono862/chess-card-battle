@@ -6491,6 +6491,34 @@ def main_loop():
                     elif event.y < 0:  # 下スクロール
                         log_scroll_offset = max(0, log_scroll_offset - 1)
 
+        # --- 自動処理: AI の保留昇格を即時解決 ---
+        # どこかの効果でAI（黒）のポーンがプロモーション待ちになった場合、
+        # プレイヤーUIに選択を押し付けないようここで自動解決する。
+        try:
+            pending_promo = getattr(chess, 'promotion_pending', None)
+            if pending_promo is not None:
+                promo_color = pending_promo.get('color', None)
+                if promo_color is not None and promo_color != 'white':
+                    promoted_piece = pending_promo.get('piece')
+                    if promoted_piece is not None:
+                        # 現状は簡易ヒューリスティックでクイーンに昇格
+                        try:
+                            promoted_piece.name = 'Q'
+                        except Exception:
+                            pass
+                        try:
+                            game.log.append(f"AI: ポーンをQに昇格させました。")
+                        except Exception:
+                            pass
+                    # clear pending in all cases to avoid UI prompt
+                    try:
+                        chess.promotion_pending = None
+                    except Exception:
+                        pass
+        except Exception:
+            # 安全のため例外は無視して続行
+            pass
+
         # チェック/同時チェックの監視と勝敗処理
         if globals().get('last_turn_color', None) != chess_current_turn:
             # 手番インデックス更新

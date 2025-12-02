@@ -2237,9 +2237,9 @@ def show_card_detail(screen, card_name, get_card_image):
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
         
-        # 半透明オーバーレイ
+        # 半透明オーバーレイ（薄いグレー）
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 220))
+        overlay.fill((200, 200, 200, 230))
         screen.blit(overlay, (0, 0))
         
         # カード画像を中央に表示

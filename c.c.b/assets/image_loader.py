@@ -81,38 +81,32 @@ def get_card_image(name: str, size=(72, 96)):
             break
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
-        print(f"image_loader: mapping {name} -> {mapped}, fullpath={path}, exists={os.path.exists(path)}")
         if os.path.exists(path):
             def _try_load(p):
                 # Try pygame.image.load + convert_alpha
                 try:
                     img = pygame.image.load(p).convert_alpha()
-                    print(f"image_loader: _try_load - pygame.convert_alpha succeeded for {p}")
                     return img
-                except Exception as e:
-                    print(f"image_loader: _try_load - pygame.convert_alpha failed for {p}: {e}")
+                except Exception:
+                    pass
                 # Try pygame.image.load without convert
                 try:
                     img = pygame.image.load(p)
-                    print(f"image_loader: _try_load - pygame.load succeeded for {p}")
                     return img
-                except Exception as e:
-                    print(f"image_loader: _try_load - pygame.load failed for {p}: {e}")
+                except Exception:
+                    pass
                 # Pillow fallback
                 try:
                     from PIL import Image
                     im = Image.open(p).convert('RGBA')
-                    print(f"image_loader: _try_load - Pillow opened {p}")
                     return pygame.image.fromstring(im.tobytes(), im.size, im.mode).convert_alpha()
-                except Exception as e:
-                    print(f"image_loader: _try_load - Pillow failed for {p}: {e}")
+                except Exception:
                     return None
 
             img = _try_load(path)
             if img is not None:
                 try:
                     surf = pygame.transform.smoothscale(img, size)
-                    print(f"image_loader: loaded mapped image for '{name}' -> {mapped}")
                 except Exception:
                     surf = None
 
@@ -124,13 +118,11 @@ def get_card_image(name: str, size=(72, 96)):
                 try:
                     img = pygame.image.load(path).convert_alpha()
                     surf = pygame.transform.smoothscale(img, size)
-                    print(f"image_loader: loaded candidate image for '{name}' -> {path}")
                     break
                 except Exception:
                     try:
                         img = pygame.image.load(path)
                         surf = pygame.transform.smoothscale(img, size)
-                        print(f"image_loader: loaded candidate image for '{name}' -> {path}")
                         break
                     except Exception:
                         pass
@@ -143,7 +135,6 @@ def get_card_image(name: str, size=(72, 96)):
                 try:
                     img = pygame.image.load(path).convert_alpha()
                     surf = pygame.transform.smoothscale(img, size)
-                    print(f"image_loader: loaded normalized image for '{name}' -> {path}")
                     break
                 except Exception:
                     pass
@@ -162,7 +153,6 @@ def get_card_image(name: str, size=(72, 96)):
                         path = os.path.join(root, f)
                         img = pygame.image.load(path).convert_alpha()
                         surf = pygame.transform.smoothscale(img, size)
-                        print(f"image_loader: loaded recursive image for '{name}' -> {path}")
                         break
                     except Exception:
                         continue
@@ -179,10 +169,6 @@ def get_card_image(name: str, size=(72, 96)):
             if main and hasattr(main, 'SMALL'):
                 txt = main.SMALL.render(name, True, (30, 30, 30))
                 surf.blit(txt, ((size[0]-txt.get_width())//2, (size[1]-txt.get_height())//2))
-        except Exception:
-            pass
-        try:
-            print(f"image_loader: no image found for '{name}', using placeholder")
         except Exception:
             pass
 
@@ -283,7 +269,6 @@ def get_card_gif_animation(name: str, size=(72, 96)):
     
     gif_path = os.path.join(IMG_DIR, gif_filename)
     if not os.path.exists(gif_path):
-        print(f"image_loader: GIF file not found: {gif_path}")
         return None
     
     # Load all frames using PIL
@@ -321,7 +306,6 @@ def get_card_gif_animation(name: str, size=(72, 96)):
                 break
         
         if not frames:
-            print(f"image_loader: No frames loaded from GIF: {gif_path}")
             return None
         
         anim_data = {
@@ -332,14 +316,11 @@ def get_card_gif_animation(name: str, size=(72, 96)):
         }
         
         _gif_animation_cache[key] = anim_data
-        print(f"image_loader: Loaded {len(frames)} frames from GIF: {gif_filename}")
         return anim_data
         
     except ImportError:
-        print("image_loader: PIL/Pillow is required for GIF animation support")
         return None
-    except Exception as e:
-        print(f"image_loader: Error loading GIF animation {gif_path}: {e}")
+    except Exception:
         return None
 
 

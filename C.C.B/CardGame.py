@@ -2228,6 +2228,13 @@ def show_card_detail(screen, card_name, get_card_image):
     detail_w = 360
     detail_h = 480
     
+    # 元の画面を保存（背景が徐々に濃くなるのを防ぐ）
+    base_screen = screen.copy()
+    
+    # 半透明オーバーレイを一度だけ作成
+    overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+    overlay.fill((20, 20, 20, 180))
+    
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -2237,9 +2244,8 @@ def show_card_detail(screen, card_name, get_card_image):
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
         
-        # 半透明オーバーレイ（薄いグレー、後ろが透けて見える）
-        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((180, 180, 180, 150))
+        # 元の画面から描画開始
+        screen.blit(base_screen, (0, 0))
         screen.blit(overlay, (0, 0))
         
         # カード画像を中央に表示
@@ -2292,8 +2298,8 @@ def show_deck_contents_overlay(screen, deck):
         get_card_image = None
     
     clk = pygame.time.Clock()
-    w = min(1000, W - 80)  # 800 → 1000に拡大
-    h = min(720, H - 80)   # 600 → 720に拡大
+    w = min(1100, W - 60)  # 1000 → 1100に拡大
+    h = min(850, H - 60)   # 720 → 850に拡大
     x = (W - w)//2
     y = (H - h)//2
     
@@ -2332,11 +2338,16 @@ def show_deck_contents_overlay(screen, deck):
                     return
                 
                 # カードクリック判定
+                clicked_card = False
                 for card_name, rect in card_rects.items():
                     if rect.collidepoint(lx, ly):
                         # カード詳細表示を呼び出し
                         show_card_detail(screen, card_name, get_card_image)
+                        clicked_card = True
                         break
+                if clicked_card:
+                    # 詳細表示から戻ったら、次のフレームでデッキ表示を再描画
+                    continue
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
 
@@ -2396,9 +2407,6 @@ def show_deck_contents_overlay(screen, deck):
             
             # カード位置を記録
             card_rects[card_name] = pygame.Rect(cx, cy, card_w, card_h)
-            
-            if cy + card_h > h - 40:
-                break
             
             # カード画像を描画
             if get_card_image:

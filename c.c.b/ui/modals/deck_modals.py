@@ -805,6 +805,11 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         start_y = 55
         cols = (w - start_x * 2) // (card_w + margin)
         
+        if get_card_image is None:
+            print("[DEBUG] get_card_image is None, will use text fallback")
+        else:
+            print(f"[DEBUG] get_card_image is available, drawing {len(unique_cards)} unique cards")
+        
         for idx, card_name in enumerate(unique_cards):
             col = idx % cols
             row = idx // cols
@@ -819,8 +824,13 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
             if get_card_image:
                 try:
                     card_img = get_card_image(card_name, size=(card_w, card_h))
+                    if card_img is None:
+                        print(f"[DEBUG] get_card_image returned None for: {card_name}")
+                        raise Exception("card_img is None")
                     box.blit(card_img, (cx, cy))
-                except Exception:
+                    print(f"[DEBUG] Successfully drew card image: {card_name}")
+                except Exception as e:
+                    print(f"[DEBUG] Failed to draw card image for {card_name}: {e}")
                     # フォールバック: テキスト表示
                     pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
                     pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)

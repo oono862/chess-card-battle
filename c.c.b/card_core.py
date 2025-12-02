@@ -1475,6 +1475,8 @@ def _normalize_card_name(name: str) -> str:
 
 def make_rule_cards_deck() -> Deck:
     """Create a deck containing the cards listed in the provided table."""
+    # The rule deck should contain exactly the canonical 8 gimmick card types,
+    # each included 3 times -> 8 * 3 = 24 cards in total.
     kinds = [
         Card("灼熱", 2, eff_heat_block_tile),
         Card("氷結", 2, eff_freeze_piece),
@@ -1485,11 +1487,6 @@ def make_rule_cards_deck() -> Deck:
         # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
         Card("墓地ルーレット", 1, eff_graveyard_roulette),
         Card("摂取", 1, eff_leech_pp2),
-        # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
-        # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        Card("負けるわけないだろwww", 3, eff_no_lose, precheck_no_lose),
-        Card("鉄壁", 2, eff_iron_wall),
-        # Card("ハンです☆", 2, eff_hand_discard),
     ]
     pool = []
     for c in kinds:

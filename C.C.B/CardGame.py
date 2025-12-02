@@ -2237,7 +2237,7 @@ def show_card_detail(screen, card_name, get_card_image):
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
         
-        # 半透明オーバーレイ（薄いグレー、後ろが透ける）
+        # 半透明オーバーレイ（薄いグレー、後ろが透けて見える）
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
         overlay.fill((180, 180, 180, 150))
         screen.blit(overlay, (0, 0))

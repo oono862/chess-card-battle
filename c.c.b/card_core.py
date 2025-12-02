@@ -1226,43 +1226,43 @@ def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
 
 def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
     """迅雷(1): このターンに1回だけ追加の全行動（合計で2ターン分）。"""
-    # Check if opponent has ironwall protection (迅雷 benefits the user, so opponent is affected)
+    # Prevent effect if opponent is protected by iron-wall.
     try:
         if player is game.player:
-            # Player using card, AI is affected
-            if getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
-                return "相手の鉄壁により効果が無効化されました。"
-        else:
-            # AI using card, player is affected
-            if getattr(game, 'player_ironwall_protection_turns', 0) > 0:
-                return "鉄壁の保護により効果が無効化されました。"
-    except Exception:
-        pass
-    
-    # Grant one extra full chess turn to the player (so player gets this turn + 1 more).
-    # If the effect is played by the human (game.player), set player_consecutive_turns;
-    # otherwise (AI) set ai_consecutive_turns so the AI benefits.
-    try:
-        if player is game.player:
+            # Human player used the card -> opponent is AI
+            ai_protected = (
+                getattr(game, 'ai_iron_wall_active', False)
+                or getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+                or getattr(getattr(game, 'ai_player', None), 'iron_wall_active', False)
+            )
+            if ai_protected:
+                return "効果は鉄壁により無効化されました。"
+            # grant extra full chess turn to the human player
             game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
-        else:
-            # AIの場合: game属性とglobalsの両方を設定
-            game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
-            # globalsも更新（Card Game.pyで参照される）
             try:
-                import sys
-                # Card Game.pyのグローバル名前空間を取得
-                for module_name, module in sys.modules.items():
-                    if hasattr(module, 'ai_consecutive_turns') and module_name.endswith('Card Game'):
-                        module.ai_consecutive_turns = game.ai_consecutive_turns
-                        break
+                globals()['player_consecutive_turns'] = game.player_consecutive_turns
+            except Exception:
+                pass
+        else:
+            # AI used the card -> opponent is human
+            player_protected = (
+                getattr(game.player, 'iron_wall_active', False)
+                or getattr(game, 'player_ironwall_protection_turns', 0) > 0
+                or getattr(getattr(game, 'player', None), 'iron_wall_active', False)
+            )
+            if player_protected:
+                return "効果は鉄壁により無効化されました。"
+            game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
+            try:
+                globals()['ai_consecutive_turns'] = game.ai_consecutive_turns
             except Exception:
                 pass
     except Exception:
+        # Fallback: grant the effect if checks fail unexpectedly
         if player is game.player:
-            setattr(game, 'player_consecutive_turns', 1)
+            game.player_consecutive_turns = max(getattr(game, 'player_consecutive_turns', 0), 1)
         else:
-            setattr(game, 'ai_consecutive_turns', 1)
+            game.ai_consecutive_turns = max(getattr(game, 'ai_consecutive_turns', 0), 1)
     return "このターンに追加で1ターン分行動できます（合計2ターン）。"
 
 

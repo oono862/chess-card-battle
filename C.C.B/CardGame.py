@@ -2289,8 +2289,6 @@ def show_deck_contents_overlay(screen, deck):
         card_w = 120  # 90 → 120に拡大
         card_h = 160  # 120 → 160に拡大
         margin = 20   # 15 → 20に拡大
-        start_x = 30
-        start_y = 60
         
         # カード枚数に応じて行数を決定
         num_cards = len(unique_cards)
@@ -2304,9 +2302,16 @@ def show_deck_contents_overlay(screen, deck):
         # 目標行数に基づいて列数を計算
         cols = (num_cards + target_rows - 1) // target_rows
         
-        # グリッド全体の幅を計算してセンタリング
+        # 実際の行数を計算
+        actual_rows = (num_cards + cols - 1) // cols
+        
+        # グリッド全体のサイズを計算
         grid_width = cols * card_w + (cols - 1) * margin
+        grid_height = actual_rows * card_h + (actual_rows - 1) * (margin + 10)
+        
+        # センタリング（水平・垂直）
         start_x = (w - grid_width) // 2
+        start_y = (h - grid_height) // 2 + 20  # タイトル分少し下げる
         
         for idx, card_name in enumerate(unique_cards):
             col = idx % cols

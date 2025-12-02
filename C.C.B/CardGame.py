@@ -2221,25 +2221,40 @@ def show_deck_action_modal(screen, deck, slot_idx):
 
 
 def show_deck_contents_overlay(screen, deck):
-    """デッキのカード一覧をダークオーバーレイで表示。外側をクリックすると閉じる。"""
+    """デッキ内容オーバーレイ表示（画像ベース、重複カードは×n表示）"""
+    # カード画像ローダーをインポート
+    get_card_image = None
+    try:
+        from assets.image_loader import get_card_image
+        print("[DEBUG CardGame] get_card_image imported successfully")
+    except Exception as e:
+        print(f"[DEBUG CardGame] Failed to import get_card_image: {e}")
+        get_card_image = None
+    
     clk = pygame.time.Clock()
-    w = min(720, W - 120)
-    h = min(520, H - 120)
+    w = min(800, W - 100)
+    h = min(600, H - 100)
     x = (W - w)//2
     y = (H - h)//2
-    # Use a Japanese-capable font for the title to avoid garbled text
+    
     try:
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+        count_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18, bold=True)
     except Exception:
         title_font = pygame.font.SysFont(None, 28)
+        count_font = pygame.font.SysFont(None, 18)
 
-    # build card name lines
-    lines = []
+    # カードを集計（重複をカウント）
+    card_counts = {}
     for c in deck.get('cards', []):
         if isinstance(c, dict):
-            lines.append(str(c.get('name', '不明')))
+            name = str(c.get('name', '不明'))
         else:
-            lines.append(str(c))
+            name = str(c)
+        card_counts[name] = card_counts.get(name, 0) + 1
+    
+    unique_cards = list(card_counts.keys())
+    print(f"[DEBUG CardGame] Displaying {len(unique_cards)} unique cards")
 
     while True:
         for ev in pygame.event.get():
@@ -2247,13 +2262,10 @@ def show_deck_contents_overlay(screen, deck):
                 pygame.quit(); sys.exit(0)
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 mx, my = ev.pos
-                # クリックがモーダル外なら閉じる
                 if not (x <= mx <= x + w and y <= my <= y + h):
                     return
-                # 内部クリック -> ローカル座標で閉じるボタンをチェック
                 lx = mx - x
                 ly = my - y
-                # close icon rect (same as drawn below)
                 if (w - 34) <= lx <= (w - 8) and 8 <= ly <= 34:
                     return
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
@@ -2269,7 +2281,6 @@ def show_deck_contents_overlay(screen, deck):
         title = title_font.render(deck.get('name', 'デッキ'), True, (30,30,30))
         box.blit(title, (20, 12))
 
-        # close icon inside the modal (top-right)
         pygame.draw.rect(box, (200,200,200), (w-34, 8, 26, 26))
         pygame.draw.rect(box, (80,80,80), (w-34, 8, 26, 26), 1)
         try:
@@ -2277,13 +2288,63 @@ def show_deck_contents_overlay(screen, deck):
         except Exception:
             pass
 
-        ty = 48
-        for ln in lines:
-            txt = SMALL.render(ln, True, (30,30,30))
-            box.blit(txt, (20, ty))
-            ty += 24
-            if ty > h - 40:
+        # カード画像を表示（グリッド形式）
+        card_w = 90
+        card_h = 120
+        margin = 15
+        start_x = 20
+        start_y = 55
+        cols = (w - start_x * 2) // (card_w + margin)
+        
+        for idx, card_name in enumerate(unique_cards):
+            col = idx % cols
+            row = idx // cols
+            cx = start_x + col * (card_w + margin)
+            cy = start_y + row * (card_h + margin + 10)
+            
+            if cy + card_h > h - 40:
                 break
+            
+            # カード画像を描画
+            if get_card_image:
+                try:
+                    card_img = get_card_image(card_name, size=(card_w, card_h))
+                    if card_img is None:
+                        raise Exception("card_img is None")
+                    box.blit(card_img, (cx, cy))
+                except Exception as e:
+                    print(f"[DEBUG CardGame] Failed to draw image for {card_name}: {e}")
+                    # フォールバック: テキスト表示
+                    pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
+                    pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)
+                    name_lines = []
+                    if len(card_name) > 8:
+                        name_lines.append(card_name[:8])
+                        name_lines.append(card_name[8:])
+                    else:
+                        name_lines.append(card_name)
+                    name_y = cy + 10
+                    for line in name_lines:
+                        name_surf = TINY.render(line, True, (30, 30, 30))
+                        name_rect = name_surf.get_rect(center=(cx + card_w // 2, name_y))
+                        box.blit(name_surf, name_rect)
+                        name_y += 16
+            else:
+                # get_card_imageが使えない場合
+                pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
+                pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)
+                name_surf = TINY.render(card_name, True, (30, 30, 30))
+                name_rect = name_surf.get_rect(center=(cx + card_w // 2, cy + card_h // 2))
+                box.blit(name_surf, name_rect)
+            
+            # 重複数を右下に表示（2枚以上の場合）
+            count = card_counts[card_name]
+            if count > 1:
+                count_bg = pygame.Surface((30, 22), pygame.SRCALPHA)
+                count_bg.fill((0, 0, 0, 180))
+                box.blit(count_bg, (cx + card_w - 32, cy + card_h - 24))
+                count_text = count_font.render(f"×{count}", True, (255, 255, 255))
+                box.blit(count_text, (cx + card_w - 30, cy + card_h - 22))
 
         hint = TINY.render("外側をクリックすると閉じる", True, (80,80,80))
         box.blit(hint, (w - hint.get_width() - 12, h - 28))

@@ -2232,17 +2232,17 @@ def show_deck_contents_overlay(screen, deck):
         get_card_image = None
     
     clk = pygame.time.Clock()
-    w = min(800, W - 100)
-    h = min(600, H - 100)
+    w = min(1000, W - 80)  # 800 → 1000に拡大
+    h = min(720, H - 80)   # 600 → 720に拡大
     x = (W - w)//2
     y = (H - h)//2
     
     try:
-        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
-        count_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18, bold=True)
+        title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 32, bold=True)  # 28 → 32に拡大
+        count_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)  # 18 → 20に拡大
     except Exception:
-        title_font = pygame.font.SysFont(None, 28)
-        count_font = pygame.font.SysFont(None, 18)
+        title_font = pygame.font.SysFont(None, 32)
+        count_font = pygame.font.SysFont(None, 20)
 
     # カードを集計（重複をカウント）
     card_counts = {}
@@ -2289,11 +2289,11 @@ def show_deck_contents_overlay(screen, deck):
             pass
 
         # カード画像を表示（グリッド形式）
-        card_w = 90
-        card_h = 120
-        margin = 15
-        start_x = 20
-        start_y = 55
+        card_w = 120  # 90 → 120に拡大
+        card_h = 160  # 120 → 160に拡大
+        margin = 20   # 15 → 20に拡大
+        start_x = 30
+        start_y = 60
         cols = (w - start_x * 2) // (card_w + margin)
         
         for idx, card_name in enumerate(unique_cards):
@@ -2340,11 +2340,17 @@ def show_deck_contents_overlay(screen, deck):
             # 重複数を右下に表示（2枚以上の場合）
             count = card_counts[card_name]
             if count > 1:
-                count_bg = pygame.Surface((30, 22), pygame.SRCALPHA)
-                count_bg.fill((0, 0, 0, 180))
-                box.blit(count_bg, (cx + card_w - 32, cy + card_h - 24))
-                count_text = count_font.render(f"×{count}", True, (255, 255, 255))
-                box.blit(count_text, (cx + card_w - 30, cy + card_h - 22))
+                count_bg = pygame.Surface((40, 28), pygame.SRCALPHA)
+                count_bg.fill((0, 0, 0, 200))
+                box.blit(count_bg, (cx + card_w - 43, cy + card_h - 30))
+                
+                # より大きく見やすいフォントで表示
+                try:
+                    large_count_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 22, bold=True)
+                    count_text = large_count_font.render(f"×{count}", True, (255, 255, 255))
+                except Exception:
+                    count_text = count_font.render(f"×{count}", True, (255, 255, 255))
+                box.blit(count_text, (cx + card_w - 40, cy + card_h - 28))
 
         hint = TINY.render("外側をクリックすると閉じる", True, (80,80,80))
         box.blit(hint, (w - hint.get_width() - 12, h - 28))

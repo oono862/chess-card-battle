@@ -2226,9 +2226,7 @@ def show_deck_contents_overlay(screen, deck):
     get_card_image = None
     try:
         from assets.image_loader import get_card_image
-        print("[DEBUG CardGame] get_card_image imported successfully")
-    except Exception as e:
-        print(f"[DEBUG CardGame] Failed to import get_card_image: {e}")
+    except Exception:
         get_card_image = None
     
     clk = pygame.time.Clock()
@@ -2254,7 +2252,6 @@ def show_deck_contents_overlay(screen, deck):
         card_counts[name] = card_counts.get(name, 0) + 1
     
     unique_cards = list(card_counts.keys())
-    print(f"[DEBUG CardGame] Displaying {len(unique_cards)} unique cards")
 
     while True:
         for ev in pygame.event.get():
@@ -2312,8 +2309,7 @@ def show_deck_contents_overlay(screen, deck):
                     if card_img is None:
                         raise Exception("card_img is None")
                     box.blit(card_img, (cx, cy))
-                except Exception as e:
-                    print(f"[DEBUG CardGame] Failed to draw image for {card_name}: {e}")
+                except Exception:
                     # フォールバック: テキスト表示
                     pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
                     pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)

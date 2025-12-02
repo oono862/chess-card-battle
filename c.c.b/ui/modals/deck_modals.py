@@ -712,27 +712,20 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
     get_card_image = None
     try:
         from ..assets.image_loader import get_card_image
-        print("[DEBUG] get_card_image imported successfully from ..assets.image_loader")
-    except Exception as e:
-        print(f"[DEBUG] Failed to import from ..assets.image_loader: {e}")
+    except Exception:
         try:
             from assets.image_loader import get_card_image
-            print("[DEBUG] get_card_image imported successfully from assets.image_loader")
-        except Exception as e2:
-            print(f"[DEBUG] Failed to import from assets.image_loader: {e2}")
+        except Exception:
             try:
                 import sys
                 import os
-                # 絶対パスでインポートを試みる
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 ccb_dir = os.path.dirname(os.path.dirname(current_dir))
                 assets_dir = os.path.join(ccb_dir, 'assets')
                 if assets_dir not in sys.path:
                     sys.path.insert(0, assets_dir)
                 from image_loader import get_card_image
-                print("[DEBUG] get_card_image imported successfully from absolute path")
-            except Exception as e3:
-                print(f"[DEBUG] All import attempts failed: {e3}")
+            except Exception:
                 get_card_image = None
     
     clk = pygame.time.Clock()
@@ -805,11 +798,6 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         start_y = 55
         cols = (w - start_x * 2) // (card_w + margin)
         
-        if get_card_image is None:
-            print("[DEBUG] get_card_image is None, will use text fallback")
-        else:
-            print(f"[DEBUG] get_card_image is available, drawing {len(unique_cards)} unique cards")
-        
         for idx, card_name in enumerate(unique_cards):
             col = idx % cols
             row = idx // cols
@@ -825,12 +813,9 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
                 try:
                     card_img = get_card_image(card_name, size=(card_w, card_h))
                     if card_img is None:
-                        print(f"[DEBUG] get_card_image returned None for: {card_name}")
                         raise Exception("card_img is None")
                     box.blit(card_img, (cx, cy))
-                    print(f"[DEBUG] Successfully drew card image: {card_name}")
-                except Exception as e:
-                    print(f"[DEBUG] Failed to draw card image for {card_name}: {e}")
+                except Exception:
                     # フォールバック: テキスト表示
                     pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
                     pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)

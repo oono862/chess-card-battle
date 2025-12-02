@@ -13,12 +13,9 @@ try:
     _ccb_dir = os.path.dirname(_current_dir)  # c.c.b
     _project_root = os.path.dirname(_ccb_dir)  # project root
     IMG_DIR = os.path.join(_project_root, "images")
-    print(f"[DEBUG image_loader] IMG_DIR set to: {IMG_DIR}")
-    print(f"[DEBUG image_loader] IMG_DIR exists: {os.path.exists(IMG_DIR)}")
 except Exception as e:
     # Fallback
     IMG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images")
-    print(f"[DEBUG image_loader] Fallback IMG_DIR: {IMG_DIR}, error: {e}")
 
 # Image caches
 _image_cache = {}
@@ -47,22 +44,17 @@ def get_card_image(name: str, size=(72, 96)):
     
     For animated GIFs, returns the current frame of the animation.
     """
-    print(f"[DEBUG get_card_image] Called with name='{name}', size={size}")
-    
     # Check if this is an animated GIF
     if is_animated_gif(name):
         frame = get_current_gif_frame(name, size)
         if frame is not None:
-            print(f"[DEBUG get_card_image] Returning animated GIF frame for '{name}'")
             return frame
         # If GIF loading failed, fall through to normal image loading
     
     key = (name, size)
     if key in _image_cache:
-        print(f"[DEBUG get_card_image] Cache hit for '{name}'")
         return _image_cache[key]
 
-    print(f"[DEBUG get_card_image] Cache miss for '{name}', searching...")
     surf = None
 
     NAME_TO_FILE = {

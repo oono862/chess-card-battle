@@ -308,6 +308,7 @@ class Game:
             if applies_to == 'white':
                 # human side
                 human = self.player
+                # 1) single-use immediate iron wall blocks the next incoming effect
                 if getattr(human, 'iron_wall_active', False) and source_color is not None and source_color != 'white':
                     # consume iron wall instead of applying
                     human.iron_wall_active = False
@@ -316,8 +317,16 @@ class Game:
                     except Exception:
                         pass
                     return False
+                # 2) 1-turn protection blocks any incoming harmful gimmick effects for the duration
+                if getattr(self, 'player_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'white':
+                    try:
+                        self.log.append(f"鉄壁(保護): 敵の効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
+                    except Exception:
+                        pass
+                    return False
             else:
                 # applies_to == 'black' -> AI side
+                # AI single-use immediate iron wall
                 if getattr(self, 'ai_iron_wall_active', False) and source_color is not None and source_color != 'black':
                     try:
                         self.ai_iron_wall_active = False
@@ -325,6 +334,13 @@ class Game:
                         setattr(self, 'ai_iron_wall_active', False)
                     try:
                         self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
+                    except Exception:
+                        pass
+                    return False
+                # AI 1-turn protection
+                if getattr(self, 'ai_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'black':
+                    try:
+                        self.log.append(f"鉄壁(敵,保護): プレイヤーの効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
                     except Exception:
                         pass
                     return False
@@ -1508,6 +1524,7 @@ def make_rule_cards_deck() -> Deck:
     # The rule deck should contain exactly the canonical 8 gimmick card types,
     # each included 3 times -> 8 * 3 = 24 cards in total.
     kinds = [
+        # Canonical 8 gimmick types included in the rule deck (each x3 -> 24 cards)
         Card("灼熱", 2, eff_heat_block_tile),
         Card("氷結", 2, eff_freeze_piece),
         Card("暴風", 3, eff_storm_jump_once),
@@ -1517,11 +1534,9 @@ def make_rule_cards_deck() -> Deck:
         # 墓地ルーレットは空でも使用可能にし、UIで確認を促す
         Card("墓地ルーレット", 1, eff_graveyard_roulette),
         Card("摂取", 1, eff_leech_pp2),
-        # ★以下の4枚はデッキビルド専用（ルールデッキには含めない）
-        # Card("命がけのギャンブル", 3, eff_risky_gamble),
-        Card("負けるわけないだろwww", 4, eff_no_lose, precheck_no_lose),
-        Card("鉄壁", 2, eff_iron_wall),
-        # Card("ハンです☆", 2, eff_hand_discard),
+        # Note: special cards such as '負けるわけないだろwww' and '鉄壁' are
+        # intentionally NOT included in the default rule deck. They belong to
+        # deck-building or special-setup pools.
     ]
     pool = []
     for c in kinds:

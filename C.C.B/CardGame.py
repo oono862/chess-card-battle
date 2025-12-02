@@ -2291,7 +2291,22 @@ def show_deck_contents_overlay(screen, deck):
         margin = 20   # 15 → 20に拡大
         start_x = 30
         start_y = 60
-        cols = (w - start_x * 2) // (card_w + margin)
+        
+        # カード枚数に応じて行数を決定
+        num_cards = len(unique_cards)
+        if num_cards <= 8:
+            # 少ない場合は2行
+            target_rows = 2
+        else:
+            # 多い場合は3行
+            target_rows = 3
+        
+        # 目標行数に基づいて列数を計算
+        cols = (num_cards + target_rows - 1) // target_rows
+        
+        # グリッド全体の幅を計算してセンタリング
+        grid_width = cols * card_w + (cols - 1) * margin
+        start_x = (w - grid_width) // 2
         
         for idx, card_name in enumerate(unique_cards):
             col = idx % cols

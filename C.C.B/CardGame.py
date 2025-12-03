@@ -170,26 +170,98 @@ try:
     from game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
     from game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
 except Exception:
-    logger.exception("Failed to import game modules")
-    import os as _os
-    DECK_SAVE_FILE = _os.path.join(_os.path.dirname(__file__), 'saved_decks.json')
-    def load_saved_decks(): return [None] * 9
-    def save_decks_to_file(decks): pass
-    def list_custom_decks(): return []
-    def load_custom_deck_by_name(name: str): return None
-    def build_deck_for_mode(mode: str):
-        try: return new_game_with_rule_deck().player.deck
-        except Exception: return None
-    def build_ai_player(mode: str):
-        try:
-            deck = build_deck_for_mode(mode)
-            return PlayerState(deck=deck, pp_max=10)
-        except Exception: return None
-    def build_game_from_card_names(names): return None
-    def start_player_turn(ai_end_msg: str = None): pass
-    def attempt_start_turn(): pass
-    def end_player_chess_move(): pass
-    def switch_turn(): pass
+    # Try alternative package-qualified import (script execution vs package import differences)
+    try:
+        from c.c.b.game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
+        from c.c.b.game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
+    except Exception:
+        logger.exception("Failed to import game modules")
+        import os as _os, json as _json
+
+        # Candidate locations for saved_decks.json (project layout varies depending on run mode)
+        _candidates = [
+            _os.path.join(_os.path.dirname(__file__), 'saved_decks.json'),
+            _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), 'saved_decks.json'),
+            _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'saved_decks.json'),
+        ]
+
+        # Choose existing file or default to first candidate
+        DECK_SAVE_FILE = next((p for p in _candidates if _os.path.exists(p)), _candidates[0])
+
+        def _read_decks_from(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as fh:
+                    data = _json.load(fh)
+                    if isinstance(data, list):
+                        # normalize length to 9
+                        out = list(data[:9]) + [None] * max(0, 9 - len(data))
+                        return out
+            except Exception:
+                return [None] * 9
+            return [None] * 9
+
+        def _write_decks_to(path, decks):
+            try:
+                with open(path, 'w', encoding='utf-8') as fh:
+                    _json.dump(decks, fh, ensure_ascii=False, indent=2)
+                return True
+            except Exception:
+                return False
+
+        def load_saved_decks():
+            return _read_decks_from(DECK_SAVE_FILE)
+
+        def save_decks_to_file(decks):
+            # Attempt to write to the chosen DECK_SAVE_FILE; if it fails, try candidates
+            if _write_decks_to(DECK_SAVE_FILE, decks):
+                return True
+            for p in _candidates:
+                try:
+                    if _write_decks_to(p, decks):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def list_custom_decks():
+            d = _os.path.join(_os.path.dirname(__file__), 'decks')
+            out = []
+            try:
+                if _os.path.isdir(d):
+                    for fn in sorted(_os.listdir(d)):
+                        if fn.lower().endswith('.json'):
+                            out.append(_os.path.splitext(fn)[0])
+            except Exception:
+                pass
+            return out
+
+        def load_custom_deck_by_name(name: str):
+            d = _os.path.join(_os.path.dirname(__file__), 'decks')
+            p = _os.path.join(d, f"{name}.json")
+            try:
+                if _os.path.exists(p):
+                    with open(p, 'r', encoding='utf-8') as fh:
+                        return _json.load(fh)
+            except Exception:
+                return None
+            return None
+
+        def build_deck_for_mode(mode: str):
+            try: return new_game_with_rule_deck().player.deck
+            except Exception: return None
+
+        def build_ai_player(mode: str):
+            try:
+                deck = build_deck_for_mode(mode)
+                return PlayerState(deck=deck, pp_max=10)
+            except Exception:
+                return None
+
+        def build_game_from_card_names(names): return None
+        def start_player_turn(ai_end_msg: str = None): pass
+        def attempt_start_turn(): pass
+        def end_player_chess_move(): pass
+        def switch_turn(): pass
 
 # ゲームループ管理をインポート
 try:
@@ -984,7 +1056,7 @@ def show_start_screen():
                                     pass
                                 try:
                                     gtmp = globals().get('game')
-                                    print(f"DEBUG: global game set (start_screen) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                    logger.debug("global game set (start_screen) id=%s deck_count=%s", id(gtmp), len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA')
                                 except Exception:
                                     pass
                         except Exception:
@@ -1204,7 +1276,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
                                 # Remember that user explicitly chose a custom deck so future
                                 # rematches or returning to menus should preserve this choice.
                                 global DECK_MODE
@@ -1224,11 +1296,11 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                         cards = getattr(g.player.deck, 'cards', None)
                                         if cards is not None:
-                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                            logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                                 except Exception as _e:
-                                    print(f"DEBUG: error inspecting created game: {_e}")
+                                    logger.debug("error inspecting created game: %s", _e)
                             except Exception as e:
-                                print(f"DEBUG: exception when creating game from names: {e}")
+                                logger.debug("exception when creating game from names: %s", e)
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
@@ -1567,7 +1639,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        logger.debug("save clicked with %d cards (<20) - entering confirmation dialog", len(deck_cards))
                         # 20枚未満でも保存を許可するか確認するダイアログに変更
                         # 「破棄する」-> 変更を破棄して戻る
                         # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
@@ -1585,14 +1657,14 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
                                     if discard_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
 
                                     # 保存するボタン
                                     save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
                                     if save_anyway_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        logger.debug("user selected SAVE ANYWAY in low-deck dialog")
                                         # 20枚未満だが保存して戻る
                                         pygame.key.stop_text_input()
                                         return {
@@ -1636,7 +1708,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                             screen.blit(dialog_surf, (dialog_x, dialog_y))
                             pygame.display.flip()
                             clock.tick(30)
-                    
+
                     # 20枚以上なら保存
                     pygame.key.stop_text_input()
                     return {
@@ -1948,7 +2020,7 @@ def show_custom_deck_selection(screen):
                         DECK_MODE = 'custom'
                         # ゲーム作成ロジックは既存の関数を再利用（存在確認）
                         try:
-                            print(f"DEBUG: selection modal starting battle, names={names}")
+                            logger.debug("selection modal starting battle, names=%s", names)
                             if names and 'build_game_from_card_names' in globals():
                                 globals()['game'] = build_game_from_card_names(names)
                             else:
@@ -1960,7 +2032,7 @@ def show_custom_deck_selection(screen):
                                     pass
                                 try:
                                     gtmp = globals().get('game')
-                                    print(f"DEBUG: global game set (mouse_start) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                    logger.debug("global game set (mouse_start) id=%s deck_count=%s", id(gtmp), len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA')
                                 except Exception:
                                     pass
                             try:
@@ -1968,11 +2040,11 @@ def show_custom_deck_selection(screen):
                                 if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                     cards = getattr(g.player.deck, 'cards', None)
                                     if cards is not None:
-                                        print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                        logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                             except Exception as _e:
-                                print(f"DEBUG: error inspecting created game: {_e}")
+                                logger.debug("error inspecting created game: %s", _e)
                         except Exception as e:
-                            print(f"DEBUG: exception when creating game from names: {e}")
+                            logger.debug("exception when creating game from names: %s", e)
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
                             try:
@@ -7469,21 +7541,11 @@ def main_loop():
                                         promoted_count += 1
                             except Exception as perr:
                                 # log per-piece errors but continue
-                                try:
-                                    import traceback
-                                    print('DEBUG: error promoting piece in gamble_promote:')
-                                    traceback.print_exc()
-                                except Exception:
-                                    print(f'DEBUG: error promoting piece: {perr}')
+                                logger.exception('error promoting piece in gamble_promote: %s', perr)
                                 continue
                 except Exception as e:
                     # If anything unexpected happens during promotion handling, log and clear pending
-                    try:
-                        import traceback
-                        print('DEBUG: exception during gamble_promote overall handling:')
-                        traceback.print_exc()
-                    except Exception:
-                        print(f'DEBUG: exception during gamble_promote overall handling: {e}')
+                    logger.exception('exception during gamble_promote overall handling: %s', e)
                     game.pending = None
                 # end of promotion loop / iron_wall handling
 

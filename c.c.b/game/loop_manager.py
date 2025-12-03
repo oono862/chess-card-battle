@@ -13,6 +13,9 @@ import sys
 import time
 import time as _ct_time
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def update_turn_tracking(chess_current_turn, game, chess):
@@ -471,21 +474,11 @@ def process_gamble_promote(game, ai_player, chess_current_turn, chess):
                             promoted_count += 1
                 except Exception as perr:
                     # log per-piece errors but continue
-                    try:
-                        import traceback
-                        print('DEBUG: error promoting piece in gamble_promote:')
-                        traceback.print_exc()
-                    except Exception:
-                        print(f'DEBUG: error promoting piece: {perr}')
+                    logger.exception('error promoting piece in gamble_promote: %s', perr)
                     continue
     except Exception as e:
         # If anything unexpected happens during promotion handling, log and clear pending
-        try:
-            import traceback
-            print('DEBUG: exception during gamble_promote overall handling:')
-            traceback.print_exc()
-        except Exception:
-            print(f'DEBUG: exception during gamble_promote overall handling: {e}')
+        logger.exception('exception during gamble_promote overall handling: %s', e)
         game.pending = None
         return chess_current_turn
     # end of promotion loop / iron_wall handling

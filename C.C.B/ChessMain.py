@@ -3,6 +3,9 @@ can_draw_card = False  # ギミック（カードドロー）機能は削除済�
 
 import pygame
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 # Gimmick system removed for new game; provide empty stubs so code depending on names won't fail
 def get_gimmick_list():
     return []
@@ -1476,13 +1479,13 @@ while running:
             # まずドロースペースがクリックされたかチェック（優先）
             try:
                 if hasattr(draw_board, 'card_draw_rect') and draw_board.card_draw_rect and draw_board.card_draw_rect.collidepoint((mx, my)):
-                    print('DEBUG: draw area clicked at', (mx, my), 'rect=', draw_board.card_draw_rect)
+                    logger.debug('draw area clicked at %s rect=%s', (mx, my), draw_board.card_draw_rect)
                     # Card draw feature removed; show notification
                     notif_message = "カード機能はこのバージョンで無効化されています"
                     notif_until = time.time() + 1.5
                     continue
             except Exception as e:
-                print('DEBUG: draw area click check error', e)
+                logger.debug('draw area click check error %s', e)
             row, col = get_clicked_pos((mx, my))
             clicked = get_piece_at(row, col, pieces)
             # ギミック／カードUIは削除済みのため、クリック処理は行わない

@@ -1520,6 +1520,45 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                     elif event.key == pygame.K_BACKSPACE:
                         input_text = input_text[:-1]
             
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:  # 右クリック
+                mx, my = event.pos
+                # カード画像ローダーをインポート
+                try:
+                    from assets.image_loader import get_card_image
+                except Exception:
+                    get_card_image = None
+                
+                if get_card_image:
+                    # 全カードリストで右クリック
+                    list_start_y = 110
+                    card_h = 50
+                    for i, card in enumerate(available_cards):
+                        card_y = list_start_y + i * card_h - scroll_offset
+                        if 110 <= card_y < H - 100:
+                            card_rect = pygame.Rect(20, card_y, 500, card_h - 5)
+                            if card_rect.collidepoint(mx, my):
+                                show_card_detail(screen, card['name'], get_card_image)
+                                break
+                    
+                    # デッキ内カードで右クリック
+                    deck_start_x = win_w - 420
+                    card_counts = {}
+                    for card in deck_cards:
+                        key = card['name']
+                        if key not in card_counts:
+                            card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
+                        card_counts[key]['count'] += 1
+                    
+                    display_idx = 0
+                    for card_info in card_counts.values():
+                        card_y = list_start_y + display_idx * card_h
+                        if 110 <= card_y < win_h - 100:
+                            card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
+                            if card_rect.collidepoint(mx, my):
+                                show_card_detail(screen, card_info['name'], get_card_image)
+                                break
+                        display_idx += 1
+            
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
                 

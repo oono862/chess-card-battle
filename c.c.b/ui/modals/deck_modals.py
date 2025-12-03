@@ -7,6 +7,9 @@
 import pygame
 import sys
 import time as _ct_time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Debounce tracking for deck choice modal
@@ -251,7 +254,7 @@ def show_deck_modal(screen, W, H, get_font, FONT, SMALL, load_saved_decks, save_
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
                                 # Remember that user explicitly chose a custom deck so future
                                 # rematches or returning to menus should preserve this choice.
                                 DECK_MODE_setter('custom')
@@ -271,11 +274,11 @@ def show_deck_modal(screen, W, H, get_font, FONT, SMALL, load_saved_decks, save_
                                     if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                         cards = getattr(g.player.deck, 'cards', None)
                                         if cards is not None:
-                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                            logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                                 except Exception as _e:
-                                    print(f"DEBUG: error inspecting created game: {_e}")
+                                    logger.debug("error inspecting created game: %s", _e)
                             except Exception as e:
-                                print(f"DEBUG: exception when creating game from names: {e}")
+                                logger.debug("exception when creating game from names: %s", e)
                                 # fallback to a safe default
                                 import __main__
                                 __main__.state.game = new_game_with_mode_func('custom')
@@ -942,7 +945,7 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        logger.debug("save clicked with %d cards (<20) - entering confirmation dialog", len(deck_cards))
                         # 20枚未満でも保存を許可するか確認するダイアログに変更
                         # 「破棄する」-> 変更を破棄して戻る
                         # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
@@ -960,14 +963,14 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
                                     if discard_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
 
                                     # 保存するボタン
                                     save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
                                     if save_anyway_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        logger.debug("user selected SAVE ANYWAY in low-deck dialog")
                                         # 20枚未満だが保存して戻る
                                         pygame.key.stop_text_input()
                                         return {

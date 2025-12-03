@@ -250,18 +250,18 @@ def build_game_from_card_names(names):
 
         # debug: report unmatched names and how many matched
         try:
-            print(f"DEBUG: build_game_from_card_names - unmatched={unmatched}, matched_count={len(pool)}")
-            print(f"DEBUG: pool sample names={[getattr(c,'name',None) for c in pool[:20]]}")
+            logger.debug("build_game_from_card_names - unmatched=%s, matched_count=%d", unmatched, len(pool))
+            logger.debug("pool sample names=%s", [getattr(c, 'name', None) for c in pool[:20]])
         except Exception:
             pass
 
         if not pool:
-            print(f"DEBUG: build_game_from_card_names - no pool built from names")
+            logger.debug("build_game_from_card_names - no pool built from names")
             deck = build_deck_for_mode('custom')
         else:
             try:
                 types_info = [type(c).__name__ for c in pool[:8]]
-                print(f"DEBUG: pool types sample={types_info}")
+                logger.debug("pool types sample=%s", types_info)
             except Exception:
                 pass
             
@@ -269,16 +269,14 @@ def build_game_from_card_names(names):
             
             try:
                 deck_names_before = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
-                print(f"DEBUG: deck names before shuffle={deck_names_before}")
-                sys.stdout.flush()
+                logger.debug("deck names before shuffle=%s", deck_names_before)
             except Exception:
                 pass
             
             try:
                 deck.shuffle()
                 deck_names_after = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
-                print(f"DEBUG: deck names after shuffle={deck_names_after}")
-                sys.stdout.flush()
+                logger.debug("deck names after shuffle=%s", deck_names_after)
             except Exception:
                 # if shuffle fails, continue with unshuffled deck
                 pass
@@ -298,7 +296,7 @@ def build_game_from_card_names(names):
             deck_cards = getattr(g.player.deck, 'cards', [])
             deck_count = len(deck_cards)
             top_names = [c.name for c in deck_cards[:8]]
-            print(f"DEBUG: after setup_battle hand={hand_names} deck_remaining={deck_count} top={top_names}")
+            logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
         except Exception:
             pass
         
@@ -311,10 +309,10 @@ def build_game_from_card_names(names):
         except Exception:
             try:
                 import traceback
-                print(f"DEBUG: build_game_from_card_names unexpected exception: {e}")
+                logger.debug("build_game_from_card_names unexpected exception: %s", e)
                 traceback.print_exc()
             except Exception:
-                print(f"DEBUG: build_game_from_card_names unexpected exception (no traceback available): {e}")
+                logger.debug("build_game_from_card_names unexpected exception (no traceback available): %s", e)
         
         # Fallback to new_game_with_mode
         try:

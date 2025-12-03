@@ -1204,7 +1204,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     else:
                                         names = [str(x) for x in cards_field]
                             try:
-                                print(f"DEBUG: show_deck_modal starting battle, names={names}")
+                                logger.debug("show_deck_modal starting battle, names=%s", names)
                                 # Remember that user explicitly chose a custom deck so future
                                 # rematches or returning to menus should preserve this choice.
                                 global DECK_MODE
@@ -1224,11 +1224,11 @@ def show_deck_modal(screen, battle_select_mode=False):
                                     if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                         cards = getattr(g.player.deck, 'cards', None)
                                         if cards is not None:
-                                            print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                            logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                                 except Exception as _e:
-                                    print(f"DEBUG: error inspecting created game: {_e}")
+                                    logger.debug("error inspecting created game: %s", _e)
                             except Exception as e:
-                                print(f"DEBUG: exception when creating game from names: {e}")
+                                logger.debug("exception when creating game from names: %s", e)
                                 # fallback to a safe default
                                 globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
@@ -1567,7 +1567,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 if save_rect.collidepoint(mx, my):
                     # デッキ枚数チェック
                     if len(deck_cards) < 20:
-                        print(f"DEBUG: save clicked with {len(deck_cards)} cards (<20) - entering confirmation dialog")
+                        logger.debug("save clicked with %d cards (<20) - entering confirmation dialog", len(deck_cards))
                         # 20枚未満でも保存を許可するか確認するダイアログに変更
                         # 「破棄する」-> 変更を破棄して戻る
                         # 「保存する」-> 20枚未満だが保存してデッキリストに戻る
@@ -1585,14 +1585,14 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                                     # 破棄ボタン
                                     discard_rect = pygame.Rect(dialog_x + 60, dialog_y + 140, 160, 50)
                                     if discard_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected DISCARD in low-deck dialog")
+                                        logger.debug("user selected DISCARD in low-deck dialog")
                                         pygame.key.stop_text_input()
                                         return None  # 変更破棄してデッキリストへ
 
                                     # 保存するボタン
                                     save_anyway_rect = pygame.Rect(dialog_x + 280, dialog_y + 140, 160, 50)
                                     if save_anyway_rect.collidepoint(wmx, wmy):
-                                        print("DEBUG: user selected SAVE ANYWAY in low-deck dialog")
+                                        logger.debug("user selected SAVE ANYWAY in low-deck dialog")
                                         # 20枚未満だが保存して戻る
                                         pygame.key.stop_text_input()
                                         return {
@@ -1948,7 +1948,7 @@ def show_custom_deck_selection(screen):
                         DECK_MODE = 'custom'
                         # ゲーム作成ロジックは既存の関数を再利用（存在確認）
                         try:
-                            print(f"DEBUG: selection modal starting battle, names={names}")
+                            logger.debug("selection modal starting battle, names=%s", names)
                             if names and 'build_game_from_card_names' in globals():
                                 globals()['game'] = build_game_from_card_names(names)
                             else:
@@ -1960,7 +1960,7 @@ def show_custom_deck_selection(screen):
                                     pass
                                 try:
                                     gtmp = globals().get('game')
-                                    print(f"DEBUG: global game set (mouse_start) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                    logger.debug("global game set (mouse_start) id=%s deck_count=%s", id(gtmp), len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA')
                                 except Exception:
                                     pass
                             try:
@@ -1968,11 +1968,11 @@ def show_custom_deck_selection(screen):
                                 if g and hasattr(g, 'player') and hasattr(g.player, 'deck'):
                                     cards = getattr(g.player.deck, 'cards', None)
                                     if cards is not None:
-                                        print(f"DEBUG: created game deck count={len(cards)}; first_cards={[c.name for c in cards[:8]]}")
+                                        logger.debug("created game deck count=%d; first_cards=%s", len(cards), [c.name for c in cards[:8]])
                             except Exception as _e:
-                                print(f"DEBUG: error inspecting created game: {_e}")
+                                logger.debug("error inspecting created game: %s", _e)
                         except Exception as e:
-                            print(f"DEBUG: exception when creating game from names: {e}")
+                            logger.debug("exception when creating game from names: %s", e)
                             globals()['game'] = new_game_with_mode(DECK_MODE)
                             globals()['ai_player'] = build_ai_player(DECK_MODE)
                             try:
@@ -7469,21 +7469,11 @@ def main_loop():
                                         promoted_count += 1
                             except Exception as perr:
                                 # log per-piece errors but continue
-                                try:
-                                    import traceback
-                                    print('DEBUG: error promoting piece in gamble_promote:')
-                                    traceback.print_exc()
-                                except Exception:
-                                    print(f'DEBUG: error promoting piece: {perr}')
+                                logger.exception('error promoting piece in gamble_promote: %s', perr)
                                 continue
                 except Exception as e:
                     # If anything unexpected happens during promotion handling, log and clear pending
-                    try:
-                        import traceback
-                        print('DEBUG: exception during gamble_promote overall handling:')
-                        traceback.print_exc()
-                    except Exception:
-                        print(f'DEBUG: exception during gamble_promote overall handling: {e}')
+                    logger.exception('exception during gamble_promote overall handling: %s', e)
                     game.pending = None
                 # end of promotion loop / iron_wall handling
 

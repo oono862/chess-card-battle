@@ -1,5 +1,8 @@
 """デバッグツール - 各種テスト用盤面設定とデバッグモード管理"""
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 # === DEBUG: 反撃チェックを「カード使用直後のみ許可」する検証モード ===
 # F6 で ON/OFF。ON の間、実カード使用または F7 で
@@ -89,7 +92,7 @@ def debug_setup_castling():
         chess.en_passant_target = None
         game.log.append("[DEBUG] キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
     except Exception as e:
-        print(f"DEBUG: debug_setup_castling failed: {e}")
+        logger.debug("debug_setup_castling failed: %s", e)
 
 
 def debug_setup_en_passant():
@@ -119,7 +122,7 @@ def debug_setup_en_passant():
         setattr(main_module, 'chess_current_turn', 'white')
         game.log.append("[DEBUG] アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
     except Exception as e:
-        print(f"DEBUG: debug_setup_en_passant failed: {e}")
+        logger.debug("debug_setup_en_passant failed: %s", e)
 
 
 def debug_setup_promotion():
@@ -147,7 +150,7 @@ def debug_setup_promotion():
         setattr(main_module, 'chess_current_turn', 'white')
         game.log.append("[DEBUG] 昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
     except Exception as e:
-        print(f"DEBUG: debug_setup_promotion failed: {e}")
+        logger.debug("debug_setup_promotion failed: %s", e)
 
 
 def debug_reset_initial():
@@ -173,7 +176,7 @@ def debug_reset_initial():
         setattr(main_module, 'chess_current_turn', 'white')
         game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
     except Exception as e:
-        print(f"DEBUG: debug_reset_initial failed: {e}")
+        logger.debug("debug_reset_initial failed: %s", e)
 
 
 def debug_setup_checkmate():
@@ -205,7 +208,7 @@ def debug_setup_checkmate():
         chess.en_passant_target = None
         game.log.append("[DEBUG] チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
     except Exception as e:
-        print(f"DEBUG: debug_setup_checkmate failed: {e}")
+        logger.debug("debug_setup_checkmate failed: %s", e)
 
 
 def debug_setup_counter_check_white():
@@ -265,7 +268,7 @@ def debug_setup_counter_check_white():
         except Exception:
             pass
     except Exception as e:
-        print(f"DEBUG: debug_setup_counter_check_white failed: {e}")
+        logger.debug("debug_setup_counter_check_white failed: %s", e)
 
 
 def debug_setup_simul_check_start():
@@ -325,4 +328,4 @@ def debug_setup_simul_check_start():
         except Exception:
             pass
     except Exception as e:
-        print(f"DEBUG: debug_setup_simul_check_start failed: {e}")
+        logger.debug("debug_setup_simul_check_start failed: %s", e)

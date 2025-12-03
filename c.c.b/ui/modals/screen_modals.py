@@ -8,6 +8,9 @@
 import pygame
 import os
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func, 
@@ -171,7 +174,7 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
                                 game = new_game_with_mode_func(DECK_MODE)
                                 ai_player = build_ai_player_func(DECK_MODE)
                                 try:
-                                    print(f"DEBUG: game created (start_screen) id={id(game)} deck_count={len(getattr(game.player.deck,'cards',[])) if game and hasattr(game,'player') else 'NA'}")
+                                    logger.debug("game created (start_screen) id=%s deck_count=%s", id(game), len(getattr(game.player.deck,'cards',[])) if game and hasattr(game,'player') else 'NA')
                                 except Exception:
                                     pass
                         except Exception:

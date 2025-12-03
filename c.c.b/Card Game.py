@@ -15,54 +15,29 @@ if local_dir not in sys.path:
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
+# Try to import local chess engine and rules modules (support package-relative and absolute imports)
+try:
+    # If this file is imported as part of the package, prefer relative imports
+    from . import chess_engine as chess
+    from .chess import rules as chess_rules
+except Exception:
+    try:
+        import chess_engine as chess
+    except Exception:
+        chess = None
+    try:
+        import chess_rules_simple as chess_rules
+    except Exception:
+        try:
+            from chess import rules as chess_rules
+        except Exception:
+            chess_rules = None
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
     from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
 except Exception:
     logger.exception("Failed to import card_core module")
     raise
-# チェスロジックを外部モジュール化
-try:
-    import chess_engine as chess
-except Exception:
-    logger.exception("Failed to import chess_engine module")
-    raise
-# チェスルールモジュール
-try:
-    from chess import rules as chess_rules
-except Exception:
-    logger.exception("Failed to import chess.rules module")
-    chess_rules = None
-
-# ゲーム状態管理
-try:
-    from game.state import get_game_state, reset_game_state
-except Exception:
-    logger.exception("Failed to import game.state module")
-    class _FallbackGameState:
-        def __init__(self):
-            self.game = None
-            self.ai_player = None
-    _fallback_state = _FallbackGameState()
-    def get_game_state(): return _fallback_state
-    def reset_game_state(): pass
-# ユーティリティヘルパー関数
-try:
-    from utils.helpers import on_board, get_opponent_hand_count, get_piece_at, simulate_move
-    from utils.drawing import draw_dashed_rect
-except Exception:
-    logger.exception("Failed to import utils.helpers module")
-    def on_board(r, c): return 0 <= r < 8 and 0 <= c < 8
-    def get_opponent_hand_count():
-        try: return len(ai_player.hand.cards) if ai_player else 0
-        except Exception: return 0
-    def get_piece_at(row, col):
-        try: return chess.get_piece_at(row, col)
-        except Exception: return None
-    def simulate_move(src_piece, to_r, to_c):
-        try: return chess.simulate_move(src_piece, to_r, to_c)
-        except Exception: return []
-    def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2): pass
 
 # スクリプトを直接実行する場合、同ディレクトリ下の `assets/` を import できるように
 # カレントファイルのディレクトリを sys.path に追加しておく（ローカル実行時の互換性補助）。
@@ -342,6 +317,14 @@ ai_consecutive_turns = 0
 # When True, the next ai_make_move() call is a continuation of an existing AI
 # '迅雷' extra-turn and should NOT perform start-of-turn effects (draw/PP reset).
 ai_continuation = False
+
+# 簡易アニメーション: AIが駒をどこに移動させたかを視覚化するための状態
+# フォールバックでも安全に参照できるように辞書で管理する
+ai_move_anim = {'active': False, 'from_row': None, 'from_col': None, 'row': None, 'col': None, 'start': 0.0, 'duration': 2.4}
+# アニメーション設定フラグ（設定画面でトグル可能）
+ai_move_pulse_enabled = True
+ai_move_ghost_enabled = True
+ai_move_arrow_enabled = True
 
 show_grave = False
 show_log = False  # ログ表示切替（デフォルト非表示）
@@ -713,6 +696,9 @@ def restart_game():
                             pass
                     except Exception:
                         ai_player = None
+                else:
+                    # started successfully; nothing more to do here
+                    pass
             else:
                 # fixed deck chosen
                 game = new_game_with_mode('fixed')
@@ -2372,6 +2358,18 @@ def show_settings_screen(screen):
                             pygame.mixer.music.set_volume(bgm_volume)
                     except Exception:
                         pass
+                # Animation settings button click (handle before gimmick area to avoid overlap)
+                try:
+                    anim_btn_rect = pygame.Rect(x + w - 260, y + h - 140, 220, 40)
+                    if anim_btn_rect.collidepoint(mx, my):
+                        try:
+                            show_animation_settings_screen(screen)
+                        except Exception:
+                            pass
+                        continue
+                except Exception:
+                    pass
+
                 # Gimmick activation option click areas (relative to modal)
                 gimm_x = x + 40
                 gimm_y = y + 220
@@ -2420,6 +2418,15 @@ def show_settings_screen(screen):
                         try:
                             globals()['notice_msg'] = "発動方法: ダブルクリック"
                             globals()['notice_until'] = _ct_time.time() + 1.5
+                        except Exception:
+                            pass
+                        # animation settings button
+                    anim_btn_rect = pygame.Rect(x + 40, y + h - 56, 220, 40)
+                    if anim_btn_rect.collidepoint(mx, my):
+                        try:
+                            show_animation_settings_screen(screen)
+                        except Exception:
+                            pass
                         except Exception:
                             pass
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
@@ -2493,6 +2500,16 @@ def show_settings_screen(screen):
         pygame.draw.rect(surf, (70,70,70), back_rect, 2)
         back_txt = SMALL.render("戻る", True, (30,30,30))
         surf.blit(back_txt, (back_rect.x + (back_rect.w - back_txt.get_width())//2, back_rect.y + (back_rect.h - back_txt.get_height())//2))
+
+        # Animation settings button (moved slightly right and a bit higher)
+        try:
+            anim_btn = pygame.Rect(w - 260, h - 140, 220, 40)
+            pygame.draw.rect(surf, (220,240,255), anim_btn)
+            pygame.draw.rect(surf, (70,90,140), anim_btn, 2)
+            atxt = SMALL.render("アニメーション設定", True, (30,30,30))
+            surf.blit(atxt, (anim_btn.x + (anim_btn.w - atxt.get_width())//2, anim_btn.y + (anim_btn.h - atxt.get_height())//2))
+        except Exception:
+            pass
 
         # Gimmick activation method description and options
         try:
@@ -2571,7 +2588,98 @@ def show_settings_screen(screen):
         pygame.display.flip()
         clock.tick(30)
 
+def show_animation_settings_screen(screen):
+    """Modal to toggle AI animation options:
+    - 駒移動パルスON/OFF
+    - 駒ゴーストON/OFF
+    - 矢印ON/OFF
+    """
+    global ai_move_pulse_enabled, ai_move_ghost_enabled, ai_move_arrow_enabled
+    clk = pygame.time.Clock()
+    w = 520
+    h = 240
+    x = (W - w) // 2
+    y = (H - h) // 2
 
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit(0)
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                return
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                mx, my = ev.pos
+                # back button
+                back_rect = pygame.Rect(x + w - 120, y + h - 56, 100, 40)
+                if back_rect.collidepoint(mx, my):
+                    return
+                # checkboxes
+                cb_x = x + 40
+                cb_y = y + 48
+                cb_h = 36
+                # pulse
+                cb1 = pygame.Rect(cb_x, cb_y, 24, 24)
+                if cb1.collidepoint(mx, my):
+                    ai_move_pulse_enabled = not ai_move_pulse_enabled
+                # ghost
+                cb2 = pygame.Rect(cb_x, cb_y + cb_h, 24, 24)
+                if cb2.collidepoint(mx, my):
+                    ai_move_ghost_enabled = not ai_move_ghost_enabled
+                # arrow
+                cb3 = pygame.Rect(cb_x, cb_y + cb_h*2, 24, 24)
+                if cb3.collidepoint(mx, my):
+                    ai_move_arrow_enabled = not ai_move_arrow_enabled
+
+        # draw modal
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0,160))
+        screen.blit(overlay, (0,0))
+        surf = pygame.Surface((w, h))
+        surf.fill((245,245,250))
+        pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
+        title = FONT.render("アニメーション設定", True, (30,30,30))
+        surf.blit(title, (20, 12))
+
+        # options
+        try:
+            opt_x = 40
+            opt_y = 48
+            gap = 36
+            # pulse
+            pygame.draw.rect(surf, (230,230,230), (opt_x, opt_y, 24, 24))
+            pygame.draw.rect(surf, (80,80,80), (opt_x, opt_y, 24, 24), 2)
+            if ai_move_pulse_enabled:
+                pygame.draw.circle(surf, (40,120,220), (opt_x+12, opt_y+12), 6)
+            surf.blit(SMALL.render("駒移動パルスを表示する", True, (30,30,30)), (opt_x+36, opt_y))
+
+            # ghost
+            oy = opt_y + gap
+            pygame.draw.rect(surf, (230,230,230), (opt_x, oy, 24, 24))
+            pygame.draw.rect(surf, (80,80,80), (opt_x, oy, 24, 24), 2)
+            if ai_move_ghost_enabled:
+                pygame.draw.circle(surf, (120,120,120), (opt_x+12, oy+12), 6)
+            surf.blit(SMALL.render("駒ゴーストを表示する", True, (30,30,30)), (opt_x+36, oy))
+
+            # arrow
+            oy2 = opt_y + gap*2
+            pygame.draw.rect(surf, (230,230,230), (opt_x, oy2, 24, 24))
+            pygame.draw.rect(surf, (80,80,80), (opt_x, oy2, 24, 24), 2)
+            if ai_move_arrow_enabled:
+                pygame.draw.circle(surf, (220,40,40), (opt_x+12, oy2+12), 6)
+            surf.blit(SMALL.render("移動矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
+        except Exception:
+            pass
+
+        # back
+        back_rect = pygame.Rect(w - 120, h - 56, 100, 40)
+        pygame.draw.rect(surf, (220,220,220), back_rect)
+        pygame.draw.rect(surf, (70,70,70), back_rect, 2)
+        back_txt = SMALL.render("戻る", True, (30,30,30))
+        surf.blit(back_txt, (back_rect.x + (back_rect.w - back_txt.get_width())//2, back_rect.y + (back_rect.h - back_txt.get_height())//2))
+
+        screen.blit(surf, (x, y))
+        pygame.display.flip()
+        clk.tick(30)
 
 def get_piece_at(row, col):
     # 後方互換のための薄いラッパー
@@ -3496,8 +3604,35 @@ def ai_make_move():
         sel = random.choice(best) if best else random.choice(candidates)
 
     p, mv = sel
+    # 移動元を記録してから適用（パルスと矢印描画のため）
+    try:
+        src_r = getattr(p, 'row', None)
+        src_c = getattr(p, 'col', None)
+    except Exception:
+        src_r = src_c = None
     apply_move(p, mv[0], mv[1])
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
+    # 移動アニメーションを開始する（移動元: 赤パルス、移動先: 青パルス、両者を矢印で結ぶ）
+    try:
+        ai_move_anim['active'] = True
+        ai_move_anim['from_row'] = src_r
+        ai_move_anim['from_col'] = src_c
+        ai_move_anim['row'] = mv[0]
+        ai_move_anim['col'] = mv[1]
+        ai_move_anim['start'] = _ct_time.time()
+        # アニメ時間を延長（2.4秒）
+        ai_move_anim['duration'] = 2.4
+        # ゴースト駒情報: 移動前の駒を一ターン分表示するために保存
+        try:
+            ai_move_anim['ghost_name'] = getattr(p, 'name', None)
+            ai_move_anim['ghost_color'] = getattr(p, 'color', None)
+            ai_move_anim['ghost_turn'] = getattr(game, 'turn', None)
+        except Exception:
+            ai_move_anim['ghost_name'] = None
+            ai_move_anim['ghost_color'] = None
+            ai_move_anim['ghost_turn'] = None
+    except Exception:
+        pass
     
     # AI自動昇格処理: 昇格が保留中の場合、自動的にクイーンに昇格させる
     if chess.promotion_pending is not None:
@@ -3725,6 +3860,174 @@ def draw_panel():
         for cc in range(8):
             rrect = pygame.Rect(board_left + cc*square_w, board_top + rr*square_h, square_w, square_h)
             pygame.draw.rect(screen, light if (rr+cc)%2==0 else dark, rrect)
+
+    # 簡易アニメーション: AIが移動させた先と移動元をパルスで表示し、矢印で結ぶ
+    try:
+        if ai_move_anim.get('active'):
+            to_r = ai_move_anim.get('row')
+            to_c = ai_move_anim.get('col')
+            from_r = ai_move_anim.get('from_row')
+            from_c = ai_move_anim.get('from_col')
+            elapsed = _ct_time.time() - ai_move_anim.get('start', 0.0)
+            dur = max(0.001, float(ai_move_anim.get('duration', 1.0)))
+            if elapsed >= dur:
+                ai_move_anim['active'] = False
+            else:
+                prog = max(0.0, min(1.0, elapsed / dur))
+                # pulse 0->1->0 shape
+                pulse = math.sin(prog * math.pi)
+                # radius relative to square
+                r0 = square_w // 2
+                radius = max(2, int(r0 * (0.6 + 0.6 * pulse)))
+                alpha = max(0, min(255, int(220 * (1.0 - prog))))
+
+                # precompute source/destination top-left positions so ghost drawing
+                # can reference them even if the pulse effect is disabled.
+                fx = fy = sx = sy = None
+                if to_r is not None and to_c is not None:
+                    fx = board_left + to_c * square_w
+                    fy = board_top + to_r * square_h
+
+                # destination: blue pulse
+                if to_r is not None and to_c is not None and globals().get('ai_move_pulse_enabled', True):
+                    surf = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                    col_to = (40, 120, 220)  # blue
+                    pygame.draw.circle(surf, (*col_to, max(24, alpha//6)), (square_w//2, square_h//2), radius)
+                    pygame.draw.circle(surf, (*col_to, alpha), (square_w//2, square_h//2), radius, 3)
+                    screen.blit(surf, (fx, fy))
+
+                # source: red pulse
+                if from_r is not None and from_c is not None:
+                    sx = board_left + from_c * square_w
+                    sy = board_top + from_r * square_h
+                if from_r is not None and from_c is not None and globals().get('ai_move_pulse_enabled', True):
+                    surf2 = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                    col_from = (220, 40, 40)  # red
+                    pygame.draw.circle(surf2, (*col_from, max(24, alpha//6)), (square_w//2, square_h//2), radius)
+                    pygame.draw.circle(surf2, (*col_from, alpha), (square_w//2, square_h//2), radius, 3)
+                    screen.blit(surf2, (sx, sy))
+
+                # ghost piece: show a translucent piece image (same shape as moved piece) at source for one turn
+                if globals().get('ai_move_ghost_enabled', True):
+                    try:
+                        ghost_name = ai_move_anim.get('ghost_name')
+                        ghost_color = ai_move_anim.get('ghost_color')
+                        ghost_turn = ai_move_anim.get('ghost_turn')
+                        # Show ghost while the AI animation is active OR for one full turn
+                        # (i.e., while game.turn equals the saved ghost_turn). This ensures
+                        # the ghost remains visible even after the quick ai animation finishes.
+                        show_ghost = False
+                        if ghost_name and ghost_color:
+                            if ai_move_anim.get('active'):
+                                show_ghost = True
+                            else:
+                                try:
+                                    if getattr(game, 'turn', None) == ghost_turn:
+                                        show_ghost = True
+                                except Exception:
+                                    show_ghost = False
+                        if show_ghost:
+                            # compute padding and image size consistent with normal piece drawing
+                            padding = max(6, int(square_w * 0.08))
+                            img_w = square_w - padding*2
+                            img_h = square_h - padding*2
+                            gp = get_piece_image_surface(ghost_name, ghost_color, (img_w, img_h))
+                            if gp is not None:
+                                # draw translucent copy to avoid modifying the shared
+                                # piece surface (which would affect all pieces of
+                                # the same type/color).
+                                try:
+                                    tmp = gp.copy()
+                                    tmp.set_alpha(100)
+                                    screen.blit(tmp, (sx + padding, sy + padding))
+                                except Exception:
+                                    # fallback: attempt to blit the original image
+                                    # without changing its alpha to avoid global
+                                    # side-effects. If that fails, silently ignore.
+                                    try:
+                                        screen.blit(gp, (sx + padding, sy + padding))
+                                    except Exception:
+                                        pass
+                            else:
+                                # fallback: translucent circle with piece initial
+                                cx = sx + square_w//2
+                                cy = sy + square_h//2
+                                gsurf = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+                                col = (240,240,240) if ghost_color == 'white' else (40,40,40)
+                                pygame.draw.circle(gsurf, (*col, 80), (square_w//2, square_h//2), max(4, radius-2))
+                                try:
+                                    label = SMALL.render(ghost_name, True, (0,0,0) if ghost_color == 'white' else (255,255,255))
+                                    gsurf.blit(label, (square_w//2 - label.get_width()//2, square_h//2 - label.get_height()//2))
+                                except Exception:
+                                    pass
+                                screen.blit(gsurf, (sx, sy))
+                    except Exception:
+                        pass
+                else:
+                    # ghost disabled: nothing to draw
+                    pass
+
+                # arrow from source to destination (draw on board-relative surface)
+                if from_r is not None and from_c is not None and to_r is not None and to_c is not None and globals().get('ai_move_arrow_enabled', True):
+                    surf_arrow = pygame.Surface((board_size, board_size), pygame.SRCALPHA)
+                    # centers relative to board surface
+                    fx_c = from_c * square_w + square_w // 2
+                    fy_c = from_r * square_h + square_h // 2
+                    tx_c = to_c * square_w + square_w // 2
+                    ty_c = to_r * square_h + square_h // 2
+                    # Offset start/end so arrow does not overlap piece image.
+                    padding_local = max(6, int(square_w * 0.08))
+                    img_w = max(0, square_w - padding_local * 2)
+                    # distance from center to piece image edge (approx)
+                    center_to_edge = img_w / 2.0 + 4.0
+                    dx = tx_c - fx_c
+                    dy = ty_c - fy_c
+                    dist = math.hypot(dx, dy)
+                    if dist > 1e-6:
+                        ux = dx / dist
+                        uy = dy / dist
+                        # ensure offsets do not cross (if very short, reduce offset)
+                        max_offset = max(0.0, (dist / 2.0) - 2.0)
+                        use_offset = min(center_to_edge, max_offset)
+                        start_x = fx_c + ux * use_offset
+                        start_y = fy_c + uy * use_offset
+                        end_x = tx_c - ux * use_offset
+                        end_y = ty_c - uy * use_offset
+                    else:
+                        start_x, start_y = fx_c, fy_c
+                        end_x, end_y = tx_c, ty_c
+                    # arrow: draw a shadowed/thick shaft then a clear colored shaft so arrow is obvious
+                    shadow_w = max(6, square_w//10)
+                    main_w = max(4, square_w//12)
+                    shadow_col = (0, 0, 0, max(120, int(alpha)))
+                    main_col = (220, 40, 40, 255)
+                    # draw from adjusted start to end so it doesn't overlap pieces
+                    pygame.draw.line(surf_arrow, shadow_col, (start_x, start_y), (end_x, end_y), shadow_w)
+                    pygame.draw.line(surf_arrow, main_col, (start_x, start_y), (end_x, end_y), main_w)
+                    # arrowhead (draw black outline then red fill)
+                    dx = tx_c - fx_c
+                    dy = ty_c - fy_c
+                    dist = math.hypot(dx, dy)
+                    if dist > 0:
+                        ux = dx / dist
+                        uy = dy / dist
+                        # perpendicular
+                        px = -uy
+                        py = ux
+                        size = min(max(8, square_w//4), int(square_w * 0.6))
+                        # arrowhead base point should be at end_x/end_y (offset from tile center)
+                        left = (end_x - int(ux * size) + int(px * (size//2)), end_y - int(uy * size) + int(py * (size//2)))
+                        right = (end_x - int(ux * size) - int(px * (size//2)), end_y - int(uy * size) - int(py * (size//2)))
+                        # outline
+                        try:
+                            pygame.draw.polygon(surf_arrow, (0,0,0, max(160, int(alpha))), [(end_x, end_y), left, right])
+                        except Exception:
+                            pass
+                        pygame.draw.polygon(surf_arrow, (220,40,40,255), [(end_x, end_y), left, right])
+                    # blit arrow surface at board origin
+                    screen.blit(surf_arrow, (board_left, board_top))
+    except Exception:
+        pass
 
     # 駒の描画（画像があれば画像で、なければフォールバックで丸と文字）
     for p in chess.pieces:

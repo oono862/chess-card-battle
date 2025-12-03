@@ -317,13 +317,8 @@ def build_game_from_card_names(names):
                 traceback.print_exc()
             except Exception:
                 logger.debug("build_game_from_card_names unexpected exception (no traceback available): %s", e)
-<<<<<<< HEAD
-        
-        # Fallback to new_game_with_mode
-=======
 
         # Fallback to new_game_with_mode if available
->>>>>>> ab5ca9f (chore: replace DEBUG prints with logging; fix deck load/save and CardGame indentation)
         try:
             main = get_main_module()
             new_game_with_mode = getattr(main, 'new_game_with_mode', None)

@@ -1,0 +1,12 @@
+import importlib.util, json, os, sys
+p = os.path.join(os.path.dirname(__file__), '..', 'c.c.b', 'game', 'deck_manager.py')
+p = os.path.abspath(p)
+print('loading from', p)
+spec = importlib.util.spec_from_file_location('deck_manager_local', p)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print('DECK_SAVE_FILE =', getattr(mod, 'DECK_SAVE_FILE', None))
+decks = mod.load_saved_decks()
+print('len=', len(decks))
+print('non-null indices=', [i for i,d in enumerate(decks) if d])
+print('sample first non-null:', json.dumps(decks[0], ensure_ascii=False) if decks and decks[0] else 'None')

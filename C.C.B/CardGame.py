@@ -170,26 +170,98 @@ try:
     from game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
     from game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
 except Exception:
-    logger.exception("Failed to import game modules")
-    import os as _os
-    DECK_SAVE_FILE = _os.path.join(_os.path.dirname(__file__), 'saved_decks.json')
-    def load_saved_decks(): return [None] * 9
-    def save_decks_to_file(decks): pass
-    def list_custom_decks(): return []
-    def load_custom_deck_by_name(name: str): return None
-    def build_deck_for_mode(mode: str):
-        try: return new_game_with_rule_deck().player.deck
-        except Exception: return None
-    def build_ai_player(mode: str):
-        try:
-            deck = build_deck_for_mode(mode)
-            return PlayerState(deck=deck, pp_max=10)
-        except Exception: return None
-    def build_game_from_card_names(names): return None
-    def start_player_turn(ai_end_msg: str = None): pass
-    def attempt_start_turn(): pass
-    def end_player_chess_move(): pass
-    def switch_turn(): pass
+    # Try alternative package-qualified import (script execution vs package import differences)
+    try:
+        from c.c.b.game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
+        from c.c.b.game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
+    except Exception:
+        logger.exception("Failed to import game modules")
+        import os as _os, json as _json
+
+        # Candidate locations for saved_decks.json (project layout varies depending on run mode)
+        _candidates = [
+            _os.path.join(_os.path.dirname(__file__), 'saved_decks.json'),
+            _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), 'saved_decks.json'),
+            _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'saved_decks.json'),
+        ]
+
+        # Choose existing file or default to first candidate
+        DECK_SAVE_FILE = next((p for p in _candidates if _os.path.exists(p)), _candidates[0])
+
+        def _read_decks_from(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as fh:
+                    data = _json.load(fh)
+                    if isinstance(data, list):
+                        # normalize length to 9
+                        out = list(data[:9]) + [None] * max(0, 9 - len(data))
+                        return out
+            except Exception:
+                return [None] * 9
+            return [None] * 9
+
+        def _write_decks_to(path, decks):
+            try:
+                with open(path, 'w', encoding='utf-8') as fh:
+                    _json.dump(decks, fh, ensure_ascii=False, indent=2)
+                return True
+            except Exception:
+                return False
+
+        def load_saved_decks():
+            return _read_decks_from(DECK_SAVE_FILE)
+
+        def save_decks_to_file(decks):
+            # Attempt to write to the chosen DECK_SAVE_FILE; if it fails, try candidates
+            if _write_decks_to(DECK_SAVE_FILE, decks):
+                return True
+            for p in _candidates:
+                try:
+                    if _write_decks_to(p, decks):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def list_custom_decks():
+            d = _os.path.join(_os.path.dirname(__file__), 'decks')
+            out = []
+            try:
+                if _os.path.isdir(d):
+                    for fn in sorted(_os.listdir(d)):
+                        if fn.lower().endswith('.json'):
+                            out.append(_os.path.splitext(fn)[0])
+            except Exception:
+                pass
+            return out
+
+        def load_custom_deck_by_name(name: str):
+            d = _os.path.join(_os.path.dirname(__file__), 'decks')
+            p = _os.path.join(d, f"{name}.json")
+            try:
+                if _os.path.exists(p):
+                    with open(p, 'r', encoding='utf-8') as fh:
+                        return _json.load(fh)
+            except Exception:
+                return None
+            return None
+
+        def build_deck_for_mode(mode: str):
+            try: return new_game_with_rule_deck().player.deck
+            except Exception: return None
+
+        def build_ai_player(mode: str):
+            try:
+                deck = build_deck_for_mode(mode)
+                return PlayerState(deck=deck, pp_max=10)
+            except Exception:
+                return None
+
+        def build_game_from_card_names(names): return None
+        def start_player_turn(ai_end_msg: str = None): pass
+        def attempt_start_turn(): pass
+        def end_player_chess_move(): pass
+        def switch_turn(): pass
 
 # ゲームループ管理をインポート
 try:
@@ -984,7 +1056,7 @@ def show_start_screen():
                                     pass
                                 try:
                                     gtmp = globals().get('game')
-                                    print(f"DEBUG: global game set (start_screen) id={id(gtmp)} deck_count={len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA'}")
+                                    logger.debug("global game set (start_screen) id=%s deck_count=%s", id(gtmp), len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA')
                                 except Exception:
                                     pass
                         except Exception:
@@ -1636,7 +1708,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                             screen.blit(dialog_surf, (dialog_x, dialog_y))
                             pygame.display.flip()
                             clock.tick(30)
-                    
+
                     # 20枚以上なら保存
                     pygame.key.stop_text_input()
                     return {

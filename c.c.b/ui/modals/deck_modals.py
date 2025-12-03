@@ -1361,22 +1361,22 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
                         DECK_MODE_setter('custom')
                         # ゲーム作成ロジックは既存の関数を再利用（存在確認）
                         try:
-                            print(f"DEBUG: selection modal starting battle, names={names}")
+                            logger.debug("selection modal starting battle, names=%s", names)
                             if names and build_game_from_card_names:
                                 game_setter(build_game_from_card_names(names))
                             else:
                                 game_setter(new_game_with_mode('custom'))
                                 # Note: ai_player is not set here; caller must handle it
                                 try:
-                                    print(f"DEBUG: global game set (mouse_start)")
+                                    logger.debug("global game set (mouse_start)")
                                 except Exception:
                                     pass
                             try:
-                                print(f"DEBUG: created game deck from custom selection")
-                            except Exception as _e:
-                                print(f"DEBUG: error inspecting created game: {_e}")
+                                logger.debug("created game deck from custom selection")
+                                except Exception as _e:
+                                    logger.debug("error inspecting created game: %s", _e)
                         except Exception as e:
-                            print(f"DEBUG: exception when creating game from names: {e}")
+                            logger.debug("exception when creating game from names: %s", e)
                             game_setter(new_game_with_mode('custom'))
                         return
 

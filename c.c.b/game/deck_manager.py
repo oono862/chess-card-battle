@@ -256,7 +256,7 @@ def build_game_from_card_names(names):
             pass
 
         if not pool:
-            logger.debug("build_game_from_card_names - no pool built from names")
+            logger.debug("build_game_from_card_names - no pool built from names, fallback to mode 'custom'")
             deck = build_deck_for_mode('custom')
         else:
             try:
@@ -264,32 +264,36 @@ def build_game_from_card_names(names):
                 logger.debug("pool types sample=%s", types_info)
             except Exception:
                 pass
-            
+
             deck = Deck(pool)
-            
+
             try:
-                deck_names_before = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                deck_names_before = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
                 logger.debug("deck names before shuffle=%s", deck_names_before)
             except Exception:
                 pass
-            
+
             try:
                 deck.shuffle()
-                deck_names_after = [(getattr(c,'name',None), id(c)) for c in deck.cards[:20]]
+                deck_names_after = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
                 logger.debug("deck names after shuffle=%s", deck_names_after)
             except Exception:
                 # if shuffle fails, continue with unshuffled deck
                 pass
 
-        deck.shuffle()
+        try:
+            deck.shuffle()
+        except Exception:
+            pass
+
         player = PlayerState(deck=deck)
         g = Game(player=player)
-        
+
         try:
             g.setup_battle()
         except Exception:
             pass
-        
+
         # debug: print initial hand and deck top after setup_battle
         try:
             hand_names = [c.name for c in g.player.hand.cards]
@@ -299,13 +303,13 @@ def build_game_from_card_names(names):
             logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
         except Exception:
             pass
-        
+
         return g
-        
+
     except Exception as e:
         # Try to use the module logger if present
         try:
-            logger.exception("Failed to build game from card names, falling back to custom deck")
+            logger.exception("Failed to build game from card names, falling back to custom deck: %s", e)
         except Exception:
             try:
                 import traceback
@@ -313,8 +317,13 @@ def build_game_from_card_names(names):
                 traceback.print_exc()
             except Exception:
                 logger.debug("build_game_from_card_names unexpected exception (no traceback available): %s", e)
+<<<<<<< HEAD
         
         # Fallback to new_game_with_mode
+=======
+
+        # Fallback to new_game_with_mode if available
+>>>>>>> ab5ca9f (chore: replace DEBUG prints with logging; fix deck load/save and CardGame indentation)
         try:
             main = get_main_module()
             new_game_with_mode = getattr(main, 'new_game_with_mode', None)
@@ -322,5 +331,5 @@ def build_game_from_card_names(names):
                 return new_game_with_mode('custom')
         except Exception:
             pass
-        
+
         return None

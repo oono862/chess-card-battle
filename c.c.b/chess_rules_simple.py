@@ -1,4 +1,4 @@
-# Simple chess rules and state extracted from Card Game.py (dict-based pieces)
+# Simple chess rules and state extracted from CardGame.py (dict-based pieces)
 # No dependency on pygame or card game state.
 
 from typing import List, Tuple, Optional, Dict

@@ -700,7 +700,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
 
 
 def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
-    """デッキ内容オーバーレイ表示
+    """デッキ内容オーバーレイ表示（画像ベース、重複カードは×n表示）
     
     Args:
         screen: pygame surface
@@ -708,24 +708,50 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         FONT, SMALL, TINY: フォントオブジェクト
         deck: デッキ辞書
     """
+    # カード画像ローダーをインポート
+    get_card_image = None
+    try:
+        from ..assets.image_loader import get_card_image
+    except Exception:
+        try:
+            from assets.image_loader import get_card_image
+        except Exception:
+            try:
+                import sys
+                import os
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                ccb_dir = os.path.dirname(os.path.dirname(current_dir))
+                assets_dir = os.path.join(ccb_dir, 'assets')
+                if assets_dir not in sys.path:
+                    sys.path.insert(0, assets_dir)
+                from image_loader import get_card_image
+            except Exception:
+                get_card_image = None
+    
     clk = pygame.time.Clock()
-    w = min(720, W - 120)
-    h = min(520, H - 120)
+    w = min(800, W - 100)
+    h = min(600, H - 100)
     x = (W - w)//2
     y = (H - h)//2
     # Use a Japanese-capable font for the title to avoid garbled text
     try:
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
+        count_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18, bold=True)
     except Exception:
         title_font = pygame.font.SysFont(None, 28)
+        count_font = pygame.font.SysFont(None, 18)
 
-    # build card name lines
-    lines = []
+    # カードを集計（重複をカウント）
+    card_counts = {}
     for c in deck.get('cards', []):
         if isinstance(c, dict):
-            lines.append(str(c.get('name', '不明')))
+            name = str(c.get('name', '不明'))
         else:
-            lines.append(str(c))
+            name = str(c)
+        card_counts[name] = card_counts.get(name, 0) + 1
+    
+    # ユニークなカードリストを作成
+    unique_cards = list(card_counts.keys())
 
     while True:
         for ev in pygame.event.get():
@@ -764,13 +790,68 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         except Exception:
             pass
 
-        ty = 48
-        for ln in lines:
-            txt = SMALL.render(ln, True, (30,30,30))
-            box.blit(txt, (20, ty))
-            ty += 24
-            if ty > h - 40:
+        # カード画像を表示（グリッド形式）
+        card_w = 90
+        card_h = 120
+        margin = 15
+        start_x = 20
+        start_y = 55
+        cols = (w - start_x * 2) // (card_w + margin)
+        
+        for idx, card_name in enumerate(unique_cards):
+            col = idx % cols
+            row = idx // cols
+            cx = start_x + col * (card_w + margin)
+            cy = start_y + row * (card_h + margin + 10)
+            
+            # 描画領域チェック
+            if cy + card_h > h - 40:
                 break
+            
+            # カード画像を描画
+            if get_card_image:
+                try:
+                    card_img = get_card_image(card_name, size=(card_w, card_h))
+                    if card_img is None:
+                        raise Exception("card_img is None")
+                    box.blit(card_img, (cx, cy))
+                except Exception:
+                    # フォールバック: テキスト表示
+                    pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
+                    pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)
+                    # カード名を複数行に分割して表示
+                    name_lines = []
+                    if len(card_name) > 8:
+                        name_lines.append(card_name[:8])
+                        name_lines.append(card_name[8:])
+                    else:
+                        name_lines.append(card_name)
+                    
+                    name_y = cy + 10
+                    for line in name_lines:
+                        name_surf = TINY.render(line, True, (30, 30, 30))
+                        name_rect = name_surf.get_rect(center=(cx + card_w // 2, name_y))
+                        box.blit(name_surf, name_rect)
+                        name_y += 16
+            else:
+                # get_card_imageが使えない場合のフォールバック
+                pygame.draw.rect(box, (255, 255, 255), (cx, cy, card_w, card_h))
+                pygame.draw.rect(box, (100, 100, 100), (cx, cy, card_w, card_h), 2)
+                name_surf = TINY.render(card_name, True, (30, 30, 30))
+                name_rect = name_surf.get_rect(center=(cx + card_w // 2, cy + card_h // 2))
+                box.blit(name_surf, name_rect)
+            
+            # 重複数を右下に表示（2枚以上の場合）
+            count = card_counts[card_name]
+            if count > 1:
+                # 半透明の背景
+                count_bg = pygame.Surface((30, 22), pygame.SRCALPHA)
+                count_bg.fill((0, 0, 0, 180))
+                box.blit(count_bg, (cx + card_w - 32, cy + card_h - 24))
+                
+                # ×n テキスト
+                count_text = count_font.render(f"×{count}", True, (255, 255, 255))
+                box.blit(count_text, (cx + card_w - 30, cy + card_h - 22))
 
         hint = TINY.render("外側をクリックすると閉じる", True, (80,80,80))
         box.blit(hint, (w - hint.get_width() - 12, h - 28))
@@ -1062,7 +1143,7 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                     count_text = SMALL.render(f"{count}/3", True, (160, 60, 60) if count >= 3 else (60, 160, 60))
                     screen.blit(count_text, (card_rect.x + 450, card_rect.y + 15))
         
-        # デッキ内カードリスト（重複をまとめて表示）
+        # デッキ内カードリスト（画像表示、重複をまとめて表示）
         deck_start_x = W - 420
         deck_title = FONT.render(f"デッキ内カード（{len(deck_cards)}枚）", True, (30, 30, 30))
         screen.blit(deck_title, (deck_start_x, 70))
@@ -1075,19 +1156,84 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                 card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
             card_counts[key]['count'] += 1
         
-        # 集計結果を表示
+        # 画像表示用の設定
+        card_img_width = 120
+        card_img_height = 160
+        cards_per_row = 3
+        card_spacing = 10
+        
+        # 集計結果を画像で表示
         display_idx = 0
         for card_info in card_counts.values():
-            card_y = list_start_y + display_idx * card_h
+            row = display_idx // cards_per_row
+            col = display_idx % cards_per_row
+            
+            card_x = deck_start_x + col * (card_img_width + card_spacing)
+            card_y = list_start_y + row * (card_img_height + card_spacing)
+            
             if 110 <= card_y < H - 100:
-                card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
-                
-                pygame.draw.rect(screen, (255, 240, 220), card_rect)
-                pygame.draw.rect(screen, (180, 120, 100), card_rect, 2)
-                
-                card_text = SMALL.render(f"{card_info['name']} (コスト: {card_info['cost']}) ×{card_info['count']}枚", 
-                                        True, (30, 30, 30))
-                screen.blit(card_text, (card_rect.x + 10, card_rect.y + 15))
+                # カード画像を取得・表示
+                try:
+                    # image_loaderからget_card_imageをインポート
+                    try:
+                        from assets.image_loader import get_card_image
+                    except:
+                        from ..assets.image_loader import get_card_image
+                    
+                    card_img = get_card_image(card_info['name'])
+                    if card_img:
+                        # 画像をリサイズ
+                        card_img_resized = pygame.transform.scale(card_img, (card_img_width, card_img_height))
+                        screen.blit(card_img_resized, (card_x, card_y))
+                        
+                        # 枚数表示（右下に×n）
+                        if card_info['count'] > 1:
+                            # 半透明の背景
+                            count_bg = pygame.Surface((40, 25), pygame.SRCALPHA)
+                            count_bg.fill((0, 0, 0, 180))
+                            screen.blit(count_bg, (card_x + card_img_width - 45, card_y + card_img_height - 30))
+                            
+                            # ×n表示
+                            count_font = pygame.font.SysFont("arial", 18, bold=True)
+                            count_text = count_font.render(f"×{card_info['count']}", True, (255, 255, 255))
+                            screen.blit(count_text, (card_x + card_img_width - 40, card_y + card_img_height - 28))
+                    else:
+                        # 画像が取得できない場合はフォールバック（テキスト表示）
+                        card_rect = pygame.Rect(card_x, card_y, card_img_width, card_img_height)
+                        pygame.draw.rect(screen, (255, 240, 220), card_rect)
+                        pygame.draw.rect(screen, (180, 120, 100), card_rect, 2)
+                        
+                        # カード名を表示（テキストを複数行に分割）
+                        small_font = pygame.font.SysFont("msgothic,meiryo", 14)
+                        name_lines = []
+                        name = card_info['name']
+                        # 長い名前は折り返し
+                        if len(name) > 10:
+                            name_lines = [name[i:i+10] for i in range(0, len(name), 10)]
+                        else:
+                            name_lines = [name]
+                        
+                        y_offset = 10
+                        for line in name_lines:
+                            line_surf = small_font.render(line, True, (30, 30, 30))
+                            screen.blit(line_surf, (card_x + 5, card_y + y_offset))
+                            y_offset += 20
+                        
+                        # コストと枚数
+                        cost_text = small_font.render(f"PP:{card_info['cost']}", True, (60, 60, 160))
+                        screen.blit(cost_text, (card_x + 5, card_y + card_img_height - 40))
+                        
+                        count_text = small_font.render(f"×{card_info['count']}", True, (160, 60, 60))
+                        screen.blit(count_text, (card_x + 5, card_y + card_img_height - 20))
+                except Exception as e:
+                    # エラー時のフォールバック
+                    card_rect = pygame.Rect(card_x, card_y, card_img_width, card_img_height)
+                    pygame.draw.rect(screen, (255, 240, 220), card_rect)
+                    pygame.draw.rect(screen, (180, 120, 100), card_rect, 2)
+                    small_font = pygame.font.SysFont("arial", 12)
+                    err_text = small_font.render(card_info['name'][:15], True, (30, 30, 30))
+                    screen.blit(err_text, (card_x + 5, card_y + 70))
+            
             display_idx += 1
         
         # ボタン類

@@ -62,6 +62,90 @@ IC_GIF_SPEED_FACTOR = 2.5
 # Scale multiplier for ice GIF when rendering over a tile
 IC_GIF_SCALE = 1.4
 
+# Global time scale for animations (multiply frame durations).
+# Set to 2.0 to make animations twice as long.
+ANIM_TIME_SCALE = 2.0
+
+
+def get_anim_time_scale():
+    """Return the current global animation time scale (float)."""
+    try:
+        return float(ANIM_TIME_SCALE)
+    except Exception:
+        return 1.0
+
+
+def set_anim_time_scale(scale: float):
+    """Set the global animation time scale used when computing frame durations.
+
+    Args:
+        scale: positive float multiplier (e.g. 1.0 for normal, 2.0 for twice-as-long)
+    """
+    global ANIM_TIME_SCALE
+    try:
+        s = float(scale)
+        if s <= 0:
+            return
+        ANIM_TIME_SCALE = s
+        try:
+            print(f"animation.py: set_anim_time_scale called -> {ANIM_TIME_SCALE}")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # Invalidate some cached duration data so new scale takes effect
+    try:
+        global mg_gif_durations, mg_gif_total_duration, mg_gif_frames_cache
+        global mg_gif_2p_durations, mg_gif_2p_total_duration, mg_gif_2p_frames_cache
+        global heat_gif_durations, heat_gif_anim
+        global ic_gif_durations, ic_gif_frames_cache, ic_gif_anim
+        # recompute totals by setting to None so loaders recalc
+        if 'mg_gif_durations' in globals():
+            mg_gif_durations = None
+            mg_gif_total_duration = 0.0
+            try:
+                mg_gif_frames_cache = None
+            except Exception:
+                pass
+        if 'mg_gif_2p_durations' in globals():
+            mg_gif_2p_durations = None
+            mg_gif_2p_total_duration = 0.0
+            try:
+                mg_gif_2p_frames_cache = None
+            except Exception:
+                pass
+        if 'heat_gif_durations' in globals():
+            heat_gif_durations = None
+            heat_gif_anim['durations'] = None
+            heat_gif_anim['total_duration'] = 0.0
+            try:
+                heat_gif_frames_cache = None
+            except Exception:
+                pass
+        if 'ic_gif_durations' in globals():
+            ic_gif_durations = None
+            ic_gif_anim['durations'] = None
+            ic_gif_anim['total_duration'] = 0.0
+            try:
+                ic_gif_frames_cache = None
+            except Exception:
+                pass
+        # Reset load attempts so loaders will re-run and pick up new durations
+        try:
+            mg_gif_load_attempted = False
+        except Exception:
+            pass
+        try:
+            mg_gif_2p_load_attempted = False
+        except Exception:
+            pass
+        try:
+            ic_gif_load_attempted = False
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 
 def _load_gif_frames(path: str):
     """Try to load GIF frames using Pillow if available, fallback to single surface.
@@ -146,11 +230,14 @@ def _ensure_mg_gif_loaded():
             return
     
     mg_gif_frames_cache = frames
-    mg_gif_durations = durations
     try:
-        mg_gif_total_duration = sum(durations) / 1000.0
+        mg_gif_durations = [int(d * ANIM_TIME_SCALE) for d in (durations or [])]
     except Exception:
-        mg_gif_total_duration = len(durations) * 0.1 if durations else 0.0
+        mg_gif_durations = durations
+    try:
+        mg_gif_total_duration = sum(mg_gif_durations) / 1000.0
+    except Exception:
+        mg_gif_total_duration = len(mg_gif_durations) * 0.001 * 100 if mg_gif_durations else 0.0
     mg_gif_load_success = True
 
 
@@ -181,9 +268,12 @@ def _ensure_mg_gif_2p_loaded():
         return
     
     mg_gif_2p_frames_cache = frames
-    mg_gif_2p_durations = durations
     try:
-        mg_gif_2p_total_duration = sum(durations) / 1000.0
+        mg_gif_2p_durations = [int(d * ANIM_TIME_SCALE) for d in (durations or [])]
+    except Exception:
+        mg_gif_2p_durations = durations
+    try:
+        mg_gif_2p_total_duration = sum(mg_gif_2p_durations) / 1000.0
     except Exception:
         mg_gif_2p_total_duration = 0.0
     mg_gif_2p_load_success = True
@@ -204,11 +294,15 @@ def play_heat_gif_at(row: int, col: int):
     if not frames:
         return
     
+    try:
+        scaled = [int(d * ANIM_TIME_SCALE) for d in durations]
+    except Exception:
+        scaled = durations
     heat_gif_anim['frames'] = frames
-    heat_gif_anim['durations'] = durations
+    heat_gif_anim['durations'] = scaled
     heat_gif_anim['playing'] = True
     heat_gif_anim['start_time'] = _ct_time.time()
-    heat_gif_anim['total_duration'] = sum(durations) / 1000.0
+    heat_gif_anim['total_duration'] = sum(scaled) / 1000.0
     heat_gif_anim['pos'] = (row, col)
 
 
@@ -269,7 +363,8 @@ def _ensure_ic_gif_loaded():
     try:
         durations = [int(d) for d in (durations or [1000])]
         slowed = [max(int(d * IC_GIF_SPEED_FACTOR), 120) for d in durations]
-        ic_gif_durations = slowed
+        # apply global time scale to make ice GIFs last longer
+        ic_gif_durations = [int(max(int(d * ANIM_TIME_SCALE), 120)) for d in slowed]
         ic_gif_anim['total_duration'] = sum(ic_gif_durations) / 1000.0
     except Exception:
         ic_gif_durations = durations

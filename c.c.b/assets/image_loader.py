@@ -4,6 +4,17 @@ import os
 import sys
 import pygame
 import time
+# Import animation module safely: try package-relative, then absolute, then fallback to None
+try:
+    from . import animation as animation_mod
+except Exception:
+    try:
+        from c.c.b.assets import animation as animation_mod
+    except Exception:
+        try:
+            import animation as animation_mod
+        except Exception:
+            animation_mod = None
 
 # Determine image directory
 try:
@@ -308,9 +319,18 @@ def get_card_gif_animation(name: str, size=(72, 96)):
         if not frames:
             return None
         
+        try:
+            scale = animation_mod.get_anim_time_scale() if hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+            scaled_durations = [int(d * scale) for d in durations]
+            try:
+                print(f"image_loader: loaded gif {gif_filename} key={key} scale={scale} durations_sample={scaled_durations[:5]}")
+            except Exception:
+                pass
+        except Exception:
+            scaled_durations = durations
         anim_data = {
             'frames': frames,
-            'durations': durations,
+            'durations': scaled_durations,
             'current_frame': 0,
             'last_update': time.time()
         }

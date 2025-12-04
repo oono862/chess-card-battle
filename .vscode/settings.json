@@ -1,0 +1,11 @@
+{
+  // Pylance がリポジトリ内パッケージ (例: c.c.b) を解決できるようにワークスペースルートを追加
+  "python.analysis.extraPaths": [
+    ".",
+    "${workspaceFolder}"
+  ],
+  // インデックス深度を増やしてサブパッケージの探索を改善
+  "python.analysis.packageIndexDepth": 3,
+  // 既知の多くの環境で Pylance がパッケージを認識しやすくする
+  "python.analysis.useLibraryCodeForTypes": true
+}

@@ -4,6 +4,7 @@ from pygame import Rect
 import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
+import re
 from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -85,29 +86,69 @@ except Exception:
     def get_last_click_info(): return (0.0, (0, 0), None)
     def set_last_click_info(time, pos, card_index): pass
     FONT_CACHE = {}
+
     def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
         key = (family, int(size), bool(bold))
         f = FONT_CACHE.get(key)
-        if f: return f
-        try: f = pygame.font.SysFont(family, int(size), bold=bold)
+        if f:
+            return f
+        try:
+            f = pygame.font.SysFont(family, int(size), bold=bold)
         except Exception:
-            try: f = pygame.font.Font(None, int(size))
-            except Exception: f = FONT
+            try:
+                f = pygame.font.Font(None, int(size))
+            except Exception:
+                f = FONT
         FONT_CACHE[key] = f
         return f
-    def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0): pass
-    def wrap_text(text: str, max_width: int): return [text]
-    def compute_layout(win_w: int, win_h: int): return {}
+
+    def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0):
+        pass
+
+    def wrap_text(text: str, max_width: int):
+        return [text]
+
+    def compute_layout(win_w: int, win_h: int):
+        return {}
+
     def draw_background(screen, W, H, IMG_DIR, PLAY_BG_FILENAME, play_bg_img, play_bg_surf):
         screen.fill((240, 240, 245))
         return play_bg_img, play_bg_surf
+
     # フォールバックのoverlay関数を定義
     class _FallbackOverlay:
-        def handle_scrollbar_drag_start(self, pos, show_log, scrollbar_rect, log_scroll_offset): return False
-        def handle_scrollbar_drag_end(self): pass
-        def handle_scrollbar_motion(self, pos, show_log, scrollbar_rect, log_scroll_offset, max_scroll): return log_scroll_offset
-        def get_scrollbar_state(self): return (None, False, 0, 0)
+        def handle_scrollbar_drag_start(self, pos, show_log, scrollbar_rect, log_scroll_offset):
+            return False
+
+        def handle_scrollbar_drag_end(self):
+            pass
+
+        def handle_scrollbar_motion(self, pos, show_log, scrollbar_rect, log_scroll_offset, max_scroll):
+            return log_scroll_offset
+
+        def get_scrollbar_state(self):
+            return (None, False, 0, 0)
+
     overlay = _FallbackOverlay()
+
+    # Ensure we can access animation controls if the assets module exists
+    try:
+        # package-relative (preferred when imported as c.c.b.CardGame)
+        from .assets import animation as animation_mod
+    except Exception:
+        try:
+            # explicit package import
+            from c.c.b.assets import animation as animation_mod
+        except Exception:
+            try:
+                # fallback absolute import
+                import c.c.b.assets.animation as animation_mod
+            except Exception:
+                try:
+                    # top-level assets module
+                    from assets import animation as animation_mod
+                except Exception:
+                    animation_mod = None
 
 # BGM管理をインポート
 try:
@@ -138,8 +179,10 @@ except Exception:
     def get_debug_counter_check_mode() -> bool: return False
 
 # 画像・アニメーション管理をインポート
+# Try relative import first (package context), then explicit package, then top-level import.
 try:
-    from assets import image_loader, animation
+    # when used as package (c.c.b.CardGame), prefer relative import
+    from .assets import image_loader, animation
     IMG_DIR = image_loader.IMG_DIR
     get_card_image = image_loader.get_card_image
     get_piece_image_surface = image_loader.get_piece_image_surface
@@ -152,18 +195,60 @@ try:
     IC_GIF_SCALE = animation.IC_GIF_SCALE
     _animation_module = animation
 except Exception:
-    logger.exception("Failed to import assets modules")
-    IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images")
-    def get_card_image(name: str, size=(72, 96)): return None
-    def get_piece_image_surface(name: str, color: str, size: tuple): return None
-    def play_heat_gif_at(row: int, col: int): pass
-    def play_ic_gif_at(row: int, col: int): pass
-    def _ensure_mg_gif_loaded(): pass
-    def _ensure_mg_gif_2p_loaded(): pass
-    heat_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
-    ic_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
-    IC_GIF_SCALE = 1.4
-    _animation_module = None
+    try:
+        # explicit package import (works when workspace root is project root)
+        from c.c.b.assets import image_loader, animation
+        IMG_DIR = image_loader.IMG_DIR
+        get_card_image = image_loader.get_card_image
+        get_piece_image_surface = image_loader.get_piece_image_surface
+        play_heat_gif_at = animation.play_heat_gif_at
+        play_ic_gif_at = animation.play_ic_gif_at
+        heat_gif_anim = animation.heat_gif_anim
+        ic_gif_anim = animation.ic_gif_anim
+        _ensure_mg_gif_loaded = animation._ensure_mg_gif_loaded
+        _ensure_mg_gif_2p_loaded = animation._ensure_mg_gif_2p_loaded
+        IC_GIF_SCALE = animation.IC_GIF_SCALE
+        _animation_module = animation
+    except Exception:
+        try:
+            # fallback: top-level assets package (when running via repo root)
+            from assets import image_loader, animation
+            IMG_DIR = image_loader.IMG_DIR
+            get_card_image = image_loader.get_card_image
+            get_piece_image_surface = image_loader.get_piece_image_surface
+            play_heat_gif_at = animation.play_heat_gif_at
+            play_ic_gif_at = animation.play_ic_gif_at
+            heat_gif_anim = animation.heat_gif_anim
+            ic_gif_anim = animation.ic_gif_anim
+            _ensure_mg_gif_loaded = animation._ensure_mg_gif_loaded
+            _ensure_mg_gif_2p_loaded = animation._ensure_mg_gif_2p_loaded
+            IC_GIF_SCALE = animation.IC_GIF_SCALE
+            _animation_module = animation
+        except Exception:
+            logger.exception("Failed to import assets modules")
+            IMG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images")
+            def get_card_image(name: str, size=(72, 96)): return None
+            def get_piece_image_surface(name: str, color: str, size: tuple): return None
+            def play_heat_gif_at(row: int, col: int): pass
+            def play_ic_gif_at(row: int, col: int): pass
+            def _ensure_mg_gif_loaded(): pass
+            def _ensure_mg_gif_2p_loaded(): pass
+            heat_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
+            ic_gif_anim = {'playing': False, 'frames': None, 'durations': None, 'pos': None}
+            IC_GIF_SCALE = 1.4
+            _animation_module = None
+
+# Synchronize animation module references so UI code uses the same module
+try:
+    if (not globals().get('animation_mod')) and _animation_module:
+        animation_mod = _animation_module
+    elif globals().get('animation_mod') is None and _animation_module:
+        animation_mod = _animation_module
+except Exception:
+    try:
+        animation_mod = globals().get('animation_mod', None)
+    except Exception:
+        animation_mod = None
 
 # デッキ管理をインポート
 try:
@@ -310,6 +395,39 @@ def get_opponent_hand_count():
     except Exception:
         # フォールバック: 初期値や何らかの理由で参照できない場合は 0 を返す
         return 0
+
+
+def _debug_report_anim_scales(context_label: str = ''):
+    try:
+        import sys
+        vals = {}
+        try:
+            vals['animation_mod'] = animation_mod.get_anim_time_scale() if 'animation_mod' in globals() and animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else None
+        except Exception:
+            vals['animation_mod'] = None
+        try:
+            vals['_animation_module'] = globals().get('_animation_module').get_anim_time_scale() if globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'get_anim_time_scale') else None
+        except Exception:
+            vals['_animation_module'] = None
+        try:
+            m = None
+            try:
+                import importlib
+                m = importlib.import_module('c.c.b.assets.animation')
+            except Exception:
+                try:
+                    m = importlib.import_module('assets.animation')
+                except Exception:
+                    m = sys.modules.get('c.c.b.assets.animation') or sys.modules.get('assets.animation')
+            vals['imported_animation'] = m.get_anim_time_scale() if m and hasattr(m, 'get_anim_time_scale') else None
+        except Exception:
+            vals['imported_animation'] = None
+        try:
+            print(f"DEBUG_ANIM_SCALES {context_label}: {vals}")
+        except Exception:
+            pass
+    except Exception:
+        pass
 # AI 用のギミックフラグ
 ai_next_move_can_jump = False
 ai_extra_moves_this_turn = 0
@@ -320,7 +438,12 @@ ai_continuation = False
 
 # 簡易アニメーション: AIが駒をどこに移動させたかを視覚化するための状態
 # フォールバックでも安全に参照できるように辞書で管理する
-ai_move_anim = {'active': False, 'from_row': None, 'from_col': None, 'row': None, 'col': None, 'start': 0.0, 'duration': 2.4}
+base_ai_move_duration = 2.4
+try:
+    _scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+except Exception:
+    _scale = 1.0
+ai_move_anim = {'active': False, 'from_row': None, 'from_col': None, 'row': None, 'col': None, 'start': 0.0, 'duration': base_ai_move_duration * _scale}
 # アニメーション設定フラグ（設定画面でトグル可能）
 ai_move_pulse_enabled = True
 ai_move_ghost_enabled = True
@@ -332,6 +455,8 @@ log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
+# モジュールローカルのログビュー（overlayモジュールの複数ロード問題対策）
+current_log_view = 'detail'
 # BGM設定（設定画面で変更可）
 bgm_enabled = True
 bgm_volume = 0.8
@@ -1165,6 +1290,11 @@ def show_deck_modal(screen, battle_select_mode=False):
                 return
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 mx, my = ev.pos
+                # visible debug output so user can see clicks in PowerShell
+                try:
+                    logger.info(f"anim modal MOUSEBUTTONDOWN at {mx},{my}")
+                except Exception:
+                    print(f"anim modal MOUSEBUTTONDOWN at {mx},{my}")
                 # Back button click (画面下部の「戻る」)
                 back_chk = pygame.Rect(20, H - 70, 120, 50)
                 if back_chk.collidepoint(mx, my):
@@ -2505,9 +2635,18 @@ def show_settings_screen(screen):
 
     # layout (enlarged to give more space for options)
     w = 760
-    h = 360
+    h = 420
     x = (W - w) // 2
     y = (H - h) // 2
+
+    # Capture the current animation time scale when opening the modal.
+    try:
+        prev_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+    except Exception:
+        prev_scale = 1.0
+    # Fast = half of the previously current scale, Slow = previous current scale
+    fast_scale = max(0.01, float(prev_scale) / 2.0)
+    slow_scale = float(prev_scale)
 
     # slider geometry
     slider_x = x + 40
@@ -2522,8 +2661,17 @@ def show_settings_screen(screen):
             if ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     return
-            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                mx, my = ev.pos
+            if (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1) or ev.type == pygame.FINGERDOWN:
+                if ev.type == pygame.MOUSEBUTTONDOWN:
+                    mx, my = ev.pos
+                else:
+                    # finger: normalized coords -> screen coords
+                    try:
+                        sx, sy = screen.get_size()
+                        mx = int(ev.x * sx)
+                        my = int(ev.y * sy)
+                    except Exception:
+                        mx, my = 0, 0
                 # back button
                 back_rect = pygame.Rect(x + w - 120, y + h - 56, 100, 40)
                 if back_rect.collidepoint(mx, my):
@@ -2566,9 +2714,9 @@ def show_settings_screen(screen):
                             pygame.mixer.music.set_volume(bgm_volume)
                     except Exception:
                         pass
-                # Animation settings button click (handle before gimmick area to avoid overlap)
+                # Animation settings button click (placed next to Back button)
                 try:
-                    anim_btn_rect = pygame.Rect(x + w - 260, y + h - 140, 220, 40)
+                    anim_btn_rect = pygame.Rect(x + w - 352, y + h - 56, 220, 40)
                     if anim_btn_rect.collidepoint(mx, my):
                         try:
                             show_animation_settings_screen(screen)
@@ -2629,14 +2777,8 @@ def show_settings_screen(screen):
                         except Exception:
                             pass
                         # animation settings button
-                    anim_btn_rect = pygame.Rect(x + 40, y + h - 56, 220, 40)
-                    if anim_btn_rect.collidepoint(mx, my):
-                        try:
-                            show_animation_settings_screen(screen)
-                        except Exception:
-                            pass
-                        except Exception:
-                            pass
+                    # redundant old anim btn handler removed; button handled above
+                    pass
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
                 dragging = False
             elif ev.type == pygame.MOUSEMOTION and dragging:
@@ -2709,9 +2851,9 @@ def show_settings_screen(screen):
         back_txt = SMALL.render("戻る", True, (30,30,30))
         surf.blit(back_txt, (back_rect.x + (back_rect.w - back_txt.get_width())//2, back_rect.y + (back_rect.h - back_txt.get_height())//2))
 
-        # Animation settings button (moved slightly right and a bit higher)
+        # Animation settings button (placed next to Back button)
         try:
-            anim_btn = pygame.Rect(w - 260, h - 140, 220, 40)
+            anim_btn = pygame.Rect(w - 352, h - 56, 220, 40)
             pygame.draw.rect(surf, (220,240,255), anim_btn)
             pygame.draw.rect(surf, (70,90,140), anim_btn, 2)
             atxt = SMALL.render("アニメーション設定", True, (30,30,30))
@@ -2793,9 +2935,6 @@ def show_settings_screen(screen):
         pygame.display.flip()
         clk.tick(30)
 
-        pygame.display.flip()
-        clock.tick(30)
-
 def show_animation_settings_screen(screen):
     """Modal to toggle AI animation options:
     - 駒移動パルスON/OFF
@@ -2804,10 +2943,38 @@ def show_animation_settings_screen(screen):
     """
     global ai_move_pulse_enabled, ai_move_ghost_enabled, ai_move_arrow_enabled
     clk = pygame.time.Clock()
-    w = 520
-    h = 240
+    w = 600
+    h = 400
+    # determine current window size to avoid relying on globals
+    try:
+        W, H = screen.get_size()
+    except Exception:
+        try:
+            W, H = get_window_size()
+        except Exception:
+            W, H = 1200, 800
     x = (W - w) // 2
     y = (H - h) // 2
+
+    # Capture the current animation time scale when opening the modal.
+    # Semantics: '遅い' = current scale, '早い' = half of current scale.
+    try:
+        prev_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+    except Exception:
+        prev_scale = 1.0
+    try:
+        fast_scale = max(0.01, float(prev_scale) / 2.0)
+    except Exception:
+        fast_scale = 0.5
+    try:
+        slow_scale = float(prev_scale)
+    except Exception:
+        slow_scale = 1.0
+
+    # layout defaults used by both options and radios
+    opt_x = 40
+    opt_y = 48
+    gap = 36
 
     while True:
         for ev in pygame.event.get():
@@ -2837,6 +3004,213 @@ def show_animation_settings_screen(screen):
                 cb3 = pygame.Rect(cb_x, cb_y + cb_h*2, 24, 24)
                 if cb3.collidepoint(mx, my):
                     ai_move_arrow_enabled = not ai_move_arrow_enabled
+                # animation speed radios (hit areas aligned to drawing coordinates)
+                radio_x = x + 40  # matches draw radio_x
+                radio_y = y + 48 + cb_h*3 + 12
+                fast_w = 110
+                slow_w = 110
+                r_h = 36
+                # define two radio hit areas (早い, 遅い)
+                fast_rect = pygame.Rect(radio_x, radio_y, fast_w, r_h)
+                slow_rect = pygame.Rect(radio_x + 120, radio_y, slow_w, r_h)
+                # debug: print mouse and rects so we can diagnose hit-test failures
+                try:
+                    logger.info(f"anim modal MOUSEBUTTONDOWN at {mx},{my} ; fast_rect={fast_rect} slow_rect={slow_rect}")
+                except Exception:
+                    print(f"anim modal MOUSEBUTTONDOWN at {mx},{my} ; fast_rect={fast_rect} slow_rect={slow_rect}")
+
+                if fast_rect.collidepoint(mx, my):
+                    try:
+                        print("animation: fast radio clicked")
+                        # Try multiple ways to set the global animation scale so
+                        # we don't miss the actual module object used elsewhere.
+                        success = False
+                        try:
+                            if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
+                                animation_mod.set_anim_time_scale(fast_scale)
+                                print(f"set_anim_time_scale -> {fast_scale} (via animation_mod)")
+                                success = True
+                        except Exception:
+                            success = False
+                        try:
+                            if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
+                                globals().get('_animation_module').set_anim_time_scale(fast_scale)
+                                print(f"set_anim_time_scale -> {fast_scale} (via _animation_module)")
+                                success = True
+                        except Exception:
+                            pass
+                        if not success:
+                            try:
+                                import importlib, sys
+                                mod = None
+                                try:
+                                    mod = importlib.import_module('c.c.b.assets.animation')
+                                except Exception:
+                                    try:
+                                        mod = importlib.import_module('assets.animation')
+                                    except Exception:
+                                        mod = sys.modules.get('c.c.b.assets.animation') or sys.modules.get('assets.animation')
+                                if mod:
+                                    if hasattr(mod, 'set_anim_time_scale'):
+                                        mod.set_anim_time_scale(fast_scale)
+                                        print(f"set_anim_time_scale -> {fast_scale} (via import)")
+                                    else:
+                                        try:
+                                            setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
+                                            print(f"ANIM_TIME_SCALE set -> {fast_scale} (via import setattr)")
+                                        except Exception:
+                                            pass
+                                    success = True
+                            except Exception:
+                                pass
+                        # Clear image_loader GIF cache so new durations are used
+                        try:
+                            import importlib, sys
+                            il = None
+                            try:
+                                il = importlib.import_module('c.c.b.assets.image_loader')
+                            except Exception:
+                                try:
+                                    il = importlib.import_module('assets.image_loader')
+                                except Exception:
+                                    il = sys.modules.get('c.c.b.assets.image_loader') or sys.modules.get('assets.image_loader')
+                            if il and hasattr(il, '_gif_animation_cache'):
+                                try:
+                                    il._gif_animation_cache.clear()
+                                    print('image_loader: gif cache cleared')
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # Also attempt to find any loaded modules that correspond to
+                        # the animation implementation file and set their scale/attr,
+                        # plus clear any image_loader modules' gif caches. This handles
+                        # environments where the same file was imported under multiple
+                        # module names (script vs package imports).
+                        try:
+                            import sys
+                            for name, mod in list(sys.modules.items()):
+                                try:
+                                    mf = getattr(mod, '__file__', '') or ''
+                                    if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'animation.py')):
+                                        if hasattr(mod, 'set_anim_time_scale'):
+                                            try:
+                                                mod.set_anim_time_scale(fast_scale)
+                                                print(f"set_anim_time_scale -> {fast_scale} (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                        else:
+                                            try:
+                                                setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
+                                                print(f"ANIM_TIME_SCALE set -> {fast_scale} (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                    if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'image_loader.py')):
+                                        if hasattr(mod, '_gif_animation_cache'):
+                                            try:
+                                                mod._gif_animation_cache.clear()
+                                                print(f"image_loader: gif cache cleared (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                elif slow_rect.collidepoint(mx, my):
+                    try:
+                        print("animation: slow radio clicked")
+                        # Same robust path for slow_scale
+                        success = False
+                        try:
+                            if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
+                                animation_mod.set_anim_time_scale(slow_scale)
+                                print(f"set_anim_time_scale -> {slow_scale} (via animation_mod)")
+                                success = True
+                        except Exception:
+                            success = False
+                        try:
+                            if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
+                                globals().get('_animation_module').set_anim_time_scale(slow_scale)
+                                print(f"set_anim_time_scale -> {slow_scale} (via _animation_module)")
+                                success = True
+                        except Exception:
+                            pass
+                        if not success:
+                            try:
+                                import importlib, sys
+                                mod = None
+                                try:
+                                    mod = importlib.import_module('c.c.b.assets.animation')
+                                except Exception:
+                                    try:
+                                        mod = importlib.import_module('assets.animation')
+                                    except Exception:
+                                        mod = sys.modules.get('c.c.b.assets.animation') or sys.modules.get('assets.animation')
+                                if mod:
+                                    if hasattr(mod, 'set_anim_time_scale'):
+                                        mod.set_anim_time_scale(slow_scale)
+                                        print(f"set_anim_time_scale -> {slow_scale} (via import)")
+                                    else:
+                                        try:
+                                            setattr(mod, 'ANIM_TIME_SCALE', float(slow_scale))
+                                            print(f"ANIM_TIME_SCALE set -> {slow_scale} (via import setattr)")
+                                        except Exception:
+                                            pass
+                                    success = True
+                            except Exception:
+                                pass
+                        try:
+                            import importlib, sys
+                            il = None
+                            try:
+                                il = importlib.import_module('c.c.b.assets.image_loader')
+                            except Exception:
+                                try:
+                                    il = importlib.import_module('assets.image_loader')
+                                except Exception:
+                                    il = sys.modules.get('c.c.b.assets.image_loader') or sys.modules.get('assets.image_loader')
+                            if il and hasattr(il, '_gif_animation_cache'):
+                                try:
+                                    il._gif_animation_cache.clear()
+                                    print('image_loader: gif cache cleared')
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # Also sweep sys.modules as a fallback (see fast branch)
+                        try:
+                            import sys
+                            for name, mod in list(sys.modules.items()):
+                                try:
+                                    mf = getattr(mod, '__file__', '') or ''
+                                    if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'animation.py')):
+                                        if hasattr(mod, 'set_anim_time_scale'):
+                                            try:
+                                                mod.set_anim_time_scale(slow_scale)
+                                                print(f"set_anim_time_scale -> {slow_scale} (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                        else:
+                                            try:
+                                                setattr(mod, 'ANIM_TIME_SCALE', float(slow_scale))
+                                                print(f"ANIM_TIME_SCALE set -> {slow_scale} (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                    if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'image_loader.py')):
+                                        if hasattr(mod, '_gif_animation_cache'):
+                                            try:
+                                                mod._gif_animation_cache.clear()
+                                                print(f"image_loader: gif cache cleared (via sys.modules {name})")
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
 
         # draw modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -2875,6 +3249,56 @@ def show_animation_settings_screen(screen):
             if ai_move_arrow_enabled:
                 pygame.draw.circle(surf, (220,40,40), (opt_x+12, oy2+12), 6)
             surf.blit(SMALL.render("移動矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
+        except Exception:
+            pass
+
+        # animation speed radios (draw before back button)
+        try:
+            # determine current selection from animation module
+            try:
+                cur_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+            except Exception:
+                cur_scale = 1.0
+            radio_x = opt_x
+            radio_y = opt_y + gap*3 + 12
+
+            # draw a subtle background for the radio area to make it visible
+            try:
+                pygame.draw.rect(surf, (245,245,250), (radio_x-8, radio_y-8, 360, 44))
+                pygame.draw.rect(surf, (200,200,200), (radio_x-8, radio_y-8, 360, 44), 1)
+            except Exception:
+                pass
+
+            # fast radio (left)
+            fx = radio_x
+            fy = radio_y
+            pygame.draw.circle(surf, (200,200,200), (fx+10, fy+12), 10)
+            # selected indicator
+            try:
+                if abs(cur_scale - fast_scale) < abs(cur_scale - slow_scale):
+                    pygame.draw.circle(surf, (40,120,220), (fx+10, fy+12), 6)
+            except Exception:
+                if cur_scale <= (fast_scale + slow_scale) / 2.0:
+                    pygame.draw.circle(surf, (40,120,220), (fx+10, fy+12), 6)
+            surf.blit(SMALL.render("早い", True, (30,30,30)), (fx+28, fy))
+
+            # slow radio (right)
+            sx = radio_x + 120
+            sy = radio_y
+            pygame.draw.circle(surf, (200,200,200), (sx+10, sy+12), 10)
+            try:
+                if abs(cur_scale - slow_scale) <= abs(cur_scale - fast_scale):
+                    pygame.draw.circle(surf, (220,40,40), (sx+10, sy+12), 6)
+            except Exception:
+                if cur_scale > (fast_scale + slow_scale) / 2.0:
+                    pygame.draw.circle(surf, (220,40,40), (sx+10, sy+12), 6)
+            surf.blit(SMALL.render("遅い", True, (30,30,30)), (sx+28, sy))
+
+            # debug log to console so user can see radio drawing state
+            try:
+                logger.debug(f"animation radios drawn: cur_scale={cur_scale:.3f} fast={fast_scale:.3f} slow={slow_scale:.3f}")
+            except Exception:
+                print(f"animation radios drawn: cur_scale={cur_scale} fast={fast_scale} slow={slow_scale}")
         except Exception:
             pass
 
@@ -3828,8 +4252,20 @@ def ai_make_move():
         ai_move_anim['row'] = mv[0]
         ai_move_anim['col'] = mv[1]
         ai_move_anim['start'] = _ct_time.time()
-        # アニメ時間を延長（2.4秒）
-        ai_move_anim['duration'] = 2.4
+        # アニメ時間を延長（元の2.4秒を2倍して4.8秒に設定）
+        try:
+            scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+        except Exception:
+            scale = 1.0
+        ai_move_anim['duration'] = base_ai_move_duration * scale
+        try:
+            print(f"DEBUG: ai_move_anim set duration -> base={base_ai_move_duration} scale={scale} duration={ai_move_anim['duration']}")
+        except Exception:
+            pass
+        try:
+            _debug_report_anim_scales('after_ai_move_anim_set')
+        except Exception:
+            pass
         # ゴースト駒情報: 移動前の駒を一ターン分表示するために保存
         try:
             ai_move_anim['ghost_name'] = getattr(p, 'name', None)
@@ -4974,12 +5410,145 @@ def draw_panel():
         # 見出しのすぐ下にスクロールのヒントを表示
         draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
 
-        # ログの折り返し処理
-        wrapped_lines = []
-        max_log_width = log_panel_width - 30
-        for line in game.log:
-            for wline in wrap_text(f"• {line}", max_log_width):
-                wrapped_lines.append(wline)
+        # 上部右側にログ切替ヒントを表示（背景は無し、文字をやや細めにする）
+        try:
+            hint_text = "ログ切り替え［C］"
+            try:
+                size = max(14, top_line_h - 4)
+                hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=False)
+            except Exception:
+                hint_font = pygame.font.SysFont(None, max(14, top_line_h - 4), bold=False)
+            s = hint_font.render(hint_text, True, (90, 90, 120))
+            hx = log_panel_left + log_panel_width - s.get_width() - 12
+            hy = log_panel_top + 8 + (top_line_h - s.get_height()) // 2
+            screen.blit(s, (hx, hy))
+        except Exception:
+            pass
+
+        # ログの折り返し処理 — ビューに応じてフィルタを行い、各行に種類を付与（AI / player）して後続描画で差別化
+        def _is_piece_line(s):
+            try:
+                ss = str(s)
+                _piece_re = re.compile(r"移動|飛び越|→|->|\(\s*\d+\s*,\s*\d+\s*\)|駒|マス", re.UNICODE)
+                return bool(_piece_re.search(ss))
+            except Exception:
+                return False
+
+        def _is_card_line(s):
+            try:
+                ss = str(s)
+                return ('『' in ss) or ('カード' in ss) or ('ドロー' in ss) or ('使用' in ss) or ('墓地' in ss) or ('ギミック' in ss)
+            except Exception:
+                return False
+
+        # Determine active view: prefer the canonical package module `ui.overlay`
+        # (this is the module whose logger emits the set_log_view INFO messages).
+        # Fallback order: importlib('ui.overlay') -> importlib('c.c.b.ui.overlay') -> overlay variable -> 'detail'
+        try:
+            import importlib
+            active_view = 'detail'
+            tried = []
+            try:
+                mod = importlib.import_module('ui.overlay')
+                tried.append(('ui.overlay', id(mod)))
+                if hasattr(mod, 'get_log_view'):
+                    av = mod.get_log_view()
+                    print(f"[cardgame-debug-src] ui.overlay (id={id(mod)}) -> {av}")
+                    active_view = av
+                else:
+                    mod = None
+            except Exception:
+                mod = None
+
+            if mod is None:
+                try:
+                    mod2 = importlib.import_module('c.c.b.ui.overlay')
+                    tried.append(('c.c.b.ui.overlay', id(mod2)))
+                    if hasattr(mod2, 'get_log_view'):
+                        av = mod2.get_log_view()
+                        print(f"[cardgame-debug-src] c.c.b.ui.overlay (id={id(mod2)}) -> {av}")
+                        active_view = av
+                    else:
+                        mod2 = None
+                except Exception:
+                    mod2 = None
+
+            # final fallback: the local `overlay` variable if it exposes get_log_view
+            if (mod is None) and (mod2 is None):
+                if 'overlay' in globals() and hasattr(overlay, 'get_log_view'):
+                    try:
+                        av = overlay.get_log_view()
+                        print(f"[cardgame-debug-src] overlay_var ({getattr(overlay,'__class__', overlay)}) id={id(overlay)} -> {av}")
+                        active_view = av
+                    except Exception:
+                        pass
+                else:
+                    print("[cardgame-debug-src] no overlay module found; using fallback 'detail'")
+        except Exception:
+            active_view = 'detail'
+
+        if active_view not in ('detail', 'piece', 'card'):
+            active_view = 'detail'
+
+        if active_view == 'detail':
+            source_lines = list(game.log)
+        elif active_view == 'piece':
+            # 駒ビュー: 駒移動を示す行を含めるが、カードに関するログは除外する
+            # プレイヤーの駒移動はローカルな `chess_log` に記録されることがあるため
+            # `game.log` と `chess_log` を結合してフィルタする。
+            combined = []
+            try:
+                combined.extend(list(game.log))
+            except Exception:
+                pass
+            try:
+                combined.extend(list(chess_log))
+            except Exception:
+                pass
+            source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+        else:  # 'card'
+            source_lines = [l for l in game.log if _is_card_line(l)]
+
+        # Debug: 描画ルートで現在のビューとフィルタ結果を端末に出力（診断用の一時出力）
+        try:
+            sample = source_lines[:3]
+            print(f"[cardgame-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
+        except Exception:
+            pass
+
+        wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
+        max_log_width = max(40, log_panel_width - 60)
+        _ai_re = re.compile(r"^\s*AI(?=$|[:：\s\(])", re.IGNORECASE)
+        # piece letter detection (e.g. 'P','N','B','R','Q','K')
+        _piece_letter_re = re.compile(r"\b([KQRBNP])\b", re.IGNORECASE)
+        for line in source_lines:
+            try:
+                sline = str(line)
+                kind = 'ai' if _ai_re.match(sline) else 'player'
+            except Exception:
+                sline = str(line)
+                kind = 'player'
+            # detect piece initial in the log line
+            pl_match = _piece_letter_re.search(sline)
+            piece_letter = pl_match.group(1).upper() if pl_match else None
+            # remove the piece letter from the displayed text so the icon
+            # isn't duplicated. Prefer removing when followed by 'を', space,
+            # punctuation, or line end; fallback to removing the first match.
+            display_sline = sline
+            if piece_letter:
+                try:
+                    pl = re.escape(piece_letter)
+                    m = re.search(rf"{pl}(?=を|\s|[:：,。.\)\(]|$)", sline, re.IGNORECASE)
+                    if m:
+                        display_sline = sline[:m.start()] + sline[m.end():]
+                    else:
+                        display_sline = re.sub(pl, '', sline, count=1, flags=re.IGNORECASE)
+                    display_sline = display_sline.strip()
+                except Exception:
+                    display_sline = sline
+
+            for wline in wrap_text(display_sline, max_log_width):
+                wrapped_lines.append((wline, kind, piece_letter))
 
         # スクロールオフセットの範囲制限
         global log_scroll_offset
@@ -4990,26 +5559,117 @@ def draw_panel():
         # 下部に余白を設けて見やすくする（最後の行が枠にくっつかないように）
         bottom_padding_px = 28  # ここを調整すると余白サイズを変更できます
         max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // line_step)
-        max_scroll = max(0, len(wrapped_lines) - max_lines_visible)
+        total_wrapped = len(wrapped_lines)
+        max_scroll = max(0, total_wrapped - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
         # グローバル変数に保存（スクロールバードラッグ処理で使用）
         global _max_scroll
         _max_scroll = max_scroll
 
         # 表示範囲を計算（最新が下）
-        if len(wrapped_lines) <= max_lines_visible:
+        if total_wrapped <= max_lines_visible:
             visible_lines = wrapped_lines
         else:
-            start_idx = len(wrapped_lines) - max_lines_visible - log_scroll_offset
+            start_idx = total_wrapped - max_lines_visible - log_scroll_offset
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
         # ログ描画開始位置（見出しとヒントの下）
-        # 先ほどタイトルの上に1行分の余白を入れたので、描画開始位置も同じ分だけ下げる
         log_y = log_panel_top + 56 + top_line_h
-        for wline in visible_lines:
+        # reduce horizontal padding so more space is available for text
+        pad_x = 6
+        pad_y = 4
+        # 診断用フラッシュ: モジュール側で記録された直近のビュー切替情報があれば表示
+        try:
+            try:
+                from ui import overlay as _ov
+            except Exception:
+                import importlib
+                _ov = importlib.import_module('c.c.b.ui.overlay') if 'c.c.b.ui.overlay' in sys.modules or True else None
+            if _ov is not None:
+                try:
+                    _last_view_change_time = getattr(_ov, '_last_view_change_time', None)
+                    _last_view_change_name = getattr(_ov, '_last_view_change_name', None)
+                    if _last_view_change_name and _last_view_change_time and (_ct_time.time() - _last_view_change_time) < 1.0:
+                        flash_label = {'detail': '詳細', 'piece': '駒', 'card': 'カード'}.get(_last_view_change_name, _last_view_change_name)
+                        try:
+                            flash_font = HELP_FONT if HELP_FONT else pygame.font.SysFont(None, 28, bold=True)
+                        except Exception:
+                            flash_font = pygame.font.SysFont(None, 28, bold=True)
+                        s = flash_font.render(f"ログビュー: {flash_label}", True, (10, 10, 10))
+                        bx = log_panel_left + (log_panel_width - s.get_width()) // 2 - 8
+                        by = log_panel_top + 6
+                        bw = s.get_width() + 16
+                        bh = s.get_height() + 8
+                        pygame.draw.rect(screen, (255, 250, 210), (bx, by, bw, bh))
+                        pygame.draw.rect(screen, (140, 120, 90), (bx, by, bw, bh), 1)
+                        screen.blit(s, (bx + 8, by + 4))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        for wline, kind, piece_letter in visible_lines:
             if log_y < log_panel_top + log_panel_height - bottom_padding_px:
-                draw_text(screen, wline, log_panel_left + 10, log_y, (60, 60, 60))
+                try:
+                    text_surf = FONT.render(wline, True, (30, 30, 30))
+                except Exception:
+                    text_surf = pygame.font.SysFont(None, 18).render(wline, True, (30, 30, 30))
+
+                tw = text_surf.get_width()
+                th = text_surf.get_height()
+
+                # prepare optional piece icon
+                icon_surf = None
+                icon_w = icon_h = 0
+                try:
+                    if piece_letter and 'get_piece_image_surface' in globals() and get_piece_image_surface:
+                        # choose color based on kind: AI -> black, player -> white
+                        color = 'black' if kind == 'ai' else 'white'
+                        # icon size approximately line height
+                        icon_h = icon_w = th
+                        icon_surf = get_piece_image_surface(piece_letter, color, (icon_w, icon_h))
+                        if icon_surf is None:
+                            icon_w = icon_h = 0
+                except Exception:
+                    icon_surf = None
+
+                if kind == 'ai':
+                    # 左揃え、薄赤背景
+                    bx = log_panel_left + 10
+                    by = log_y - pad_y
+                    # adjust background width to include icon if present
+                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                    bh = th + pad_y * 2
+                    pygame.draw.rect(screen, (255, 230, 230), (bx, by, bw, bh))
+                    pygame.draw.rect(screen, (200, 140, 140), (bx, by, bw, bh), 1)
+                    # draw icon (left of text) if available
+                    tx = bx + pad_x
+                    if icon_surf:
+                        try:
+                            screen.blit(icon_surf, (tx, log_y))
+                            tx += icon_w + 6
+                        except Exception:
+                            pass
+                    screen.blit(text_surf, (tx, log_y))
+                else:
+                    # プレイヤー/右揃え、薄水色背景
+                    # calculate background width including icon, then set left coordinate
+                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                    bx = log_panel_left + log_panel_width - 10 - bw
+                    by = log_y - pad_y
+                    bh = th + pad_y * 2
+                    pygame.draw.rect(screen, (220, 240, 255), (bx, by, bw, bh))
+                    pygame.draw.rect(screen, (140, 170, 200), (bx, by, bw, bh), 1)
+                    # for right-aligned, text is placed inside the box; icon should be left of text
+                    tx = bx + pad_x
+                    if icon_surf:
+                        try:
+                            screen.blit(icon_surf, (tx, log_y))
+                            tx += icon_w + 6
+                        except Exception:
+                            pass
+                    screen.blit(text_surf, (tx, log_y))
+
                 # 次の文章は空行を挟んで描画する
                 log_y += line_step
 
@@ -5024,7 +5684,7 @@ def draw_panel():
             pygame.draw.rect(screen, (200, 200, 200), 
                            (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height))
             # スクロール位置を計算
-            total_lines = len(wrapped_lines)
+            total_lines = total_wrapped
             scroll_ratio = log_scroll_offset / max_scroll if max_scroll > 0 else 0
             # つまみのサイズと位置
             thumb_height = max(20, scrollbar_height * max_lines_visible / total_lines)
@@ -5643,7 +6303,7 @@ def attempt_start_turn():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until, show_grave, show_opponent_hand
+    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until, show_grave, show_opponent_hand, current_log_view
     
     # ゲーム終了時のキー操作
     if game_over:
@@ -5666,6 +6326,126 @@ def handle_keydown(key):
     
     # ログスクロール（ログ表示中のみ）
     if show_log:
+        # ビュー切替（ログ表示中はD/P/Cでビューを切替）
+        if key == pygame.K_d:
+            # 更新: overlay モジュールに対して set_log_view を呼ぶとともに
+            # CardGame モジュール内の current_log_view も更新しておく
+            try:
+                if hasattr(overlay, 'set_log_view'):
+                    overlay.set_log_view('detail')
+            except Exception:
+                try:
+                    from ui import overlay as _ov
+                    if hasattr(_ov, 'set_log_view'):
+                        _ov.set_log_view('detail')
+                except Exception:
+                    try:
+                        import importlib
+                        _ov2 = importlib.import_module('c.c.b.ui.overlay')
+                        if hasattr(_ov2, 'set_log_view'):
+                            _ov2.set_log_view('detail')
+                    except Exception:
+                        pass
+            try:
+                current_log_view = 'detail'
+            except Exception:
+                pass
+            log_scroll_offset = 0
+            return
+        if key == pygame.K_p:
+            try:
+                if hasattr(overlay, 'set_log_view'):
+                    overlay.set_log_view('piece')
+            except Exception:
+                try:
+                    from ui import overlay as _ov
+                    if hasattr(_ov, 'set_log_view'):
+                        _ov.set_log_view('piece')
+                except Exception:
+                    try:
+                        import importlib
+                        _ov2 = importlib.import_module('c.c.b.ui.overlay')
+                        if hasattr(_ov2, 'set_log_view'):
+                            _ov2.set_log_view('piece')
+                    except Exception:
+                        pass
+            try:
+                current_log_view = 'piece'
+            except Exception:
+                pass
+            log_scroll_offset = 0
+            return
+        if key == pygame.K_c:
+            # Cycle views: detail -> piece -> card -> detail
+            try:
+                # determine current canonical view (prefer package module)
+                cur = None
+                try:
+                    from ui import overlay as _pkg_ov
+                    if hasattr(_pkg_ov, 'get_log_view'):
+                        cur = _pkg_ov.get_log_view()
+                except Exception:
+                    pass
+                if cur is None:
+                    try:
+                        import importlib
+                        _mod = importlib.import_module('c.c.b.ui.overlay')
+                        if hasattr(_mod, 'get_log_view'):
+                            cur = _mod.get_log_view()
+                    except Exception:
+                        pass
+                if cur is None:
+                    # fallback to local variable
+                    try:
+                        cur = current_log_view
+                    except Exception:
+                        cur = 'detail'
+
+                order = ['detail', 'piece', 'card']
+                try:
+                    idx = order.index(cur)
+                    nxt = order[(idx + 1) % len(order)]
+                except Exception:
+                    nxt = 'detail'
+
+                # apply to available overlay implementations
+                applied = False
+                try:
+                    if hasattr(overlay, 'set_log_view'):
+                        overlay.set_log_view(nxt)
+                        applied = True
+                except Exception:
+                    pass
+                if not applied:
+                    try:
+                        from ui import overlay as _ov
+                        if hasattr(_ov, 'set_log_view'):
+                            _ov.set_log_view(nxt)
+                            applied = True
+                    except Exception:
+                        pass
+                if not applied:
+                    try:
+                        import importlib
+                        _ov2 = importlib.import_module('c.c.b.ui.overlay')
+                        if hasattr(_ov2, 'set_log_view'):
+                            _ov2.set_log_view(nxt)
+                            applied = True
+                    except Exception:
+                        pass
+
+                try:
+                    current_log_view = nxt
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    current_log_view = 'detail'
+                except Exception:
+                    pass
+            log_scroll_offset = 0
+            return
+
         if key == pygame.K_UP:
             log_scroll_offset += 1
             return

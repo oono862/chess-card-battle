@@ -97,6 +97,56 @@ def handle_keydown(key, game_state_globals):
     
     # ログスクロール（ログ表示中のみ）
     if show_log:
+        # ビュー切替（ログ表示中はD/P/Cでビューを切替）
+        try:
+            if key == pygame.K_d:
+                try:
+                    from ui import overlay
+                    overlay.set_log_view('detail')
+                except Exception:
+                    pass
+                result['log_scroll_offset'] = 0
+                return result
+            if key == pygame.K_p:
+                try:
+                    from ui import overlay
+                    overlay.set_log_view('piece')
+                except Exception:
+                    pass
+                result['log_scroll_offset'] = 0
+                return result
+            if key == pygame.K_c:
+                # Cycle views: detail -> piece -> card -> detail
+                try:
+                    from ui import overlay as _ov
+                    try:
+                        cur = _ov.get_log_view() if hasattr(_ov, 'get_log_view') else None
+                    except Exception:
+                        cur = None
+                except Exception:
+                    cur = None
+
+                order = ['detail', 'piece', 'card']
+                try:
+                    idx = order.index(cur) if cur in order else 0
+                    nxt = order[(idx + 1) % len(order)]
+                except Exception:
+                    nxt = 'detail'
+
+                try:
+                    from ui import overlay
+                    if hasattr(overlay, 'set_log_view'):
+                        overlay.set_log_view(nxt)
+                except Exception:
+                    # best-effort fallback: ignore
+                    pass
+
+                result['log_scroll_offset'] = 0
+                return result
+        except Exception:
+            # 安全のため失敗を無視して通常のスクロール処理へ
+            pass
+
         if key == pygame.K_UP:
             log_scroll_offset += 1
             result['log_scroll_offset'] = log_scroll_offset

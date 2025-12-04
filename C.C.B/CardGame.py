@@ -5,7 +5,7 @@ import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
 import re
-from typing import List
+from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
@@ -33,6 +33,18 @@ except Exception:
             from chess import rules as chess_rules
         except Exception:
             chess_rules = None
+    # Help static type checkers / language servers resolve package-relative imports
+    if TYPE_CHECKING:
+        # These imports are only for editors/type-checkers (no runtime effect).
+        try:
+            from c.c.b.assets import animation as animation  # type: ignore
+            from c.c.b.assets import image_loader as image_loader  # type: ignore
+        except Exception:
+            try:
+                from assets import animation as animation  # type: ignore
+                from assets import image_loader as image_loader  # type: ignore
+            except Exception:
+                pass
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
     from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
@@ -401,6 +413,21 @@ except Exception:
     def draw_notice_message(screen, layout, notice_msg, notice_until): pass
     def draw_highlights(screen, layout, selected_piece, highlight_squares, chess, game, is_in_check, simulate_move): pass
     def draw_check_indicator(screen, layout, game_over, chess, is_in_check_for_display, can_attack_king_with_cards, W, H): pass
+
+# Draw dashed rect helper (moved to utils/drawing.py). Import it if available,
+# otherwise provide a safe fallback so existing calls don't crash.
+try:
+    from utils.drawing import draw_dashed_rect
+except Exception:
+    try:
+        # try package-style import
+        from c.c.b.utils.drawing import draw_dashed_rect
+    except Exception:
+        def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2):
+            try:
+                pygame.draw.rect(surf, color, rect, width)
+            except Exception:
+                pass
 
 pygame.init()
 

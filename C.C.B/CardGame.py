@@ -3144,7 +3144,8 @@ def show_animation_settings_screen(screen):
                     ai_move_arrow_enabled = not ai_move_arrow_enabled
                 # animation speed radios (hit areas aligned to drawing coordinates)
                 radio_x = x + 40  # matches draw radio_x
-                radio_y = y + 48 + cb_h*3 + 12
+                # move radios one extra gap downward to create space for a label
+                radio_y = y + 48 + cb_h*4 + 12
                 fast_w = 110
                 slow_w = 110
                 r_h = 36
@@ -3489,7 +3490,17 @@ def show_animation_settings_screen(screen):
             except Exception:
                 pass
             radio_x = opt_x
-            radio_y = opt_y + gap*3 + 12
+            # move radios one extra gap downward to create a gap for the new label
+            radio_y = opt_y + gap*4 + 12
+
+            # draw the label above the radios in the new gap
+            try:
+                label_txt = SMALL.render("アニメーション表示時間", True, (30,30,30))
+                label_x = opt_x
+                label_y = opt_y + gap*3 + 6
+                surf.blit(label_txt, (label_x, label_y))
+            except Exception:
+                pass
 
             # draw a subtle background for the radio area to make it visible
             try:

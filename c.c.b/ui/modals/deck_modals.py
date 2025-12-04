@@ -1279,10 +1279,6 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
         DECK_MODE_setter: デッキモード設定関数
         game_setter: ゲームインスタンス設定関数
     """
-    # Per UX request: do not show the old blocking custom-deck selection modal.
-    # Keep the background deck list interactive and topmost.
-    return
-
     clk = pygame.time.Clock()
 
     # saved_decks に格納されたデッキ群（9スロット）を読み込む

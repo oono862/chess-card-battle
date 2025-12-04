@@ -2050,10 +2050,6 @@ def show_custom_deck_selection(screen):
     選択されるとそのデッキでゲームを開始します。
     作成済みデッキがない場合は「作る」ボタンでデッキ作成画面へ移動できます。
     """
-    # カスタムデッキ選択モーダルを非表示（背景リストを上部に保持）
-    global DECK_MODE
-    return
-
     global DECK_MODE
     clk = pygame.time.Clock()
 

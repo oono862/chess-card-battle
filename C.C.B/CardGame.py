@@ -712,15 +712,24 @@ def restart_game():
     global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
     global log_scroll_offset
     
-    # チェス盤を初期配置に
-    chess.pieces[:] = chess.create_pieces()
-    chess.en_passant_target = None
+    # チェス盤を初期配置に（盤リセットは共通処理に任せる）
+    try:
+        chess.pieces[:] = chess.create_pieces()
+    except Exception:
+        pass
+    try:
+        chess.en_passant_target = None
+    except Exception:
+        pass
     # プロモーション状態をクリア
     try:
         chess_rules.clear_promotion_state(chess)
     except Exception:
-        chess.promotion_pending = None
-    
+        try:
+            chess.promotion_pending = None
+        except Exception:
+            pass
+
     # ゲーム状態をリセット
     game_over = False
     game_over_winner = None
@@ -728,19 +737,30 @@ def restart_game():
     selected_piece = None
     highlight_squares = []
     cpu_wait = False
-    
+
     # カードゲーム部分もリセット
     global game, ai_player
-    # 再戦時にデッキモードを選択させる
-    try:
-        selected = False
-        try:
-            selected = show_deck_choice_modal(screen)
-        except Exception:
-            selected = False
 
-        if not selected:
-            # User cancelled deck re-selection; fall back to previous DECK_MODE
+    # ユーザー要望: 再戦時は確認モーダルを表示せず、直前に使っていたデッキをそのまま使う
+    try:
+        # 直前の game が存在し、そのプレイヤーにデッキが保存されていればそれを再利用
+        if game is not None and getattr(game, 'player', None) is not None and getattr(getattr(game, 'player', None), 'deck', None) is not None:
+            # game / ai_player をそのまま再利用して UI/盤面だけ初期化する
+            try:
+                _prepare_new_battle_after_deck_already_selected()
+                try:
+                    _init_ai_start_hand(ai_player, 4, game)
+                except Exception:
+                    pass
+                # reset log scroll
+                log_scroll_offset = 0
+                return
+            except Exception:
+                # 何らかの理由で既存 game の再利用に失敗した場合はフォールバックして新規作成へ
+                logger.exception("Failed to reuse previous game for rematch; falling back to recreate")
+
+        # 既存 game がなければ、現在の DECK_MODE に従って新しいゲームを作成する（モーダルは表示しない）
+        try:
             game = new_game_with_mode(DECK_MODE)
             try:
                 ai_player = build_ai_player(DECK_MODE)
@@ -750,57 +770,20 @@ def restart_game():
                     pass
             except Exception:
                 ai_player = None
-        else:
-            # If user selected custom, open deck list to pick which custom deck to use
-            if DECK_MODE == 'custom':
-                try:
-                    started = show_deck_modal(screen, battle_select_mode=True)
-                except Exception:
-                    started = False
-                if not started:
-                    # user cancelled deck pick after choosing custom; fallback
-                    game = new_game_with_mode(DECK_MODE)
-                    try:
-                        ai_player = build_ai_player(DECK_MODE)
-                        try:
-                            _init_ai_start_hand(ai_player, 4, game)
-                        except Exception:
-                            pass
-                    except Exception:
-                        ai_player = None
-                else:
-                    # started successfully; nothing more to do here
-                    pass
-            else:
-                # fixed deck chosen
-                game = new_game_with_mode('fixed')
-                try:
-                    ai_player = build_ai_player('fixed')
-                    try:
-                        _init_ai_start_hand(ai_player, 4, game)
-                    except Exception:
-                        pass
-                except Exception:
-                    ai_player = None
-    except Exception:
-        # On any error, ensure we still create a playable game
-        try:
-            game = new_game_with_mode(DECK_MODE)
-            ai_player = build_ai_player(DECK_MODE)
-            try:
-                _init_ai_start_hand(ai_player, 4, game)
-            except Exception:
-                pass
         except Exception:
-            game = new_game_with_mode('fixed')
+            # 失敗したら固定デッキで強制作成
             try:
+                game = new_game_with_mode('fixed')
                 ai_player = build_ai_player('fixed')
                 try:
                     _init_ai_start_hand(ai_player, 4, game)
                 except Exception:
                     pass
             except Exception:
+                game = None
                 ai_player = None
+    except Exception:
+        logger.exception("Unexpected error in restart_game")
     log_scroll_offset = 0
     
     # ターン開始フラグを初期化（1ターン目はボタン押下が必要）

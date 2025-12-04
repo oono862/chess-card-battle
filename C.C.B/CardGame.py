@@ -46,6 +46,79 @@ _this_dir = os.path.dirname(os.path.abspath(__file__))
 if _this_dir not in sys.path:
     sys.path.insert(0, _this_dir)
 
+# User settings persistence (simple JSON in module directory)
+def _get_settings_path():
+    try:
+        return os.path.join(_this_dir, 'user_settings.json')
+    except Exception:
+        return 'user_settings.json'
+
+def load_user_anim_scale():
+    try:
+        p = _get_settings_path()
+        if not os.path.exists(p):
+            return None
+        with open(p, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        v = d.get('user_anim_scale', None)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+def save_user_anim_scale(val: float):
+    try:
+        p = _get_settings_path()
+        d = {}
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    d = json.load(f) or {}
+            except Exception:
+                d = {}
+        d['user_anim_scale'] = float(val)
+        try:
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def load_user_anim_choice():
+    try:
+        p = _get_settings_path()
+        if not os.path.exists(p):
+            return None
+        with open(p, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        return d.get('user_anim_choice', None)
+    except Exception:
+        return None
+
+def save_user_anim_choice(choice: str):
+    try:
+        p = _get_settings_path()
+        d = {}
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    d = json.load(f) or {}
+            except Exception:
+                d = {}
+        d['user_anim_choice'] = str(choice)
+        try:
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 # Pygameウィンドウ管理をインポート
 try:
     from ui.window import initialize_window, get_screen, get_clock, get_window_size, update_window_size
@@ -2942,6 +3015,8 @@ def show_animation_settings_screen(screen):
     - 矢印ON/OFF
     """
     global ai_move_pulse_enabled, ai_move_ghost_enabled, ai_move_arrow_enabled
+    global user_anim_scale
+    global animation_mod, _animation_module
     clk = pygame.time.Clock()
     w = 600
     h = 400
@@ -2959,9 +3034,42 @@ def show_animation_settings_screen(screen):
     # Capture the current animation time scale when opening the modal.
     # Semantics: '遅い' = current scale, '早い' = half of current scale.
     try:
-        prev_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+        # Prefer explicit user choice stored in this module if present
+        # Load saved discrete choice if present (persisted between runs)
+        if globals().get('user_anim_choice') is None:
+            try:
+                v = load_user_anim_choice()
+                if v is not None:
+                    globals()['user_anim_choice'] = v
+            except Exception:
+                pass
+
+        if globals().get('user_anim_scale') is not None:
+            prev_scale = float(globals().get('user_anim_scale'))
+        else:
+            # Try to read from canonical animation module (package or top-level)
+            import importlib, sys
+            mod = None
+            try:
+                mod = importlib.import_module('c.c.b.assets.animation')
+            except Exception:
+                try:
+                    mod = importlib.import_module('assets.animation')
+                except Exception:
+                    mod = sys.modules.get('c.c.b.assets.animation') or sys.modules.get('assets.animation')
+            if mod and hasattr(mod, 'get_anim_time_scale'):
+                prev_scale = float(mod.get_anim_time_scale())
+            elif animation_mod and hasattr(animation_mod, 'get_anim_time_scale'):
+                prev_scale = float(animation_mod.get_anim_time_scale())
+            else:
+                prev_scale = 1.0
     except Exception:
         prev_scale = 1.0
+    # debug: report the value used to compute fast/slow scales
+    try:
+        print(f"DEBUG: show_animation_settings_screen prev_scale={prev_scale} user_anim_scale={globals().get('user_anim_scale')}")
+    except Exception:
+        pass
     try:
         fast_scale = max(0.01, float(prev_scale) / 2.0)
     except Exception:
@@ -3028,6 +3136,11 @@ def show_animation_settings_screen(screen):
                         try:
                             if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
                                 animation_mod.set_anim_time_scale(fast_scale)
+                                globals()['user_anim_scale'] = float(fast_scale)
+                                try:
+                                    save_user_anim_scale(float(fast_scale))
+                                except Exception:
+                                    pass
                                 print(f"set_anim_time_scale -> {fast_scale} (via animation_mod)")
                                 success = True
                         except Exception:
@@ -3035,7 +3148,18 @@ def show_animation_settings_screen(screen):
                         try:
                             if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
                                 globals().get('_animation_module').set_anim_time_scale(fast_scale)
+                                globals()['user_anim_scale'] = float(fast_scale)
+                                try:
+                                    save_user_anim_scale(float(fast_scale))
+                                except Exception:
+                                    pass
                                 print(f"set_anim_time_scale -> {fast_scale} (via _animation_module)")
+                                # point local refs to that module
+                                try:
+                                    animation_mod = globals().get('_animation_module')
+                                    _animation_module = globals().get('_animation_module')
+                                except Exception:
+                                    pass
                                 success = True
                         except Exception:
                             pass
@@ -3053,13 +3177,38 @@ def show_animation_settings_screen(screen):
                                 if mod:
                                     if hasattr(mod, 'set_anim_time_scale'):
                                         mod.set_anim_time_scale(fast_scale)
+                                        globals()['user_anim_scale'] = float(fast_scale)
+                                        try:
+                                            globals()['user_anim_choice'] = 'fast'
+                                            save_user_anim_choice('fast')
+                                        except Exception:
+                                            pass
+                                        try:
+                                            save_user_anim_scale(float(fast_scale))
+                                        except Exception:
+                                            pass
                                         print(f"set_anim_time_scale -> {fast_scale} (via import)")
                                     else:
                                         try:
                                             setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
+                                            globals()['user_anim_scale'] = float(fast_scale)
+                                            try:
+                                                globals()['user_anim_choice'] = 'fast'
+                                                save_user_anim_choice('fast')
+                                            except Exception:
+                                                pass
+                                            try:
+                                                save_user_anim_scale(float(fast_scale))
+                                            except Exception:
+                                                pass
                                             print(f"ANIM_TIME_SCALE set -> {fast_scale} (via import setattr)")
                                         except Exception:
                                             pass
+                                    try:
+                                        animation_mod = mod
+                                        _animation_module = mod
+                                    except Exception:
+                                        pass
                                     success = True
                             except Exception:
                                 pass
@@ -3126,6 +3275,11 @@ def show_animation_settings_screen(screen):
                         try:
                             if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
                                 animation_mod.set_anim_time_scale(slow_scale)
+                                globals()['user_anim_scale'] = float(slow_scale)
+                                try:
+                                    save_user_anim_scale(float(slow_scale))
+                                except Exception:
+                                    pass
                                 print(f"set_anim_time_scale -> {slow_scale} (via animation_mod)")
                                 success = True
                         except Exception:
@@ -3133,7 +3287,22 @@ def show_animation_settings_screen(screen):
                         try:
                             if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
                                 globals().get('_animation_module').set_anim_time_scale(slow_scale)
+                                globals()['user_anim_scale'] = float(slow_scale)
+                                try:
+                                    globals()['user_anim_choice'] = 'slow'
+                                    save_user_anim_choice('slow')
+                                except Exception:
+                                    pass
+                                try:
+                                    save_user_anim_scale(float(slow_scale))
+                                except Exception:
+                                    pass
                                 print(f"set_anim_time_scale -> {slow_scale} (via _animation_module)")
+                                try:
+                                    animation_mod = globals().get('_animation_module')
+                                    _animation_module = globals().get('_animation_module')
+                                except Exception:
+                                    pass
                                 success = True
                         except Exception:
                             pass
@@ -3151,13 +3320,38 @@ def show_animation_settings_screen(screen):
                                 if mod:
                                     if hasattr(mod, 'set_anim_time_scale'):
                                         mod.set_anim_time_scale(slow_scale)
+                                        globals()['user_anim_scale'] = float(slow_scale)
+                                        try:
+                                            globals()['user_anim_choice'] = 'slow'
+                                            save_user_anim_choice('slow')
+                                        except Exception:
+                                            pass
+                                        try:
+                                            save_user_anim_scale(float(slow_scale))
+                                        except Exception:
+                                            pass
                                         print(f"set_anim_time_scale -> {slow_scale} (via import)")
                                     else:
                                         try:
                                             setattr(mod, 'ANIM_TIME_SCALE', float(slow_scale))
+                                            globals()['user_anim_scale'] = float(slow_scale)
+                                            try:
+                                                globals()['user_anim_choice'] = 'slow'
+                                                save_user_anim_choice('slow')
+                                            except Exception:
+                                                pass
+                                            try:
+                                                save_user_anim_scale(float(slow_scale))
+                                            except Exception:
+                                                pass
                                             print(f"ANIM_TIME_SCALE set -> {slow_scale} (via import setattr)")
                                         except Exception:
                                             pass
+                                    try:
+                                        animation_mod = mod
+                                        _animation_module = mod
+                                    except Exception:
+                                        pass
                                     success = True
                             except Exception:
                                 pass
@@ -3254,11 +3448,29 @@ def show_animation_settings_screen(screen):
 
         # animation speed radios (draw before back button)
         try:
-            # determine current selection from animation module
+            # determine current selection: prefer explicit user choice stored in this
+            # module (user_anim_scale). Fallback to the animation module's getter.
             try:
-                cur_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
+                if globals().get('user_anim_scale') is not None:
+                    cur_scale = float(globals().get('user_anim_scale'))
+                else:
+                    cur_scale = animation_mod.get_anim_time_scale() if animation_mod and hasattr(animation_mod, 'get_anim_time_scale') else 1.0
             except Exception:
-                cur_scale = 1.0
+                cur_scale = float(globals().get('user_anim_scale')) if globals().get('user_anim_scale') is not None else 1.0
+            # normalize: pick explicit selected option to avoid overlapping draw conditions
+            try:
+                d_fast = abs(cur_scale - fast_scale)
+                d_slow = abs(cur_scale - slow_scale)
+                if d_fast <= d_slow:
+                    selected_speed = 'fast'
+                else:
+                    selected_speed = 'slow'
+            except Exception:
+                selected_speed = 'slow'
+            try:
+                print(f"DEBUG: radio draw cur_scale={cur_scale} fast={fast_scale} slow={slow_scale} user_anim_scale={globals().get('user_anim_scale')} selected={selected_speed}")
+            except Exception:
+                pass
             radio_x = opt_x
             radio_y = opt_y + gap*3 + 12
 
@@ -3275,7 +3487,7 @@ def show_animation_settings_screen(screen):
             pygame.draw.circle(surf, (200,200,200), (fx+10, fy+12), 10)
             # selected indicator
             try:
-                if abs(cur_scale - fast_scale) < abs(cur_scale - slow_scale):
+                if selected_speed == 'fast':
                     pygame.draw.circle(surf, (40,120,220), (fx+10, fy+12), 6)
             except Exception:
                 if cur_scale <= (fast_scale + slow_scale) / 2.0:
@@ -3287,7 +3499,7 @@ def show_animation_settings_screen(screen):
             sy = radio_y
             pygame.draw.circle(surf, (200,200,200), (sx+10, sy+12), 10)
             try:
-                if abs(cur_scale - slow_scale) <= abs(cur_scale - fast_scale):
+                if selected_speed == 'slow':
                     pygame.draw.circle(surf, (220,40,40), (sx+10, sy+12), 6)
             except Exception:
                 if cur_scale > (fast_scale + slow_scale) / 2.0:

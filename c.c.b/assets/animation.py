@@ -294,8 +294,12 @@ def play_heat_gif_at(row: int, col: int):
     if not frames:
         return
     
+    # Gimmick GIFs (heat) should use their native frame timings
+    # and not be affected by the global ANIM_TIME_SCALE which is
+    # intended only for piece-movement animations.
     try:
-        scaled = [int(d * ANIM_TIME_SCALE) for d in durations]
+        # ensure integer ms values
+        scaled = [int(d) for d in durations]
     except Exception:
         scaled = durations
     heat_gif_anim['frames'] = frames
@@ -359,12 +363,14 @@ def _ensure_ic_gif_loaded():
             return
     
     ic_gif_frames_cache = frames
-    # Apply speed factor to make ice animation slower and more visible
+    # Apply speed factor to make ice animation slower and more visible.
+    # Do NOT apply ANIM_TIME_SCALE here: ice GIF timings are part of
+    # the gimmick visual and should remain independent of piece-move
+    # speed settings.
     try:
         durations = [int(d) for d in (durations or [1000])]
         slowed = [max(int(d * IC_GIF_SPEED_FACTOR), 120) for d in durations]
-        # apply global time scale to make ice GIFs last longer
-        ic_gif_durations = [int(max(int(d * ANIM_TIME_SCALE), 120)) for d in slowed]
+        ic_gif_durations = [int(d) for d in slowed]
         ic_gif_anim['total_duration'] = sum(ic_gif_durations) / 1000.0
     except Exception:
         ic_gif_durations = durations

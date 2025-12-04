@@ -5,7 +5,7 @@ import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
 import re
-from typing import List
+from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
@@ -33,6 +33,18 @@ except Exception:
             from chess import rules as chess_rules
         except Exception:
             chess_rules = None
+    # Help static type checkers / language servers resolve package-relative imports
+    if TYPE_CHECKING:
+        # These imports are only for editors/type-checkers (no runtime effect).
+        try:
+            from c.c.b.assets import animation as animation  # type: ignore
+            from c.c.b.assets import image_loader as image_loader  # type: ignore
+        except Exception:
+            try:
+                from assets import animation as animation  # type: ignore
+                from assets import image_loader as image_loader  # type: ignore
+            except Exception:
+                pass
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
     from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
@@ -473,6 +485,21 @@ except Exception:
     def draw_notice_message(screen, layout, notice_msg, notice_until): pass
     def draw_highlights(screen, layout, selected_piece, highlight_squares, chess, game, is_in_check, simulate_move): pass
     def draw_check_indicator(screen, layout, game_over, chess, is_in_check_for_display, can_attack_king_with_cards, W, H): pass
+
+# Draw dashed rect helper (moved to utils/drawing.py). Import it if available,
+# otherwise provide a safe fallback so existing calls don't crash.
+try:
+    from utils.drawing import draw_dashed_rect
+except Exception:
+    try:
+        # try package-style import
+        from c.c.b.utils.drawing import draw_dashed_rect
+    except Exception:
+        def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2):
+            try:
+                pygame.draw.rect(surf, color, rect, width)
+            except Exception:
+                pass
 
 pygame.init()
 
@@ -3168,7 +3195,8 @@ def show_animation_settings_screen(screen):
                     ai_move_arrow_enabled = not ai_move_arrow_enabled
                 # animation speed radios (hit areas aligned to drawing coordinates)
                 radio_x = x + 40  # matches draw radio_x
-                radio_y = y + 48 + cb_h*3 + 12
+                # move radios one extra gap downward to create space for a label
+                radio_y = y + 48 + cb_h*4 + 12
                 fast_w = 110
                 slow_w = 110
                 r_h = 36
@@ -3513,7 +3541,17 @@ def show_animation_settings_screen(screen):
             except Exception:
                 pass
             radio_x = opt_x
-            radio_y = opt_y + gap*3 + 12
+            # move radios one extra gap downward to create a gap for the new label
+            radio_y = opt_y + gap*4 + 12
+
+            # draw the label above the radios in the new gap
+            try:
+                label_txt = SMALL.render("アニメーション表示時間", True, (30,30,30))
+                label_x = opt_x
+                label_y = opt_y + gap*3 + 6
+                surf.blit(label_txt, (label_x, label_y))
+            except Exception:
+                pass
 
             # draw a subtle background for the radio area to make it visible
             try:

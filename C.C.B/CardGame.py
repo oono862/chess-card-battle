@@ -3067,15 +3067,18 @@ def show_animation_settings_screen(screen):
         prev_scale = 1.0
     # debug: report the value used to compute fast/slow scales
     try:
-        print(f"DEBUG: show_animation_settings_screen prev_scale={prev_scale} user_anim_scale={globals().get('user_anim_scale')}")
+        logger.debug(f"show_animation_settings_screen prev_scale={prev_scale} user_anim_scale={globals().get('user_anim_scale')}")
     except Exception:
         pass
+    # Use deterministic canonical scales to avoid relative/accumulating
+    # semantics that cause intermittent confusion when multiple modules
+    # are imported under different names. 'fast' is 0.5x, 'slow' is 1.0x.
     try:
-        fast_scale = max(0.01, float(prev_scale) / 2.0)
+        fast_scale = 0.5
     except Exception:
         fast_scale = 0.5
     try:
-        slow_scale = float(prev_scale)
+        slow_scale = 1.0
     except Exception:
         slow_scale = 1.0
 
@@ -3129,19 +3132,22 @@ def show_animation_settings_screen(screen):
 
                 if fast_rect.collidepoint(mx, my):
                     try:
-                        print("animation: fast radio clicked")
+                        logger.info("animation: fast radio clicked")
                         # Try multiple ways to set the global animation scale so
                         # we don't miss the actual module object used elsewhere.
                         success = False
                         try:
                             if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
                                 animation_mod.set_anim_time_scale(fast_scale)
+                                # persist canonical choice and scale
                                 globals()['user_anim_scale'] = float(fast_scale)
+                                globals()['user_anim_choice'] = 'fast'
                                 try:
                                     save_user_anim_scale(float(fast_scale))
+                                    save_user_anim_choice('fast')
                                 except Exception:
                                     pass
-                                print(f"set_anim_time_scale -> {fast_scale} (via animation_mod)")
+                                logger.debug(f"set_anim_time_scale -> {fast_scale} (via animation_mod)")
                                 success = True
                         except Exception:
                             success = False
@@ -3149,11 +3155,13 @@ def show_animation_settings_screen(screen):
                             if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
                                 globals().get('_animation_module').set_anim_time_scale(fast_scale)
                                 globals()['user_anim_scale'] = float(fast_scale)
+                                globals()['user_anim_choice'] = 'fast'
                                 try:
                                     save_user_anim_scale(float(fast_scale))
+                                    save_user_anim_choice('fast')
                                 except Exception:
                                     pass
-                                print(f"set_anim_time_scale -> {fast_scale} (via _animation_module)")
+                                logger.debug(f"set_anim_time_scale -> {fast_scale} (via _animation_module)")
                                 # point local refs to that module
                                 try:
                                     animation_mod = globals().get('_animation_module')
@@ -3175,35 +3183,21 @@ def show_animation_settings_screen(screen):
                                     except Exception:
                                         mod = sys.modules.get('c.c.b.assets.animation') or sys.modules.get('assets.animation')
                                 if mod:
-                                    if hasattr(mod, 'set_anim_time_scale'):
-                                        mod.set_anim_time_scale(fast_scale)
+                                    try:
+                                        if hasattr(mod, 'set_anim_time_scale'):
+                                            mod.set_anim_time_scale(fast_scale)
+                                        else:
+                                            setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
                                         globals()['user_anim_scale'] = float(fast_scale)
+                                        globals()['user_anim_choice'] = 'fast'
                                         try:
-                                            globals()['user_anim_choice'] = 'fast'
+                                            save_user_anim_scale(float(fast_scale))
                                             save_user_anim_choice('fast')
                                         except Exception:
                                             pass
-                                        try:
-                                            save_user_anim_scale(float(fast_scale))
-                                        except Exception:
-                                            pass
-                                        print(f"set_anim_time_scale -> {fast_scale} (via import)")
-                                    else:
-                                        try:
-                                            setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
-                                            globals()['user_anim_scale'] = float(fast_scale)
-                                            try:
-                                                globals()['user_anim_choice'] = 'fast'
-                                                save_user_anim_choice('fast')
-                                            except Exception:
-                                                pass
-                                            try:
-                                                save_user_anim_scale(float(fast_scale))
-                                            except Exception:
-                                                pass
-                                            print(f"ANIM_TIME_SCALE set -> {fast_scale} (via import setattr)")
-                                        except Exception:
-                                            pass
+                                        logger.debug(f"set_anim_time_scale -> {fast_scale} (via import module)")
+                                    except Exception:
+                                        pass
                                     try:
                                         animation_mod = mod
                                         _animation_module = mod
@@ -3223,12 +3217,12 @@ def show_animation_settings_screen(screen):
                                     il = importlib.import_module('assets.image_loader')
                                 except Exception:
                                     il = sys.modules.get('c.c.b.assets.image_loader') or sys.modules.get('assets.image_loader')
-                            if il and hasattr(il, '_gif_animation_cache'):
-                                try:
-                                    il._gif_animation_cache.clear()
-                                    print('image_loader: gif cache cleared')
-                                except Exception:
-                                    pass
+                                if il and hasattr(il, '_gif_animation_cache'):
+                                    try:
+                                        il._gif_animation_cache.clear()
+                                        logger.debug('image_loader: gif cache cleared')
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                         # Also attempt to find any loaded modules that correspond to
@@ -3242,23 +3236,20 @@ def show_animation_settings_screen(screen):
                                 try:
                                     mf = getattr(mod, '__file__', '') or ''
                                     if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'animation.py')):
-                                        if hasattr(mod, 'set_anim_time_scale'):
-                                            try:
+                                        try:
+                                            if hasattr(mod, 'set_anim_time_scale'):
                                                 mod.set_anim_time_scale(fast_scale)
-                                                print(f"set_anim_time_scale -> {fast_scale} (via sys.modules {name})")
-                                            except Exception:
-                                                pass
-                                        else:
-                                            try:
+                                                logger.debug(f"set_anim_time_scale -> {fast_scale} (via sys.modules {name})")
+                                            else:
                                                 setattr(mod, 'ANIM_TIME_SCALE', float(fast_scale))
-                                                print(f"ANIM_TIME_SCALE set -> {fast_scale} (via sys.modules {name})")
-                                            except Exception:
-                                                pass
+                                                logger.debug(f"ANIM_TIME_SCALE set -> {fast_scale} (via sys.modules {name})")
+                                        except Exception:
+                                            pass
                                     if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'image_loader.py')):
                                         if hasattr(mod, '_gif_animation_cache'):
                                             try:
                                                 mod._gif_animation_cache.clear()
-                                                print(f"image_loader: gif cache cleared (via sys.modules {name})")
+                                                logger.debug(f"image_loader: gif cache cleared (via sys.modules {name})")
                                             except Exception:
                                                 pass
                                 except Exception:
@@ -3269,18 +3260,20 @@ def show_animation_settings_screen(screen):
                         pass
                 elif slow_rect.collidepoint(mx, my):
                     try:
-                        print("animation: slow radio clicked")
+                        logger.info("animation: slow radio clicked")
                         # Same robust path for slow_scale
                         success = False
                         try:
                             if animation_mod and hasattr(animation_mod, 'set_anim_time_scale'):
                                 animation_mod.set_anim_time_scale(slow_scale)
                                 globals()['user_anim_scale'] = float(slow_scale)
+                                globals()['user_anim_choice'] = 'slow'
                                 try:
                                     save_user_anim_scale(float(slow_scale))
+                                    save_user_anim_choice('slow')
                                 except Exception:
                                     pass
-                                print(f"set_anim_time_scale -> {slow_scale} (via animation_mod)")
+                                logger.debug(f"set_anim_time_scale -> {slow_scale} (via animation_mod)")
                                 success = True
                         except Exception:
                             success = False
@@ -3288,16 +3281,13 @@ def show_animation_settings_screen(screen):
                             if not success and globals().get('_animation_module') and hasattr(globals().get('_animation_module'), 'set_anim_time_scale'):
                                 globals().get('_animation_module').set_anim_time_scale(slow_scale)
                                 globals()['user_anim_scale'] = float(slow_scale)
+                                globals()['user_anim_choice'] = 'slow'
                                 try:
-                                    globals()['user_anim_choice'] = 'slow'
+                                    save_user_anim_scale(float(slow_scale))
                                     save_user_anim_choice('slow')
                                 except Exception:
                                     pass
-                                try:
-                                    save_user_anim_scale(float(slow_scale))
-                                except Exception:
-                                    pass
-                                print(f"set_anim_time_scale -> {slow_scale} (via _animation_module)")
+                                logger.debug(f"set_anim_time_scale -> {slow_scale} (via _animation_module)")
                                 try:
                                     animation_mod = globals().get('_animation_module')
                                     _animation_module = globals().get('_animation_module')
@@ -3468,7 +3458,7 @@ def show_animation_settings_screen(screen):
             except Exception:
                 selected_speed = 'slow'
             try:
-                print(f"DEBUG: radio draw cur_scale={cur_scale} fast={fast_scale} slow={slow_scale} user_anim_scale={globals().get('user_anim_scale')} selected={selected_speed}")
+                logger.debug(f"radio draw cur_scale={cur_scale} fast={fast_scale} slow={slow_scale} user_anim_scale={globals().get('user_anim_scale')} selected={selected_speed}")
             except Exception:
                 pass
             radio_x = opt_x

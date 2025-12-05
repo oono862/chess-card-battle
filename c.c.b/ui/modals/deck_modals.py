@@ -1362,15 +1362,11 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
                                 game_setter(build_game_from_card_names(names))
                             else:
                                 game_setter(new_game_with_mode('custom'))
-                                # Note: ai_player is not set here; caller must handle it
-                                try:
-                                    logger.debug("global game set (mouse_start)")
-                                except Exception:
-                                    pass
+                            # Note: ai_player is not set here; caller must handle it
                             try:
                                 logger.debug("created game deck from custom selection")
-                                except Exception as _e:
-                                    logger.debug("error inspecting created game: %s", _e)
+                            except Exception as _e:
+                                logger.debug("error inspecting created game: %s", _e)
                         except Exception as e:
                             logger.debug("exception when creating game from names: %s", e)
                             game_setter(new_game_with_mode('custom'))

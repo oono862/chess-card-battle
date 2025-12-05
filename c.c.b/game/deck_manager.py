@@ -219,6 +219,7 @@ def build_game_from_card_names(names):
         unmatched = []
         for nm in names:
             norm_nm = _norm(nm)
+            
             # prefer normalized prototype lookup to avoid mismatch
             p = (proto_map.get(nm) or proto_map.get(norm_nm) or 
                  proto_map.get(norm_nm.replace(' ', '')) or 
@@ -231,21 +232,36 @@ def build_game_from_card_names(names):
                        extra_map.get(norm_nm.replace(' ', '')))
                 if eff:
                     try:
-                        cost = 3 if norm_nm == '命がけのギャンブル' else (4 if norm_nm == '負けるわけないだろwww' else 2)
+                        # コスト判定
+                        if norm_nm == '命がけのギャンブル':
+                            cost = 3
+                        elif norm_nm == '負けるわけないだろwww':
+                            cost = 4
+                        elif norm_nm in ('鉄壁', 'ハンです☆'):
+                            cost = 2
+                        else:
+                            cost = 2  # デフォルト
                         pool.append(Card(norm_nm, cost, eff))
+                        logger.debug("Added extra_map card: %s", norm_nm)
                         continue
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("Failed to add extra_map card %s: %s", norm_nm, e)
                         pass
                 unmatched.append(nm)
+                logger.debug("Unmatched card: %s (normalized: %s)", nm, norm_nm)
                 continue
             
             try:
                 # clone prototype (best-effort)
                 pool.append(Card(p.name, p.cost, p.effect, getattr(p, 'precheck', None)))
-            except Exception:
+                logger.debug("Added prototype card: %s", p.name)
+            except Exception as e:
+                logger.debug("Failed to clone prototype %s: %s", p.name, e)
                 try:
                     pool.append(Card(p.name, p.cost, p.effect))
-                except Exception:
+                    logger.debug("Added prototype card (no precheck): %s", p.name)
+                except Exception as e2:
+                    logger.debug("Failed to add prototype card %s: %s", p.name, e2)
                     continue
 
         # debug: report unmatched names and how many matched
@@ -289,18 +305,40 @@ def build_game_from_card_names(names):
         player = PlayerState(deck=deck)
         g = Game(player=player)
 
+        # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
-            g.setup_battle()
+            player.reset_pp()
+            g.log.append("バトル開始: PPを最大まで回復しました。")
         except Exception:
             pass
 
-        # debug: print initial hand and deck top after setup_battle
+        # ギミックカード4枚のみを配布（山札からは引かない）
+        try:
+            # Import _generate_random_gimmick_cards from main module
+            main = get_main_module()
+            _generate_random_gimmick_cards = getattr(main, '_generate_random_gimmick_cards', None)
+            if _generate_random_gimmick_cards:
+                gimmick_cards = _generate_random_gimmick_cards(4)
+                for gc in gimmick_cards:
+                    if gc is not None:
+                        player.hand.add(gc)
+                # ギミック配布分の4枚をデッキから除外
+                if gimmick_cards and hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
+                    for _ in range(4):
+                        if player.deck.cards:
+                            player.deck.cards.pop(0)
+                if gimmick_cards and hasattr(g, 'log'):
+                    g.log.append("バトル開始: ギミックカード4枚を受け取りました。")
+        except Exception as e:
+            logger.debug("Failed to add gimmick cards: %s", e)
+
+        # debug: print initial hand and deck top after gimmick card addition
         try:
             hand_names = [c.name for c in g.player.hand.cards]
             deck_cards = getattr(g.player.deck, 'cards', [])
             deck_count = len(deck_cards)
             top_names = [c.name for c in deck_cards[:8]]
-            logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
+            logger.debug("after gimmick addition hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
         except Exception:
             pass
 

@@ -19,6 +19,10 @@ def _refresh_display_size_from_pygame():
     """
     # reference globals but don't require they be defined at import time
     global W, H, screen
+    # remember previous reported size so we can detect changes and invalidate
+    # any cached, size-dependent resources (eg. scaled background surfaces)
+    prev_w = globals().get('W', None)
+    prev_h = globals().get('H', None)
     try:
         # Prefer the display surface size (logical drawing surface) for
         # layout calculations. When Pygame is run with SCALED, the window
@@ -36,6 +40,10 @@ def _refresh_display_size_from_pygame():
                 W, H = int(sz[0]), int(sz[1])
                 globals()['W'] = W
                 globals()['H'] = H
+                # If size changed, invalidate any cached, size-specific surfaces
+                if (prev_w, prev_h) != (W, H):
+                    if 'play_bg_surf' in globals():
+                        globals()['play_bg_surf'] = None
                 return (W, H)
             except Exception:
                 pass
@@ -46,6 +54,9 @@ def _refresh_display_size_from_pygame():
                 W, H = int(win_sz[0]), int(win_sz[1])
                 globals()['W'] = W
                 globals()['H'] = H
+                if (prev_w, prev_h) != (W, H):
+                    if 'play_bg_surf' in globals():
+                        globals()['play_bg_surf'] = None
                 return (W, H)
         except Exception:
             pass
@@ -1389,25 +1400,55 @@ def show_start_screen():
                     # open deck selection modal (deck editor requires slot context)
                     show_deck_modal(screen)
 
-        # draw background (image if available) - prefer sepia image
-        if bg is not None:
-            screen.blit(bg, (0,0))
-            # If repo image is used, it's likely already properly exposed; apply a tiny brighten.
-            if repo_bg_used:
-                bright = pygame.Surface((W, H), pygame.SRCALPHA)
-                bright.fill((255,255,255,10))  # 減少: 20 -> 10
-                screen.blit(bright, (0,0))
-            else:
-                # For user-provided images, apply stronger brighten to reach the desired level
-                bright = pygame.Surface((W, H), pygame.SRCALPHA)
-                bright.fill((255,255,255,40))  # 減少: 100 -> 40
-                screen.blit(bright, (0,0))
+        # draw background (image if available) - always scale to current window size
+        try:
+            win_w, win_h = screen.get_size()
+        except Exception:
+            win_w, win_h = W, H
+
+        bg_frame = None
+        # If we have an original loaded image, always scale it to the current size
+        if bg_img is not None:
+            try:
+                bg_frame = pygame.transform.smoothscale(bg_img, (win_w, win_h)).convert()
+            except Exception:
+                bg_frame = bg
+        else:
+            # If we only have a previously-scaled surface, use it when sizes match,
+            # otherwise rescale it to the current window size for consistent filling.
+            if bg is not None:
+                try:
+                    if getattr(bg, 'get_size', None) and bg.get_size() == (win_w, win_h):
+                        bg_frame = bg
+                    else:
+                        bg_frame = pygame.transform.smoothscale(bg, (win_w, win_h)).convert()
+                except Exception:
+                    bg_frame = None
+
+        if bg_frame is not None:
+            try:
+                screen.blit(bg_frame, (0, 0))
+                # apply brighten overlay depending on source
+                bright = pygame.Surface((win_w, win_h), pygame.SRCALPHA)
+                if repo_bg_used:
+                    bright.fill((255, 255, 255, 10))
+                else:
+                    bright.fill((255, 255, 255, 40))
+                screen.blit(bright, (0, 0))
+            except Exception:
+                try:
+                    screen.fill((150, 100, 50))
+                except Exception:
+                    pass
         else:
             # lighter sepia fallback
-            screen.fill((150, 100, 50))
+            try:
+                screen.fill((150, 100, 50))
+            except Exception:
+                pass
 
         # gentle dark overlay to maintain contrast but keep background visible
-        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay = pygame.Surface((win_w, win_h), pygame.SRCALPHA)
         overlay.fill((0,0,0,30))  # 減少: 80 -> 30 (背景をもっと見えるように)
         screen.blit(overlay, (0,0))
 

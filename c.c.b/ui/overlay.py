@@ -3,6 +3,18 @@ import pygame
 import logging
 import re
 import time
+from typing import TYPE_CHECKING
+
+# 型チェック時のみ、正しいパッケージ名でインポートしてエディタ（Pylance）の警告を抑制します。
+if TYPE_CHECKING:
+    try:
+        # 実行時には評価されないため安全にトップレベルパスで書きます
+        from c.c.b.ui.layout import draw_text, wrap_text  # type: ignore
+        from c.c.b.ui.config import FONT, HELP_FONT  # type: ignore
+        from c.c.b.assets.image_loader import get_piece_image_surface, get_card_image  # type: ignore
+    except Exception:
+        # TYPE_CHECKING ブロック内の失敗は無視
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +30,9 @@ current_log_view = 'detail'
 # 直近のビュー切替時刻とビュー名（画面上に短時間フラッシュ表示するための診断用）
 _last_view_change_time = 0.0
 _last_view_change_name = None
+
+# ログ内の駒アイコン矩形リスト [(rect, label_str), ...]
+log_icon_rects = []
 
 
 def set_log_view(view: str):
@@ -75,9 +90,9 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         from ..assets.image_loader import get_piece_image_surface
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text, wrap_text
-            from CCB.ui.config import FONT, HELP_FONT
-            from CCB.assets.image_loader import get_piece_image_surface
+            from CCB.ui.layout import draw_text, wrap_text  # type: ignore[reportMissingImports]
+            from CCB.ui.config import FONT, HELP_FONT  # type: ignore[reportMissingImports]
+            from CCB.assets.image_loader import get_piece_image_surface  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys
@@ -440,6 +455,10 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4
+        # Clear per-frame icon rects
+        global log_icon_rects
+        log_icon_rects = []
+
         for wline, kind, piece_letter in visible_lines:
             if log_y < log_panel_top + log_panel_height - bottom_padding_px:
                 # テキストサーフェスを作成して幅を測る
@@ -480,6 +499,17 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                     if icon_surf:
                         try:
                             screen.blit(icon_surf, (tx, log_y))
+                            # record icon rect for hover tooltip (use background top by)
+                            try:
+                                # record icon rect using the actual blit Y (log_y)
+                                icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                                # map piece letter to human-friendly name (Japanese)
+                                _name_map = {'K': 'キング', 'Q': 'クイーン', 'R': 'ルーク', 'B': 'ビショップ', 'N': 'ナイト', 'P': 'ポーン'}
+                                pname = _name_map.get(piece_letter, piece_letter) if piece_letter else ''
+                                label = f"黒：{pname}" if pname else ''
+                                log_icon_rects.append((icon_rect, label))
+                            except Exception:
+                                pass
                             tx += icon_w + 6
                         except Exception:
                             pass
@@ -499,6 +529,15 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                         try:
                             # place icon just before the text area (left side)
                             screen.blit(icon_surf, (tx, log_y))
+                            # record icon rect for hover tooltip (use actual blit Y log_y)
+                            try:
+                                icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                                _name_map = {'K': 'キング', 'Q': 'クイーン', 'R': 'ルーク', 'B': 'ビショップ', 'N': 'ナイト', 'P': 'ポーン'}
+                                pname = _name_map.get(piece_letter, piece_letter) if piece_letter else ''
+                                label = f"白：{pname}" if pname else ''
+                                log_icon_rects.append((icon_rect, label))
+                            except Exception:
+                                pass
                             tx += icon_w + 6
                         except Exception:
                             pass
@@ -531,6 +570,59 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         else:
             scrollbar_rect = None
             
+        # Debug: log number of recorded icon rects (print so appearing in console reliably)
+        try:
+            logger.debug(f"overlay: log_icon_rects count={len(log_icon_rects)}")
+        except Exception:
+            pass
+        try:
+            print(f"[overlay-debug] icon_rects={len(log_icon_rects)}")
+        except Exception:
+            pass
+
+        # Tooltip: show piece name when mouse hovers an icon in the log
+        try:
+            mx, my = pygame.mouse.get_pos()
+            hovered_label = None
+            for r, label in log_icon_rects:
+                try:
+                    if r.collidepoint((mx, my)):
+                        hovered_label = label
+                        break
+                except Exception:
+                    continue
+            if hovered_label:
+                try:
+                    logger.debug(f"overlay: hovered_label={hovered_label} at {mx},{my}")
+                except Exception:
+                    pass
+                try:
+                    # also print to stdout for run-time debugging
+                    try:
+                        print(f"[overlay-debug] hovered_label={hovered_label} mx,my={mx},{my}")
+                    except Exception:
+                        pass
+                    # draw tooltip near mouse
+                    font = FONT
+                    txt_surf = font.render(hovered_label, True, (10, 10, 10))
+                    tw = txt_surf.get_width()
+                    th = txt_surf.get_height()
+                    pad = 6
+                    tx = mx + 12
+                    ty = my + 12
+                    # keep tooltip on-screen
+                    if tx + tw + pad*2 > W:
+                        tx = W - tw - pad*2 - 8
+                    if ty + th + pad*2 > H:
+                        ty = H - th - pad*2 - 8
+                    pygame.draw.rect(screen, (255, 255, 220), (tx, ty, tw + pad*2, th + pad*2))
+                    pygame.draw.rect(screen, (120, 120, 100), (tx, ty, tw + pad*2, th + pad*2), 1)
+                    screen.blit(txt_surf, (tx + pad, ty + pad))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         return log_scroll_offset, log_toggle_rect
     else:
         # ログ非表示時のヒント (右パネルに寄せる)
@@ -590,8 +682,8 @@ def draw_grave_overlay(screen, game, show_grave, W, H):
         from ..assets.image_loader import get_card_image
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text
-            from CCB.assets.image_loader import get_card_image
+            from CCB.ui.layout import draw_text  # type: ignore[reportMissingImports]
+            from CCB.assets.image_loader import get_card_image  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys
@@ -658,7 +750,7 @@ def draw_opponent_hand_overlay(screen, get_opponent_hand_count, show_opponent_ha
         from .layout import draw_text
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text
+            from CCB.ui.layout import draw_text  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys

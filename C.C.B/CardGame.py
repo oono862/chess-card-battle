@@ -8,6 +8,54 @@ import re
 from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Ensure we can obtain the actual display/window size in one place.
+def _refresh_display_size_from_pygame():
+    """Return (W,H) using the most authoritative pygame API available.
+
+    This helper uses `pygame.display.get_window_size()` when available (SDL2),
+    falling back to the display surface size. It also updates module globals
+    `W`, `H` when possible.
+    """
+    # reference globals but don't require they be defined at import time
+    global W, H, screen
+    try:
+        # Prefer the display surface size (logical drawing surface) for
+        # layout calculations. When Pygame is run with SCALED, the window
+        # physical size (get_window_size) can differ from the logical
+        # surface size used for blitting; using the surface size prevents
+        # layout/mouse-coordinate mismatches.
+        surf = None
+        try:
+            surf = pygame.display.get_surface()
+        except Exception:
+            surf = None
+        if surf:
+            try:
+                sz = surf.get_size()
+                W, H = int(sz[0]), int(sz[1])
+                globals()['W'] = W
+                globals()['H'] = H
+                return (W, H)
+            except Exception:
+                pass
+        # Fallback: if surface not available or failed, use window size
+        try:
+            win_sz = pygame.display.get_window_size()
+            if win_sz and isinstance(win_sz, tuple) and len(win_sz) == 2:
+                W, H = int(win_sz[0]), int(win_sz[1])
+                globals()['W'] = W
+                globals()['H'] = H
+                return (W, H)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # fallback: return previously-set globals if available
+    try:
+        return (W, H)
+    except Exception:
+        return (1200, 800)
 # card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
 local_dir = os.path.dirname(os.path.abspath(__file__))
 if local_dir not in sys.path:
@@ -148,6 +196,19 @@ except Exception:
         return s.get_size() if s else (1200, 800)
     def update_window_size(): pass
 
+    # Helper: update module globals W,H to the actual display/window pixel size.
+    # Note: a top-level version of this function exists to ensure it's available
+    # regardless of whether this except-block is taken; keep this as a thin wrapper
+    # for backward compatibility.
+    def _refresh_display_size_from_pygame():
+        try:
+            return globals()['_refresh_display_size_from_pygame']()
+        except Exception:
+            try:
+                return (W, H)
+            except Exception:
+                return (1200, 800)
+
 # UIフォント設定をインポート
 try:
     from ui.config import (get_font, FONT, SMALL, TINY, HELP_FONT, get_gimmick_activation_mode, set_gimmick_activation_mode, get_gimmick_click_submode, set_gimmick_click_submode, DOUBLE_CLICK_INTERVAL, DOUBLE_CLICK_DIST, DOUBLE_CLICK_DIST_SQ, get_last_click_info, set_last_click_info)
@@ -223,11 +284,11 @@ except Exception:
     except Exception:
         try:
             # explicit package import
-            from c.c.b.assets import animation as animation_mod
+            from c.c.b.assets import animation as animation_mod  # type: ignore[reportMissingImports]
         except Exception:
             try:
                 # fallback absolute import
-                import c.c.b.assets.animation as animation_mod
+                import c.c.b.assets.animation as animation_mod  # type: ignore[reportMissingImports]
             except Exception:
                 try:
                     # top-level assets module
@@ -282,7 +343,7 @@ try:
 except Exception:
     try:
         # explicit package import (works when workspace root is project root)
-        from c.c.b.assets import image_loader, animation
+        from c.c.b.assets import image_loader, animation  # type: ignore[reportMissingImports]
         IMG_DIR = image_loader.IMG_DIR
         get_card_image = image_loader.get_card_image
         get_piece_image_surface = image_loader.get_piece_image_surface
@@ -474,9 +535,12 @@ except Exception:
     _modals_available = False
 # チェス盤描画をインポート
 try:
+    # import module object as `draw_board` so callers can access module-level caches
+    import ui.board_renderer as draw_board
     from ui.board_renderer import (draw_chessboard, draw_pieces, draw_card_effects, draw_gif_animations, draw_turn_telop, draw_notice_message, draw_highlights, draw_check_indicator)
 except Exception:
     logger.exception("Failed to import ui.board_renderer module")
+    draw_board = None
     def draw_chessboard(screen, layout, chess): pass
     def draw_pieces(screen, layout, chess, SMALL): pass
     def draw_card_effects(screen, layout, game, chess, TINY): pass
@@ -493,7 +557,7 @@ try:
 except Exception:
     try:
         # try package-style import
-        from c.c.b.utils.drawing import draw_dashed_rect
+        from c.c.b.utils.drawing import draw_dashed_rect  # type: ignore[reportMissingImports]
     except Exception:
         def draw_dashed_rect(surf, color, rect, dash=6, gap=4, width=2):
             try:
@@ -505,6 +569,9 @@ pygame.init()
 
 # 画面設定
 W, H = 1200, 800
+is_fullscreen = False
+# store previous windowed size so we can restore when leaving fullscreen
+_prev_window_size = (W, H)
 # 既存のdisplay surfaceを再利用（複数ウィンドウ防止）
 try:
     existing_surf = pygame.display.get_surface()
@@ -521,6 +588,92 @@ clock = pygame.time.Clock()
 BASE_UI_W = 1200
 BASE_UI_H = 800
 
+# Debugging: visualize layout rectangles when investigating resize issues
+LAYOUT_DEBUG = False
+
+def draw_debug_layout(screen, layout):
+    """Draw helpful rectangles and mouse coordinates to diagnose layout mismatches.
+
+    Only active when `LAYOUT_DEBUG` is True.
+    """
+    try:
+        if not LAYOUT_DEBUG:
+            return
+        # board box
+        bx = layout.get('board_left', layout.get('left_margin', 0))
+        by = layout.get('board_top', layout.get('top_margin', 0))
+        bsize = layout.get('board_size', layout.get('board_area_width', 400))
+        pygame.draw.rect(screen, (255, 0, 0), (bx, by, bsize, bsize), 2)
+        # board area
+        bal = layout.get('board_area_left', bx)
+        baw = layout.get('board_area_width', bsize)
+        bat = layout.get('board_area_top', by)
+        bah = layout.get('board_area_height', bsize)
+        pygame.draw.rect(screen, (0, 255, 0), (bal, bat, baw, bah), 2)
+        # card area / hand
+        cat = layout.get('card_area_top')
+        if cat is not None:
+            pygame.draw.line(screen, (0, 0, 255), (layout.get('left_margin', 0), cat), (layout.get('left_margin', 0) + 200, cat), 2)
+        # mouse pos and window size
+        try:
+            mx, my = pygame.mouse.get_pos()
+            s = f"mx={mx},my={my}, W={W},H={H}"
+            f = FONT if 'FONT' in globals() else pygame.font.SysFont(None, 18)
+            surf = f.render(s, True, (255, 255, 255))
+            screen.blit(surf, (8, 8))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+# Wrap compute_layout so it always refreshes the authoritative display size
+# before calling the real layout function. Then update imported module
+# references so other code using `compute_layout` at runtime uses this wrapper.
+def compute_layout_with_refresh(win_w: int | None = None, win_h: int | None = None):
+    try:
+        # refresh authoritative sizes
+        try:
+            w, h = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                w, h = (W, H)
+            except Exception:
+                w, h = (BASE_UI_W, BASE_UI_H)
+        # allow callers to override with explicit values if provided
+        if win_w is not None and win_h is not None:
+            return globals().get('compute_layout_orig', globals().get('compute_layout'))(int(win_w), int(win_h))
+        # call the originally-imported compute_layout (preserve fallback)
+        func = globals().get('compute_layout_orig') or globals().get('compute_layout')
+        if not func:
+            # fallback: import from ui.layout dynamically
+            try:
+                import ui.layout as _layout_mod
+                func = getattr(_layout_mod, 'compute_layout')
+            except Exception:
+                def _f(w, h): return {}
+                func = _f
+        return func(int(w), int(h))
+    except Exception:
+        try:
+            return globals().get('compute_layout_orig', lambda a, b: {})(win_w or BASE_UI_W, win_h or BASE_UI_H)
+        except Exception:
+            return {}
+
+# If `compute_layout` was imported earlier, keep original and replace name.
+try:
+    if 'compute_layout' in globals() and globals().get('compute_layout'):
+        globals()['compute_layout_orig'] = globals()['compute_layout']
+        globals()['compute_layout'] = compute_layout_with_refresh
+    # also patch the ui.layout module if loaded so other modules get our wrapper
+    try:
+        import sys
+        if 'ui.layout' in sys.modules:
+            import ui.layout as _layout_mod
+            _layout_mod.compute_layout = compute_layout_with_refresh
+    except Exception:
+        pass
+except Exception:
+    pass
 FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
 SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
 TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)
@@ -1410,6 +1563,7 @@ def show_deck_modal(screen, battle_select_mode=False):
     小さなアクションモーダルを開きます。
     """
     # Present the deck-selection screen as a fullscreen view (non-blocking overlay)
+    global W, H
     clk = pygame.time.Clock()
     
     # Debounce: prevent immediate re-entry when called twice by the same click
@@ -1434,8 +1588,17 @@ def show_deck_modal(screen, battle_select_mode=False):
         except Exception:
             pass
     while True:
+        # refresh authoritative window/surface size each frame so modals
+        # recompute layout correctly after resize/fullscreen changes
+        try:
+            W, H = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                W, H = screen.get_size()
+            except Exception:
+                pass
         # keep current window size in local variables for positioning dialogs/buttons
-        win_w, win_h = screen.get_size()
+        win_w, win_h = W, H
         # load saved decks each frame so external edits are reflected immediately
         decks = load_saved_decks()
         for ev in pygame.event.get():
@@ -1592,9 +1755,19 @@ def show_deck_modal(screen, battle_select_mode=False):
 
 def show_deck_options(screen, deck):
     """デッキの編集/削除選択ダイアログ"""
+    global W, H
     clock = pygame.time.Clock()
     
     while True:
+        # keep authoritative display size up-to-date
+        # global W, H
+        try:
+            W, H = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                W, H = screen.get_size()
+            except Exception:
+                pass
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -1658,6 +1831,7 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
 
     Returns True if user chose to start battle, False otherwise.
     """
+    global W, H
     clk = pygame.time.Clock()
     w, h = 560, 240
     x = (W - w)//2
@@ -1665,6 +1839,14 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
     title_font = get_font(28)
 
     while True:
+        # refresh display size so modal positioning is correct after resize
+        try:
+            W, H = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                W, H = screen.get_size()
+            except Exception:
+                pass
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -1778,14 +1960,23 @@ def show_deck_editor(screen, existing_deck, slot_idx):
     input_active = False
     input_text = deck_name
     
+    global W, H
     # 日本語入力を有効化
     pygame.key.start_text_input()
     # initialize local window size variables (static analyzer friendly)
     win_w, win_h = screen.get_size()
     
     while True:
-        # update current window size each frame (used for layout)
-        win_w, win_h = screen.get_size()
+        # refresh authoritative display size each frame so layout matches
+        try:
+            W, H = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                W, H = screen.get_size()
+            except Exception:
+                pass
+        # local copy
+        win_w, win_h = W, H
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
@@ -2311,6 +2502,7 @@ def show_custom_deck_selection(screen):
 
 def show_deck_action_modal(screen, deck, slot_idx):
     """小さな選択モーダルを表示して 'confirm'|'view'|'edit'|None を返す。"""
+    global W, H
     clk = pygame.time.Clock()
     w, h = 420, 200
     x = (W - w) // 2
@@ -2597,6 +2789,7 @@ def show_card_detail(screen, card_name, get_card_image):
 def show_deck_contents_overlay(screen, deck):
     """デッキ内容オーバーレイ表示（画像ベース、重複カードは×n表示）"""
     # カード画像ローダーをインポート
+    global W, H
     get_card_image = None
     try:
         from assets.image_loader import get_card_image
@@ -2629,7 +2822,6 @@ def show_deck_contents_overlay(screen, deck):
     
     # カードの位置情報を保存（クリック判定用）
     card_rects = {}
-
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -4629,6 +4821,8 @@ def draw_panel():
     global log_toggle_rect, play_bg_img, play_bg_surf
     play_bg_img, play_bg_surf = draw_background(screen, W, H, IMG_DIR, PLAY_BG_FILENAME, play_bg_img, play_bg_surf)
 
+    # Refresh display size (handles SCALED/SDL window differences) and then compute layout
+    _refresh_display_size_from_pygame()
     # レイアウト設定: 左側基本情報、右側チェス盤
     layout = compute_layout(W, H)
     left_panel_width = layout['left_panel_width']
@@ -7988,6 +8182,8 @@ def handle_mouse_click(pos):
 
 def main_loop():
     global log_scroll_offset, cpu_wait, cpu_wait_start, chess_current_turn, game_over, game_over_winner
+    # Ensure window/display-related globals are declared before any use in this function
+    global W, H, screen, play_bg_img, play_bg_surf
     # スクロール関連の初期化（ローカル扱いによるUnboundLocalErrorを防止）
     global dragging_scrollbar, drag_start_y, drag_start_offset, scrollbar_rect
     dragging_scrollbar = False
@@ -8013,18 +8209,108 @@ def main_loop():
         pass
 
     while True:
+        try:
+            W, H = _refresh_display_size_from_pygame()
+        except Exception:
+            try:
+                W, H = screen.get_size()
+            except Exception:
+                pass
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit(0)
             elif event.type == pygame.KEYDOWN:
-                handle_keydown(event.key)
+                # Handle fullscreen toggle (F11 or Alt+Enter) before other key handling
+                try:
+                    mods = event.mod if hasattr(event, 'mod') else pygame.key.get_mods()
+                    is_alt_enter = (event.key == pygame.K_RETURN and (mods & pygame.KMOD_ALT))
+                except Exception:
+                    is_alt_enter = False
+
+                if event.key == pygame.K_F11 or is_alt_enter:
+                    try:
+                        # toggle state
+                        is_fullscreen = not globals().get('is_fullscreen', False)
+                        globals()['is_fullscreen'] = is_fullscreen
+                        if is_fullscreen:
+                            # remember current windowed size
+                            try:
+                                _prev_window_size = (W, H)
+                                globals()['_prev_window_size'] = _prev_window_size
+                            except Exception:
+                                pass
+                            # enter fullscreen with SCALED so surface scales to display
+                            try:
+                                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN | pygame.SCALED)
+                            except Exception:
+                                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                        else:
+                            # restore previous windowed size if available
+                            try:
+                                pw, ph = globals().get('_prev_window_size', (1200, 800))
+                            except Exception:
+                                pw, ph = (1200, 800)
+                            try:
+                                screen = pygame.display.set_mode((pw, ph), pygame.RESIZABLE | pygame.SCALED)
+                            except Exception:
+                                screen = pygame.display.set_mode((pw, ph), pygame.RESIZABLE)
+
+                        # update globals for width/height using actual display size
+                        try:
+                            _refresh_display_size_from_pygame()
+                        except Exception:
+                            pass
+
+                        try:
+                            # notify ui.window helper if available
+                            update_window_size()
+                        except Exception:
+                            pass
+
+                        try:
+                            # clear font cache in board renderer if present so text/layout recomputes
+                            if hasattr(draw_board, 'font_cache'):
+                                draw_board.font_cache.clear()
+                        except Exception:
+                            pass
+
+                        try:
+                            pygame.display.flip()
+                        except Exception:
+                            pass
+                    except Exception:
+                        # fallback to existing key handling
+                        handle_keydown(event.key)
+                else:
+                    handle_keydown(event.key)
             elif event.type == pygame.VIDEORESIZE:
                 # Window was resized (including maximize). Update globals and recreate screen surface.
                 try:
-                    global W, H, screen
+                    # window/display globals are declared at function top
                     W, H = max(200, event.w), max(200, event.h)
-                    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                    # use SCALED flag when available to keep UI scaling consistent
+                    try:
+                        screen = pygame.display.set_mode((W, H), pygame.RESIZABLE | pygame.SCALED)
+                    except Exception:
+                        screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+                    # update helper window state
+                    try:
+                        update_window_size()
+                    except Exception:
+                        pass
+                    # refresh play background surface so it is rescaled next frame
+                    try:
+                        play_bg_img = play_bg_img
+                        play_bg_surf = None
+                    except Exception:
+                        pass
+                    # clear font cache used by board renderer so layout texts recalc
+                    try:
+                        if hasattr(draw_board, 'font_cache'):
+                            draw_board.font_cache.clear()
+                    except Exception:
+                        pass
                 except Exception:
                     # If resizing fails for any reason, ignore and continue with previous size
                     pass
@@ -8380,79 +8666,36 @@ def main_loop():
                         globals()['simul_white_result'] = 'none'
                         globals()['simul_black_result'] = 'none'
         
-        # チェックメイトとステイルメイトの判定（chess.rulesモジュールに委譲）
+        # チェックメイト／ステイルメイトの判定（chess.rulesモジュールに委譲）
         if not game_over and not globals().get('simul_check_active', False):
             try:
                 is_over, winner = chess_rules.check_game_over_conditions(
-                    game, 
-                    chess, 
-                    is_in_check, 
+                    game,
+                    chess,
+                    is_in_check_for_display,
                     has_legal_moves_with_cards,
-                    simul_check_active=globals().get('simul_check_active', False)
+                    globals().get('simul_check_active', False),
                 )
                 if is_over:
-                    # 黒勝利直前で『負けるわけないだろwww』自動発動試行
-                    if winner == 'black':
-                        try:
-                            if game.check_no_lose_trigger('white'):
-                                game.log.append("[自動発動試行] チェックメイト/詰み敗北前: 条件OK")
-                                if game.trigger_no_lose('white'):
-                                    game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
-                                else:
-                                    game_over = True
-                                    game_over_winner = winner
-                                    game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
-                            else:
-                                # 条件不足詳細
-                                try:
-                                    pp = getattr(game.player, 'pp_current', 'NA')
-                                    has_card = any(c.name == '負けるわけないだろwww' for c in game.player.hand.cards)
-                                    has_leech = any(c.name == '摂取' for c in game.player.hand.cards)
-                                    game.log.append(f"[自動発動不可] 条件不足(pp={pp}, noLose={has_card}, 摂取={has_leech})")
-                                except Exception:
-                                    pass
-                                game_over = True
-                                game_over_winner = winner
-                        except Exception:
-                            # 例外時は安全側で従来通り終了
-                            game_over = True
-                            game_over_winner = winner
-                    elif winner == 'draw':
-                        # 白側が全く合法手を持たないステイルメイト（全駒操作不能）時に救済発動を試行
-                        try:
-                            white_stalemate = (not has_legal_moves_with_cards('white') and not is_in_check(chess.pieces, 'white'))
-                        except Exception:
-                            white_stalemate = False
-                        if white_stalemate and game.check_no_lose_trigger('white'):
-                            game.log.append("[自動発動試行] ステイルメイト（全駒操作不能）直前: 条件OK")
-                            if game.trigger_no_lose('white'):
-                                game.log.append("[自動発動成功] 『負けるわけないだろwww』pending=board_reset 設定")
-                                # board_reset に任せるため game_over にしない
-                            else:
-                                game.log.append("[自動発動失敗] カード消費処理失敗。引き分けで終了。")
-                                game_over = True
-                                game_over_winner = winner
-                        else:
-                            # 条件満たさず通常通り引き分け終了
-                            game_over = True
-                            game_over_winner = winner
-                    else:
-                        game_over = True
-                        game_over_winner = winner
+                    game_over = True
+                    game_over_winner = winner
             except Exception:
-                # chess_rulesモジュールが利用できない場合、従来のロジックを実行
-                if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
-                    game_over = True
-                    game_over_winner = 'black'
-                    game.log.append("YOU LOSE！黒の勝利！")
-                elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
-                    game_over = True
-                    game_over_winner = 'white'
-                    game.log.append("YOU WIN！白の勝利！")
-                elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
-                    game_over = True
-                    game_over_winner = 'draw'
-                    game.log.append("ステイルメイト（引き分け）")
+                # Fallback: basic local checks if chess_rules is unavailable
+                try:
+                    if not has_legal_moves_with_cards('white') and is_in_check(chess.pieces, 'white'):
+                        game_over = True
+                        game_over_winner = 'black'
+                        game.log.append("YOU LOSE！黒の勝利！")
+                    elif not has_legal_moves_with_cards('black') and is_in_check(chess.pieces, 'black'):
+                        game_over = True
+                        game_over_winner = 'white'
+                        game.log.append("YOU WIN！白の勝利！")
+                    elif not has_legal_moves_with_cards(chess_current_turn) and not is_in_check(chess.pieces, chess_current_turn):
+                        game_over = True
+                        game_over_winner = 'draw'
+                        game.log.append("ステイルメイト（引き分け）")
+                except Exception:
+                    pass
 
         # === 自動処理されるpending ===
         if getattr(game, 'pending', None) is not None:

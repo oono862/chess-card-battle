@@ -1342,14 +1342,23 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 global DECK_MODE
                                 DECK_MODE = 'custom'
                                 if names and 'build_game_from_card_names' in globals():
+                                    logger.info("Calling build_game_from_card_names with names=%s", names)
                                     g = build_game_from_card_names(names)
                                     if g is not None:
                                         globals()['game'] = g
+                                        # DEBUG: 作成されたゲームのデッキをログ出力
+                                        try:
+                                            player_hand = [c.name for c in g.player.hand.cards]
+                                            player_deck_first_5 = [c.name for c in g.player.deck.cards[:5]]
+                                            logger.info("Created game from names - hand=%s, deck_first_5=%s", player_hand, player_deck_first_5)
+                                        except Exception:
+                                            pass
                                     else:
                                         # If build_game_from_card_names failed, fall back to custom mode
                                         logger.debug("build_game_from_card_names returned None, using fallback")
                                         globals()['game'] = new_game_with_mode('custom')
                                 else:
+                                    logger.warning("names empty or build_game_from_card_names not available")
                                     globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
                                 try:
@@ -7093,6 +7102,14 @@ def main_loop():
     drag_start_offset = 0
     # scrollbar_rect は draw_panel 内で更新されるが、初期 None を明示
     scrollbar_rect = None
+    
+    # DEBUG: 開始時のデッキ情報をログ出力
+    try:
+        if game and hasattr(game, 'player') and hasattr(game.player, 'hand'):
+            hand_cards = [c.name for c in game.player.hand.cards]
+            logger.info("main_loop started with hand=%s", hand_cards)
+    except Exception as e:
+        logger.info("Error logging initial hand: %s", e)
     
     # Transition audio: stop title BGM and start gameplay BGM (MusMus-BGM-173.mp3).
     try:

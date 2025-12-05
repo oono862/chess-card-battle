@@ -1,11 +1,12 @@
 #カードゲーム部分実装
+import os
 import pygame
 from pygame import Rect
 import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
 from typing import List
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 # card_coreの解決順を「このファイルと同じディレクトリ」を最優先にする
 local_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +34,7 @@ except Exception:
         except Exception:
             chess_rules = None
 try:
-    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game
+    from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game, Deck
     from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
 except Exception:
     logger.exception("Failed to import card_core module")
@@ -456,8 +457,16 @@ def new_game_with_mode(mode: str):
 
     This mirrors new_game_with_rule_deck but allows trimming the deck
     based on the selected mode.
+    
+    NOTE: 'custom' mode should NOT be used directly; use build_game_from_card_names instead
+    to ensure the saved deck is properly loaded.
     """
     try:
+        # Allow both 'fixed' and 'custom'; default to 'fixed' if unknown
+        if mode not in ('fixed', 'custom'):
+            logger.warning("new_game_with_mode called with mode=%s, falling back to fixed", mode)
+            mode = 'fixed'
+
         deck = build_deck_for_mode(mode)
         if deck is None:
             # fallback to rule deck
@@ -475,7 +484,6 @@ def new_game_with_mode(mode: str):
             pass
         
         # 固定デッキ(24枚)の場合のみ、ギミック配布分としてデッキから4枚取り除く
-        # カスタムデッキ(20枚)の場合は、ギミック4枚のみを手札に追加する
         if mode == 'fixed':
             try:
                 if hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
@@ -486,14 +494,15 @@ def new_game_with_mode(mode: str):
             except Exception:
                 pass
 
-        # ゲーム開始時にプレイヤーにギミックカード4枚のみを配布
+        # ゲーム開始時にプレイヤーにギミックカード4枚のみを配布（固定デッキのみ）
         try:
-            gimmick_cards = _generate_random_gimmick_cards(4)
-            for gc in gimmick_cards:
-                if gc is not None:
-                    player.hand.add(gc)
-            if gimmick_cards and hasattr(game, 'log'):
-                game.log.append("バトル開始: ギミックカード4枚を受け取りました。")
+            if mode == 'fixed':
+                gimmick_cards = _generate_random_gimmick_cards(4)
+                for gc in gimmick_cards:
+                    if gc is not None:
+                        player.hand.add(gc)
+                if gimmick_cards and hasattr(game, 'log'):
+                    game.log.append("バトル開始: ギミックカード4枚を受け取りました。")
         except Exception:
             pass
         
@@ -819,6 +828,64 @@ def restart_game():
     game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
 
 
+def _rebuild_deck_from_card_names(deck_card_names: list) -> bool:
+    """保存されたカード名リストからプレイヤー/AIのデッキを再構築する。
+
+    build_game_from_card_names は初期手札を引いてデッキを減らすため、
+    一度仮ゲームを生成して手札+山札の合計カードを集め直し、改めて Deck を作り直す。
+    """
+    global game, ai_player
+
+    if not deck_card_names:
+        logger.debug("No deck_card_names provided for rebuild")
+        return False
+
+    try:
+        # 仮ゲームを作成してカードインスタンスを取得（手札4枚 + 山札残り）
+        temp_game = build_game_from_card_names(deck_card_names)
+        if not temp_game or not hasattr(temp_game, 'player'):
+            logger.debug("Temp game build failed for deck rebuild")
+            return False
+
+        try:
+            cards_all = []
+            cards_all.extend(getattr(temp_game.player.hand, 'cards', []) or [])
+            cards_all.extend(getattr(temp_game.player.deck, 'cards', []) or [])
+            # 念のため枚数チェック
+            if len(cards_all) == 0:
+                logger.debug("No cards collected from temp game for rebuild")
+                return False
+        except Exception as e:
+            logger.debug("Failed to collect cards from temp game: %s", e)
+            return False
+
+        # 新しい Deck を構築し、シャッフルしてランダム性を確保
+        try:
+            new_player_deck = Deck(list(cards_all))
+            new_player_deck.shuffle()
+            game.player.deck = new_player_deck
+            logger.debug("Player deck rebuilt and shuffled (%d cards)", len(cards_all))
+        except Exception as e:
+            logger.debug("Failed to rebuild/shuffle player deck: %s", e)
+            return False
+
+        # AI デッキも同じ構成で再構築（独立にシャッフル）
+        try:
+            new_ai_cards = list(cards_all)
+            new_ai_deck = Deck(new_ai_cards)
+            new_ai_deck.shuffle()
+            if ai_player is not None:
+                ai_player.deck = new_ai_deck
+            logger.debug("AI deck rebuilt and shuffled (%d cards)", len(new_ai_cards))
+        except Exception as e:
+            logger.debug("Failed to rebuild AI deck: %s", e)
+            # AI失敗は致命ではないため続行
+
+        return True
+    except Exception as e:
+        logger.debug("Unexpected error in _rebuild_deck_from_card_names: %s", e)
+        return False
+
 def _prepare_new_battle_after_deck_already_selected():
     """Reset board/UI state when a new Game object has already been
     created (for example, show_start_screen() created globals()['game']).
@@ -829,6 +896,7 @@ def _prepare_new_battle_after_deck_already_selected():
     """
     global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
     global log_scroll_offset, game, ai_player
+    global _selected_deck_card_names
 
     # Reset chess board state
     try:
@@ -856,6 +924,120 @@ def _prepare_new_battle_after_deck_already_selected():
     highlight_squares = []
     cpu_wait = False
 
+    # Reset card/chess-effect state on the Game object so lingering tiles/auras are cleared
+    try:
+        if game is not None:
+            game.pending = None
+            game.turn = 0
+            game.blocked_tiles = {}
+            game.frozen_pieces = {}
+            game.blocked_tiles_owner = {}
+            game.player_moved_this_turn = False
+            game.turn_active = False
+            game.player_consecutive_turns = 0
+            game.ai_consecutive_turns = 0
+            game.ai_next_move_can_jump = False
+            game.player_ironwall_protection_turns = 0
+            game.ai_ironwall_protection_turns = 0
+            try:
+                # also reset any per-turn movement flags
+                if hasattr(game.player, 'extra_moves_this_turn'):
+                    game.player.extra_moves_this_turn = 0
+                if hasattr(game.player, 'next_move_can_jump'):
+                    game.player.next_move_can_jump = False
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Reset card game state: hand, deck, graveyard
+    try:
+        if game is not None and hasattr(game, 'player'):
+            player = game.player
+            # 手札をリセット
+            if hasattr(player, 'hand') and hasattr(player.hand, 'cards'):
+                player.hand.cards.clear()
+            # 墓地をリセット
+            if hasattr(player, 'graveyard'):
+                try:
+                    if hasattr(player.graveyard, 'cards'):
+                        player.graveyard.cards.clear()
+                    elif isinstance(player.graveyard, list):
+                        player.graveyard.clear()
+                except Exception:
+                    pass
+            # PPを最大に回復
+            if hasattr(player, 'reset_pp'):
+                player.reset_pp()
+    except Exception as e:
+        logger.debug("Failed to reset player card state: %s", e)
+
+    # Reset AI card game state
+    try:
+        if ai_player is not None and hasattr(ai_player, 'hand'):
+            # 手札をリセット
+            if hasattr(ai_player, 'hand') and hasattr(ai_player.hand, 'cards'):
+                ai_player.hand.cards.clear()
+            # 墓地をリセット
+            if hasattr(ai_player, 'graveyard'):
+                try:
+                    if hasattr(ai_player.graveyard, 'cards'):
+                        ai_player.graveyard.cards.clear()
+                    elif isinstance(ai_player.graveyard, list):
+                        ai_player.graveyard.clear()
+                except Exception:
+                    pass
+            # PPを最大に回復
+            if hasattr(ai_player, 'reset_pp'):
+                ai_player.reset_pp()
+    except Exception as e:
+        logger.debug("Failed to reset AI card state: %s", e)
+
+    # Rebuild decks from saved card names (for custom decks) or from mode (for fixed)
+    rebuilt = False
+    if _selected_deck_card_names:
+        try:
+            rebuilt = _rebuild_deck_from_card_names(_selected_deck_card_names)
+        except Exception as e:
+            logger.debug("Failed to rebuild decks from card names: %s", e)
+
+    # fixedデッキなどでカード名が保持されていない場合は、モードに応じて新デッキを生成
+    if not rebuilt:
+        try:
+            new_deck = build_deck_for_mode(DECK_MODE)
+            if new_deck:
+                game.player.deck = new_deck
+                game.player.deck.shuffle()
+                if ai_player is not None:
+                    ai_deck = build_deck_for_mode(DECK_MODE)
+                    if ai_deck:
+                        ai_deck.shuffle()
+                        ai_player.deck = ai_deck
+                rebuilt = True
+                logger.debug("Decks rebuilt from mode=%s", DECK_MODE)
+        except Exception as e:
+            logger.debug("Failed to rebuild decks from mode %s: %s", DECK_MODE, e)
+
+    # プレイヤーの初期手札をデッキからドローする（再戦時の初期化）
+    try:
+        if game is not None and hasattr(game, 'player'):
+            draw_count = 4
+            player = game.player
+            # 手札を確実にクリアしてからドロー
+            if hasattr(player, 'hand') and hasattr(player.hand, 'cards'):
+                player.hand.cards.clear()
+            for _ in range(draw_count):
+                try:
+                    c = player.deck.draw() if hasattr(player, 'deck') else None
+                    if c is not None:
+                        player.hand.add(c)
+                except Exception:
+                    pass
+            if hasattr(game, 'log'):
+                game.log.append(f"バトル開始: プレイヤーはデッキから{draw_count}枚ドローしました。")
+    except Exception as e:
+        logger.debug("Failed to draw initial player hand during rematch init: %s", e)
+
     # Ensure game/ai_player exist; do not recreate them here
     try:
         if game is not None:
@@ -876,7 +1058,7 @@ def _prepare_new_battle_after_deck_already_selected():
         pass
 
 def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) -> None:
-    """AIに開始時の初期手札としてギミックカード4枚を配布する。
+    """AIに開始時の初期手札としてデッキから数枚ドローさせる。
 
     PlayerState互換オブジェクト（deck.draw, hand.add, hand_limit, graveyard, reset_pp）を想定。
     ゲームログがあれば記録する。
@@ -892,26 +1074,15 @@ def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) 
         except Exception:
             pass
         
-        # 固定デッキ(24枚)の場合のみ、ギミック配布分としてAIのデッキから4枚取り除く
-        # カスタムデッキ(20枚)の場合は、ギミック4枚のみを手札に追加する
-        global DECK_MODE
-        if DECK_MODE == 'fixed':
-            try:
-                if hasattr(ai, 'deck') and hasattr(ai.deck, 'cards'):
-                    for _ in range(4):
-                        if ai.deck.cards:
-                            ai.deck.cards.pop(0)
-            except Exception:
-                pass
-
-        # 通常カードのドローは行わず、ギミックカード4枚のみを配布
+        # ギミック配布を行わず、デッキから初期手札を引く
         try:
-            gimmick_cards = _generate_random_gimmick_cards(4)
-            for gc in gimmick_cards:
-                if gc is not None:
-                    ai.hand.add(gc)
-            if gimmick_cards and game_obj and hasattr(game_obj, 'log'):
-                game_obj.log.append("相手はバトル開始時にギミックカード4枚を受け取りました。")
+            draw_count = 4
+            for _ in range(draw_count):
+                card = ai.deck.draw() if hasattr(ai, 'deck') else None
+                if card:
+                    ai.hand.add(card)
+            if draw_count and game_obj and hasattr(game_obj, 'log'):
+                game_obj.log.append(f"相手はバトル開始時にデッキから{draw_count}枚ドローしました。")
         except Exception:
             pass
     except Exception:
@@ -1025,9 +1196,6 @@ def show_start_screen():
                                             _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
                                         except Exception:
                                             pass
-                                        # Clear the saved deck info after using it
-                                        _selected_deck_card_names = None
-                                        _selected_deck_slot_idx = None
                                         return
                                     else:
                                         # Fallback: show deck list for user to pick manually
@@ -1091,9 +1259,6 @@ def show_start_screen():
                                                 _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
                                             except Exception:
                                                 pass
-                                            # Clear the saved deck info after using it
-                                            _selected_deck_card_names = None
-                                            _selected_deck_slot_idx = None
                                             return
                                         else:
                                             # Fallback: show deck list for user to pick manually
@@ -1339,10 +1504,12 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 logger.debug("show_deck_modal starting battle, names=%s", names)
                                 # Remember that user explicitly chose a custom deck so future
                                 # rematches or returning to menus should preserve this choice.
-                                global DECK_MODE
+                                global DECK_MODE, _selected_deck_card_names, _selected_deck_slot_idx
                                 DECK_MODE = 'custom'
+                                _selected_deck_card_names = names
+                                _selected_deck_slot_idx = slot_idx
                                 if names and 'build_game_from_card_names' in globals():
-                                    logger.info("Calling build_game_from_card_names with names=%s", names)
+                                    logger.debug("Calling build_game_from_card_names with names=%s", names)
                                     g = build_game_from_card_names(names)
                                     if g is not None:
                                         globals()['game'] = g
@@ -1350,15 +1517,15 @@ def show_deck_modal(screen, battle_select_mode=False):
                                         try:
                                             player_hand = [c.name for c in g.player.hand.cards]
                                             player_deck_first_5 = [c.name for c in g.player.deck.cards[:5]]
-                                            logger.info("Created game from names - hand=%s, deck_first_5=%s", player_hand, player_deck_first_5)
+                                            logger.debug("Created game from names - hand=%s, deck_first_5=%s", player_hand, player_deck_first_5)
                                         except Exception:
                                             pass
                                     else:
-                                        # If build_game_from_card_names failed, fall back to custom mode
-                                        logger.debug("build_game_from_card_names returned None, using fallback")
+                                        # If build_game_from_card_names failed, fall back to custom deck build
+                                        logger.warning("build_game_from_card_names returned None, using custom deck as fallback")
                                         globals()['game'] = new_game_with_mode('custom')
                                 else:
-                                    logger.warning("names empty or build_game_from_card_names not available")
+                                    logger.warning("names empty or build_game_from_card_names not available, using fixed deck as fallback")
                                     globals()['game'] = new_game_with_mode('custom')
                                 globals()['ai_player'] = build_ai_player('custom')
                                 try:
@@ -7107,9 +7274,9 @@ def main_loop():
     try:
         if game and hasattr(game, 'player') and hasattr(game.player, 'hand'):
             hand_cards = [c.name for c in game.player.hand.cards]
-            logger.info("main_loop started with hand=%s", hand_cards)
+            logger.debug("main_loop started - initial hand=%s", hand_cards)
     except Exception as e:
-        logger.info("Error logging initial hand: %s", e)
+        logger.debug("Error logging initial hand: %s", e)
     
     # Transition audio: stop title BGM and start gameplay BGM (MusMus-BGM-173.mp3).
     try:

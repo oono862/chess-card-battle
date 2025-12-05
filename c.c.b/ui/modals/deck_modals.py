@@ -258,6 +258,12 @@ def show_deck_modal(screen, W, H, get_font, FONT, SMALL, load_saved_decks, save_
                                 # Remember that user explicitly chose a custom deck so future
                                 # rematches or returning to menus should preserve this choice.
                                 DECK_MODE_setter('custom')
+                                try:
+                                    # Persist the selected deck for rematches (CardGame.py globals)
+                                    __main__._selected_deck_card_names = names
+                                    __main__._selected_deck_slot_idx = slot_idx
+                                except Exception:
+                                    pass
                                 # Create game using state (caller will retrieve these)
                                 import __main__
                                 if names and build_game_from_card_names_func:

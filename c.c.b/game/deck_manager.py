@@ -283,24 +283,13 @@ def build_game_from_card_names(names):
 
             deck = Deck(pool)
 
-            try:
-                deck_names_before = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
-                logger.debug("deck names before shuffle=%s", deck_names_before)
-            except Exception:
-                pass
-
+            # カスタムデッキはバトル開始時にランダム化する
             try:
                 deck.shuffle()
-                deck_names_after = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
-                logger.debug("deck names after shuffle=%s", deck_names_after)
+                deck_names_after = [getattr(c, 'name', None) for c in deck.cards[:20]]
+                logger.debug("deck cards after shuffle: %s", deck_names_after)
             except Exception:
-                # if shuffle fails, continue with unshuffled deck
                 pass
-
-        try:
-            deck.shuffle()
-        except Exception:
-            pass
 
         player = PlayerState(deck=deck)
         g = Game(player=player)
@@ -312,33 +301,25 @@ def build_game_from_card_names(names):
         except Exception:
             pass
 
-        # ギミックカード4枚のみを配布（山札からは引かない）
+        # カスタムデッキではギミックを配布せず、シャッフル済みデッキから初期手札を引く
         try:
-            # Import _generate_random_gimmick_cards from main module
-            main = get_main_module()
-            _generate_random_gimmick_cards = getattr(main, '_generate_random_gimmick_cards', None)
-            if _generate_random_gimmick_cards:
-                gimmick_cards = _generate_random_gimmick_cards(4)
-                for gc in gimmick_cards:
-                    if gc is not None:
-                        player.hand.add(gc)
-                # ギミック配布分の4枚をデッキから除外
-                if gimmick_cards and hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
-                    for _ in range(4):
-                        if player.deck.cards:
-                            player.deck.cards.pop(0)
-                if gimmick_cards and hasattr(g, 'log'):
-                    g.log.append("バトル開始: ギミックカード4枚を受け取りました。")
+            initial_draws = 4
+            for _ in range(initial_draws):
+                drawn = player.deck.draw() if hasattr(player, 'deck') else None
+                if drawn:
+                    player.hand.add(drawn)
+            if hasattr(g, 'log'):
+                g.log.append(f"バトル開始: シャッフルしたデッキから{initial_draws}枚ドローしました。")
         except Exception as e:
-            logger.debug("Failed to add gimmick cards: %s", e)
+            logger.debug("Failed to draw initial hand from saved deck: %s", e)
 
-        # debug: print initial hand and deck top after gimmick card addition
+        # debug: print initial hand and deck top after initial draw
         try:
             hand_names = [c.name for c in g.player.hand.cards]
             deck_cards = getattr(g.player.deck, 'cards', [])
             deck_count = len(deck_cards)
             top_names = [c.name for c in deck_cards[:8]]
-            logger.debug("after gimmick addition hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
+            logger.debug("build_game_from_card_names completed - hand=%s deck_remaining=%d", hand_names, deck_count)
         except Exception:
             pass
 

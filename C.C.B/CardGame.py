@@ -419,14 +419,15 @@ except Exception:
 
 # デッキ管理をインポート
 try:
-    from game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
-    from game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
-except Exception:
-    # Try alternative package-qualified import (script execution vs package import differences)
+    # Relative import when used as package (primary method)
+    from .game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
+    from .game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
+except ImportError:
+    # Try top-level import (script execution)
     try:
-        from c.c.b.game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
-        from c.c.b.game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
-    except Exception:
+        from game.deck_manager import (DECK_SAVE_FILE, load_saved_decks, save_decks_to_file, list_custom_decks, load_custom_deck_by_name, build_deck_for_mode, build_ai_player, build_game_from_card_names)
+        from game.turn_manager import start_player_turn, attempt_start_turn, end_player_chess_move, switch_turn
+    except ImportError:
         logger.exception("Failed to import game modules")
         import os as _os, json as _json
 

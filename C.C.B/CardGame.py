@@ -2,10 +2,9 @@
 import os
 import pygame
 from pygame import Rect
-import sys, traceback, os, json, logging, math
+import sys, traceback, os, json, logging, math, re
 from datetime import datetime
 import time as _ct_time
-import re
 from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)

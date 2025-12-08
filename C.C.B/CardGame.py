@@ -5,7 +5,8 @@ from pygame import Rect
 import sys, traceback, os, json, logging, math
 from datetime import datetime
 import time as _ct_time
-from typing import List
+import re
+from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 

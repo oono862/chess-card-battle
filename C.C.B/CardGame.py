@@ -3196,7 +3196,7 @@ def show_settings_screen(screen):
 
         # Gimmick activation method description and options
         try:
-            opt_title = SMALL.render("ギミック発動方法", True, (30,30,30))
+            opt_title = SMALL.render("ギミック発動操作変更", True, (30,30,30))
             # place title a bit lower to avoid overlapping the volume label
             surf.blit(opt_title, (40, 180))
             gimm_x = 40
@@ -3664,7 +3664,7 @@ def show_animation_settings_screen(screen):
         surf = pygame.Surface((w, h))
         surf.fill((245,245,250))
         pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
-        title = FONT.render("アニメーション設定", True, (30,30,30))
+        title = FONT.render("駒移動アニメーション設定", True, (30,30,30))
         surf.blit(title, (20, 12))
 
         # options
@@ -3685,7 +3685,7 @@ def show_animation_settings_screen(screen):
             pygame.draw.rect(surf, (80,80,80), (opt_x, oy, 24, 24), 2)
             if ai_move_ghost_enabled:
                 pygame.draw.circle(surf, (120,120,120), (opt_x+12, oy+12), 6)
-            surf.blit(SMALL.render("駒ゴーストを表示する", True, (30,30,30)), (opt_x+36, oy))
+            surf.blit(SMALL.render("駒のゴーストを表示する", True, (30,30,30)), (opt_x+36, oy))
 
             # arrow
             oy2 = opt_y + gap*2
@@ -3693,7 +3693,7 @@ def show_animation_settings_screen(screen):
             pygame.draw.rect(surf, (80,80,80), (opt_x, oy2, 24, 24), 2)
             if ai_move_arrow_enabled:
                 pygame.draw.circle(surf, (220,40,40), (opt_x+12, oy2+12), 6)
-            surf.blit(SMALL.render("移動矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
+            surf.blit(SMALL.render("移動方向の矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
         except Exception:
             pass
 

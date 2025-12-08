@@ -9,6 +9,16 @@ from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 駒の名前マッピング（ツールチップ表示用）
+PIECE_NAMES = {
+    'K': 'キング',
+    'Q': 'クイーン',
+    'R': 'ルーク',
+    'B': 'ビショップ',
+    'N': 'ナイト',
+    'P': 'ポーン'
+}
+
 # Ensure we can obtain the actual display/window size in one place.
 def _refresh_display_size_from_pygame():
     """Return (W,H) using the most authoritative pygame API available.
@@ -3247,7 +3257,7 @@ def show_settings_screen(screen):
 
         # Gimmick activation method description and options
         try:
-            opt_title = SMALL.render("ギミック発動方法", True, (30,30,30))
+            opt_title = SMALL.render("ギミック発動操作変更", True, (30,30,30))
             # place title a bit lower to avoid overlapping the volume label
             surf.blit(opt_title, (40, 180))
             gimm_x = 40
@@ -3715,7 +3725,7 @@ def show_animation_settings_screen(screen):
         surf = pygame.Surface((w, h))
         surf.fill((245,245,250))
         pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
-        title = FONT.render("アニメーション設定", True, (30,30,30))
+        title = FONT.render("駒移動アニメーション設定", True, (30,30,30))
         surf.blit(title, (20, 12))
 
         # options
@@ -3736,7 +3746,7 @@ def show_animation_settings_screen(screen):
             pygame.draw.rect(surf, (80,80,80), (opt_x, oy, 24, 24), 2)
             if ai_move_ghost_enabled:
                 pygame.draw.circle(surf, (120,120,120), (opt_x+12, oy+12), 6)
-            surf.blit(SMALL.render("駒ゴーストを表示する", True, (30,30,30)), (opt_x+36, oy))
+            surf.blit(SMALL.render("駒のゴーストを表示する", True, (30,30,30)), (opt_x+36, oy))
 
             # arrow
             oy2 = opt_y + gap*2
@@ -3744,7 +3754,7 @@ def show_animation_settings_screen(screen):
             pygame.draw.rect(surf, (80,80,80), (opt_x, oy2, 24, 24), 2)
             if ai_move_arrow_enabled:
                 pygame.draw.circle(surf, (220,40,40), (opt_x+12, oy2+12), 6)
-            surf.blit(SMALL.render("移動矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
+            surf.blit(SMALL.render("移動方向の矢印を表示する", True, (30,30,30)), (opt_x+36, oy2))
         except Exception:
             pass
 
@@ -5979,7 +5989,7 @@ def draw_panel():
                 tried.append(('ui.overlay', id(mod)))
                 if hasattr(mod, 'get_log_view'):
                     av = mod.get_log_view()
-                    print(f"[cardgame-debug-src] ui.overlay (id={id(mod)}) -> {av}")
+                    # print(f"[cardgame-debug-src] ui.overlay (id={id(mod)}) -> {av}")
                     active_view = av
                 else:
                     mod = None
@@ -5992,7 +6002,7 @@ def draw_panel():
                     tried.append(('c.c.b.ui.overlay', id(mod2)))
                     if hasattr(mod2, 'get_log_view'):
                         av = mod2.get_log_view()
-                        print(f"[cardgame-debug-src] c.c.b.ui.overlay (id={id(mod2)}) -> {av}")
+                        # print(f"[cardgame-debug-src] c.c.b.ui.overlay (id={id(mod2)}) -> {av}")
                         active_view = av
                     else:
                         mod2 = None
@@ -6004,12 +6014,12 @@ def draw_panel():
                 if 'overlay' in globals() and hasattr(overlay, 'get_log_view'):
                     try:
                         av = overlay.get_log_view()
-                        print(f"[cardgame-debug-src] overlay_var ({getattr(overlay,'__class__', overlay)}) id={id(overlay)} -> {av}")
+                        # print(f"[cardgame-debug-src] overlay_var ({getattr(overlay,'__class__', overlay)}) id={id(overlay)} -> {av}")
                         active_view = av
                     except Exception:
                         pass
-                else:
-                    print("[cardgame-debug-src] no overlay module found; using fallback 'detail'")
+                # else:
+                    # print("[cardgame-debug-src] no overlay module found; using fallback 'detail'")
         except Exception:
             active_view = 'detail'
 
@@ -6036,11 +6046,11 @@ def draw_panel():
             source_lines = [l for l in game.log if _is_card_line(l)]
 
         # Debug: 描画ルートで現在のビューとフィルタ結果を端末に出力（診断用の一時出力）
-        try:
-            sample = source_lines[:3]
-            print(f"[cardgame-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
-        except Exception:
-            pass
+        # try:
+        #     sample = source_lines[:3]
+        #     print(f"[cardgame-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
+        # except Exception:
+        #     pass
 
         wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
         max_log_width = max(40, log_panel_width - 60)
@@ -6134,6 +6144,10 @@ def draw_panel():
                     pass
         except Exception:
             pass
+        
+        # ログアイコンのツールチップ表示用リスト（位置と駒の種類を記録）
+        log_icon_tooltips = []
+        
         for wline, kind, piece_letter in visible_lines:
             if log_y < log_panel_top + log_panel_height - bottom_padding_px:
                 try:
@@ -6147,6 +6161,7 @@ def draw_panel():
                 # prepare optional piece icon
                 icon_surf = None
                 icon_w = icon_h = 0
+                icon_rect = None
                 try:
                     if piece_letter and 'get_piece_image_surface' in globals() and get_piece_image_surface:
                         # choose color based on kind: AI -> black, player -> white
@@ -6173,6 +6188,9 @@ def draw_panel():
                     if icon_surf:
                         try:
                             screen.blit(icon_surf, (tx, log_y))
+                            # アイコンの矩形を記録（ツールチップ用）
+                            icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                            log_icon_tooltips.append((icon_rect, piece_letter))
                             tx += icon_w + 6
                         except Exception:
                             pass
@@ -6191,6 +6209,9 @@ def draw_panel():
                     if icon_surf:
                         try:
                             screen.blit(icon_surf, (tx, log_y))
+                            # アイコンの矩形を記録（ツールチップ用）
+                            icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                            log_icon_tooltips.append((icon_rect, piece_letter))
                             tx += icon_w + 6
                         except Exception:
                             pass
@@ -6198,6 +6219,37 @@ def draw_panel():
 
                 # 次の文章は空行を挟んで描画する
                 log_y += line_step
+        
+        # マウス位置がログアイコン上にある場合、ツールチップを表示
+        try:
+            mx, my = pygame.mouse.get_pos()
+            for icon_rect, piece_letter in log_icon_tooltips:
+                if icon_rect.collidepoint(mx, my):
+                    # ツールチップを表示
+                    piece_name = PIECE_NAMES.get(piece_letter, piece_letter)
+                    try:
+                        tooltip_font = SMALL if SMALL else pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
+                    except Exception:
+                        tooltip_font = pygame.font.SysFont(None, 18)
+                    tooltip_surf = tooltip_font.render(piece_name, True, (255, 255, 255))
+                    tooltip_w = tooltip_surf.get_width() + 12
+                    tooltip_h = tooltip_surf.get_height() + 8
+                    # ツールチップの位置（マウスカーソルの下に表示）
+                    tooltip_x = mx + 10
+                    tooltip_y = my + 10
+                    # 画面外に出ないように調整
+                    if tooltip_x + tooltip_w > W:
+                        tooltip_x = W - tooltip_w - 5
+                    if tooltip_y + tooltip_h > H:
+                        tooltip_y = my - tooltip_h - 5
+                    # 背景を描画
+                    pygame.draw.rect(screen, (60, 60, 80), (tooltip_x, tooltip_y, tooltip_w, tooltip_h))
+                    pygame.draw.rect(screen, (200, 200, 220), (tooltip_x, tooltip_y, tooltip_w, tooltip_h), 1)
+                    # テキストを描画
+                    screen.blit(tooltip_surf, (tooltip_x + 6, tooltip_y + 4))
+                    break  # 1つのツールチップのみ表示
+        except Exception:
+            pass
 
         # スクロールバー表示
         if max_scroll > 0:
@@ -6852,55 +6904,7 @@ def handle_keydown(key):
     
     # ログスクロール（ログ表示中のみ）
     if show_log:
-        # ビュー切替（ログ表示中はD/P/Cでビューを切替）
-        if key == pygame.K_d:
-            # 更新: overlay モジュールに対して set_log_view を呼ぶとともに
-            # CardGame モジュール内の current_log_view も更新しておく
-            try:
-                if hasattr(overlay, 'set_log_view'):
-                    overlay.set_log_view('detail')
-            except Exception:
-                try:
-                    from ui import overlay as _ov
-                    if hasattr(_ov, 'set_log_view'):
-                        _ov.set_log_view('detail')
-                except Exception:
-                    try:
-                        import importlib
-                        _ov2 = importlib.import_module('c.c.b.ui.overlay')
-                        if hasattr(_ov2, 'set_log_view'):
-                            _ov2.set_log_view('detail')
-                    except Exception:
-                        pass
-            try:
-                current_log_view = 'detail'
-            except Exception:
-                pass
-            log_scroll_offset = 0
-            return
-        if key == pygame.K_p:
-            try:
-                if hasattr(overlay, 'set_log_view'):
-                    overlay.set_log_view('piece')
-            except Exception:
-                try:
-                    from ui import overlay as _ov
-                    if hasattr(_ov, 'set_log_view'):
-                        _ov.set_log_view('piece')
-                except Exception:
-                    try:
-                        import importlib
-                        _ov2 = importlib.import_module('c.c.b.ui.overlay')
-                        if hasattr(_ov2, 'set_log_view'):
-                            _ov2.set_log_view('piece')
-                    except Exception:
-                        pass
-            try:
-                current_log_view = 'piece'
-            except Exception:
-                pass
-            log_scroll_offset = 0
-            return
+        # ビュー切替（ログ表示中はCキーのみでビューを切替）
         if key == pygame.K_c:
             # Cycle views: detail -> piece -> card -> detail
             try:

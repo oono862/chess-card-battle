@@ -1093,7 +1093,7 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
         screen.blit(title, (20, 25))
         
         # 名前入力欄
-        name_rect = pygame.Rect(150, 20, 400, 40)
+        name_rect = pygame.Rect(550, 20, 400, 40)
         pygame.draw.rect(screen, (255, 255, 255) if input_active else (240, 240, 240), name_rect)
         pygame.draw.rect(screen, (100, 150, 255) if input_active else (100, 100, 100), name_rect, 2)
         # 日本語対応フォントを直接ファイル指定で取得

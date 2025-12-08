@@ -71,6 +71,8 @@ def get_card_image(name: str, size=(72, 96)):
     NAME_TO_FILE = {
         # GIF animated cards
         '負けるわけないだろwww': '負けるわけないだろwww.gif',
+        # Cards with special spacing or characters
+        'ハンです☆': 'ハン です☆.png',
     }
 
     def _normalize(s: str) -> str:

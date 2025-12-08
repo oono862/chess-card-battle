@@ -219,6 +219,7 @@ def build_game_from_card_names(names):
         unmatched = []
         for nm in names:
             norm_nm = _norm(nm)
+            
             # prefer normalized prototype lookup to avoid mismatch
             p = (proto_map.get(nm) or proto_map.get(norm_nm) or 
                  proto_map.get(norm_nm.replace(' ', '')) or 
@@ -231,21 +232,36 @@ def build_game_from_card_names(names):
                        extra_map.get(norm_nm.replace(' ', '')))
                 if eff:
                     try:
-                        cost = 3 if norm_nm == '命がけのギャンブル' else (4 if norm_nm == '負けるわけないだろwww' else 2)
+                        # コスト判定
+                        if norm_nm == '命がけのギャンブル':
+                            cost = 3
+                        elif norm_nm == '負けるわけないだろwww':
+                            cost = 4
+                        elif norm_nm in ('鉄壁', 'ハンです☆'):
+                            cost = 2
+                        else:
+                            cost = 2  # デフォルト
                         pool.append(Card(norm_nm, cost, eff))
+                        logger.debug("Added extra_map card: %s", norm_nm)
                         continue
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("Failed to add extra_map card %s: %s", norm_nm, e)
                         pass
                 unmatched.append(nm)
+                logger.debug("Unmatched card: %s (normalized: %s)", nm, norm_nm)
                 continue
             
             try:
                 # clone prototype (best-effort)
                 pool.append(Card(p.name, p.cost, p.effect, getattr(p, 'precheck', None)))
-            except Exception:
+                logger.debug("Added prototype card: %s", p.name)
+            except Exception as e:
+                logger.debug("Failed to clone prototype %s: %s", p.name, e)
                 try:
                     pool.append(Card(p.name, p.cost, p.effect))
-                except Exception:
+                    logger.debug("Added prototype card (no precheck): %s", p.name)
+                except Exception as e2:
+                    logger.debug("Failed to add prototype card %s: %s", p.name, e2)
                     continue
 
         # debug: report unmatched names and how many matched
@@ -267,40 +283,43 @@ def build_game_from_card_names(names):
 
             deck = Deck(pool)
 
-            try:
-                deck_names_before = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
-                logger.debug("deck names before shuffle=%s", deck_names_before)
-            except Exception:
-                pass
-
+            # カスタムデッキはバトル開始時にランダム化する
             try:
                 deck.shuffle()
-                deck_names_after = [(getattr(c, 'name', None), id(c)) for c in deck.cards[:20]]
-                logger.debug("deck names after shuffle=%s", deck_names_after)
+                deck_names_after = [getattr(c, 'name', None) for c in deck.cards[:20]]
+                logger.debug("deck cards after shuffle: %s", deck_names_after)
             except Exception:
-                # if shuffle fails, continue with unshuffled deck
                 pass
-
-        try:
-            deck.shuffle()
-        except Exception:
-            pass
 
         player = PlayerState(deck=deck)
         g = Game(player=player)
 
+        # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
-            g.setup_battle()
+            player.reset_pp()
+            g.log.append("バトル開始: PPを最大まで回復しました。")
         except Exception:
             pass
 
-        # debug: print initial hand and deck top after setup_battle
+        # カスタムデッキではギミックを配布せず、シャッフル済みデッキから初期手札を引く
+        try:
+            initial_draws = 4
+            for _ in range(initial_draws):
+                drawn = player.deck.draw() if hasattr(player, 'deck') else None
+                if drawn:
+                    player.hand.add(drawn)
+            if hasattr(g, 'log'):
+                g.log.append(f"バトル開始: シャッフルしたデッキから{initial_draws}枚ドローしました。")
+        except Exception as e:
+            logger.debug("Failed to draw initial hand from saved deck: %s", e)
+
+        # debug: print initial hand and deck top after initial draw
         try:
             hand_names = [c.name for c in g.player.hand.cards]
             deck_cards = getattr(g.player.deck, 'cards', [])
             deck_count = len(deck_cards)
             top_names = [c.name for c in deck_cards[:8]]
-            logger.debug("after setup_battle hand=%s deck_remaining=%d top=%s", hand_names, deck_count, top_names)
+            logger.debug("build_game_from_card_names completed - hand=%s deck_remaining=%d", hand_names, deck_count)
         except Exception:
             pass
 

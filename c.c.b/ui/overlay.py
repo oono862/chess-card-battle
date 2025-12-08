@@ -1,5 +1,22 @@
 """UI オーバーレイ表示（ログ、墓地、拡大カードなど）"""
 import pygame
+import logging
+import re
+import time
+from typing import TYPE_CHECKING
+
+# 型チェック時のみ、正しいパッケージ名でインポートしてエディタ（Pylance）の警告を抑制します。
+if TYPE_CHECKING:
+    try:
+        # 実行時には評価されないため安全にトップレベルパスで書きます
+        from c.c.b.ui.layout import draw_text, wrap_text  # type: ignore
+        from c.c.b.ui.config import FONT, HELP_FONT  # type: ignore
+        from c.c.b.assets.image_loader import get_piece_image_surface, get_card_image  # type: ignore
+    except Exception:
+        # TYPE_CHECKING ブロック内の失敗は無視
+        pass
+
+logger = logging.getLogger(__name__)
 
 
 # スクロールバー関連のグローバル状態
@@ -8,10 +25,45 @@ dragging_scrollbar = False
 drag_start_y = 0
 drag_start_offset = 0
 
+# 現在のログビュー ('detail'|'piece'|'card')
+current_log_view = 'detail'
+# 直近のビュー切替時刻とビュー名（画面上に短時間フラッシュ表示するための診断用）
+_last_view_change_time = 0.0
+_last_view_change_name = None
 
-def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, board_area_top, board_area_height, board_top, board_size, board_right):
+# ログ内の駒アイコン矩形リスト [(rect, label_str), ...]
+log_icon_rects = []
+
+
+def set_log_view(view: str):
+    """現在のログビューを設定する。無効な値は無視される。"""
+    global current_log_view
+    try:
+        if view in ('detail', 'piece', 'card'):
+            current_log_view = view
+            try:
+                logger.info(f"overlay: set_log_view -> {current_log_view}")
+                # 診断用: 切替時刻を記録（画面フラッシュ表示のため）
+                try:
+                    global _last_view_change_time, _last_view_change_name
+                    _last_view_change_time = time.time()
+                    _last_view_change_name = current_log_view
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def get_log_view():
+    """現在のログビューを返す。"""
+    return current_log_view
+
+
+def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, board_area_top, board_area_height, board_top, board_size, board_right, log_view=None):
     """ログパネルを描画する
-    
+
     Args:
         screen: pygame surface
         game: Game instance
@@ -20,24 +72,27 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         layout: compute_layout()で計算されたレイアウト情報
         W, H: ウィンドウサイズ
         board_area_top: ボードエリアのトップ位置
-        board_area_height: ボードエリアの高さ
-        board_top: ボードのトップ位置
-        board_size: ボードのサイズ
-        board_right: ボードの右端位置
-        
+        board_area_height: ボード領域の高さ
+        board_top: ボードのトップ位置（描画用）
+        board_size: ボードのサイズ（ピクセル）
+        board_right: ボードの右端X座標
+        log_view: ログビュー文字列（'detail'|'piece'|'card'）
+
     Returns:
-        tuple: (log_scroll_offset, log_toggle_rect or None)
+        tuple: (log_scroll_offset, toggle_rect or None)
     """
     global scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
-    
+
     # Import dependencies
     try:
         from .layout import draw_text, wrap_text
         from .config import FONT, HELP_FONT
+        from ..assets.image_loader import get_piece_image_surface
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text, wrap_text
-            from CCB.ui.config import FONT, HELP_FONT
+            from CCB.ui.layout import draw_text, wrap_text  # type: ignore[reportMissingImports]
+            from CCB.ui.config import FONT, HELP_FONT  # type: ignore[reportMissingImports]
+            from CCB.assets.image_loader import get_piece_image_surface  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys
@@ -47,6 +102,10 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                 wrap_text = main.wrap_text
                 FONT = main.FONT
                 HELP_FONT = main.HELP_FONT
+                try:
+                    get_piece_image_surface = main.get_piece_image_surface
+                except Exception:
+                    get_piece_image_surface = None
             else:
                 raise
     
@@ -211,12 +270,164 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # 見出しのすぐ下にスクロールのヒントを表示
         draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
 
+        # 上部右側にログ切替ヒントを表示（背景は無し、文字をやや細めにする）
+        try:
+            hint_text = "ログ切り替え［C］"
+            try:
+                # 少し小さめ・非太字で描画して目立ちすぎないようにする
+                size = max(14, top_line_h - 4)
+                hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=False)
+            except Exception:
+                hint_font = pygame.font.SysFont(None, max(14, top_line_h - 4), bold=False)
+            s = hint_font.render(hint_text, True, (90, 90, 120))
+            hx = log_panel_left + log_panel_width - s.get_width() - 12
+            hy = log_panel_top + 8 + (top_line_h - s.get_height()) // 2
+            # 直接テキストを描画（背景は描かない）
+            screen.blit(s, (hx, hy))
+        except Exception:
+            pass
+
+        # ログビューのヘルプと現在のビュー表示（[D]詳細 [P]駒 [C]カード）
+        # Determine active view: prefer explicit `log_view` argument when provided;
+        # otherwise use module-level `current_log_view`.
+        if log_view in ('detail', 'piece', 'card'):
+            active_view = log_view
+        else:
+            active_view = current_log_view
+        try:
+            logger.debug(f"overlay: draw_log_panel active_view={active_view}")
+        except Exception:
+            pass
+        view_label = {'detail': '詳細', 'piece': '駒', 'card': 'カード'}.get(active_view, '詳細')
+        draw_text(screen, f"[D]詳細 [P]駒 [C]カード    現在: {view_label}", log_panel_left + 10, log_panel_top + 50 + top_line_h, (80, 80, 120))
+
+        # 診断用: 直近のビュー切替を大きく短時間表示して視覚で確認できるようにする
+        try:
+            global _last_view_change_time, _last_view_change_name
+            if _last_view_change_name and (time.time() - _last_view_change_time) < 1.0:
+                try:
+                    flash_label = {'detail': '詳細', 'piece': '駒', 'card': 'カード'}.get(_last_view_change_name, _last_view_change_name)
+                    # 大きめのフォントで短時間描画
+                    try:
+                        flash_font = HELP_FONT if HELP_FONT else pygame.font.SysFont(None, 28, bold=True)
+                    except Exception:
+                        flash_font = pygame.font.SysFont(None, 28, bold=True)
+                    s = flash_font.render(f"ログビュー: {flash_label}", True, (10, 10, 10))
+                    # 背景ボックス
+                    bx = log_panel_left + (log_panel_width - s.get_width()) // 2 - 8
+                    by = log_panel_top + 6
+                    bw = s.get_width() + 16
+                    bh = s.get_height() + 8
+                    pygame.draw.rect(screen, (255, 250, 210), (bx, by, bw, bh))
+                    pygame.draw.rect(screen, (140, 120, 90), (bx, by, bw, bh), 1)
+                    screen.blit(s, (bx + 8, by + 4))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # ログの折り返し処理
-        wrapped_lines = []
-        max_log_width = log_panel_width - 30
-        for line in game.log:
-            for wline in wrap_text(f"• {line}", max_log_width):
-                wrapped_lines.append(wline)
+        # 指定されたビューにフィルタしてから、各ログ行をAI/プレイヤーで分類して折り返す
+        # より寛容な駒移動判定（AI/プレイヤー問わず駒の移動ログを検出する）
+        def _is_piece_line(s):
+            try:
+                ss = str(s)
+                # 一部のログは短い表現や句読点で揺れるので正規表現で幅広くマッチさせる
+                # - 「移動」「飛び越」などのキーワード
+                # - 矢印や -> 記号
+                # - 座標形式の (x, y)
+                # - 「駒」や「マス」など、駒操作を示唆する語
+                _piece_re = re.compile(r"移動|飛び越|→|->|\(\s*\d+\s*,\s*\d+\s*\)|駒|マス", re.UNICODE)
+                return bool(_piece_re.search(ss))
+            except Exception:
+                return False
+
+        def _is_card_line(s):
+            try:
+                ss = str(s)
+                return ('『' in ss) or ('カード' in ss) or ('ドロー' in ss) or ('使用' in ss) or ('墓地' in ss) or ('ギミック' in ss)
+            except Exception:
+                return False
+
+        # active_view is already determined above; ensure it's valid
+        if active_view not in ('detail', 'piece', 'card'):
+            active_view = 'detail'
+
+        source_lines = []
+        if active_view == 'detail':
+            source_lines = list(game.log)
+        elif active_view == 'piece':
+            # 駒ビュー: 駒移動を示す行を含めるが、カード関連のログは除外する
+            # ゲーム実装により駒移動ログは `game.log` ではなくグローバルな `chess_log`
+            # に記録されることがあるため、両方を参照して結合する。
+            combined = []
+            try:
+                combined.extend(list(game.log))
+            except Exception:
+                pass
+            # try to include chess_log from the game object if present
+            try:
+                if hasattr(game, 'chess_log'):
+                    combined.extend(list(getattr(game, 'chess_log', [])))
+                else:
+                    # fallback: try importing CardGame module to access its chess_log global
+                    try:
+                        import importlib
+                        cg = importlib.import_module('c.c.b.CardGame')
+                        combined.extend(list(getattr(cg, 'chess_log', [])))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+        else:  # 'card'
+            source_lines = [l for l in game.log if _is_card_line(l)]
+
+        # Debug: 出力先の端末に現在のビューとフィルタ結果を表示（自動診断用の一時的ログ）
+        try:
+            # 表示される最初の数行をサンプル表示（長いログを避ける）
+            sample = source_lines[:3]
+            print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
+        except Exception:
+            pass
+
+        wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
+        # reduce wrap width to avoid lines overflowing the panel; leave more
+        # margin so long texts wrap earlier (prevents visual overflow)
+        max_log_width = max(40, log_panel_width - 60)
+        _ai_re = re.compile(r"^\s*AI(?=$|[:：\s\(])", re.IGNORECASE)
+        # piece letter detection (e.g. 'P','N','B','R','Q','K')
+        _piece_letter_re = re.compile(r"\b([KQRBNP])\b", re.IGNORECASE)
+        for line in source_lines:
+            try:
+                sline = str(line)
+                kind = 'ai' if _ai_re.match(sline) else 'player'
+            except Exception:
+                sline = str(line)
+                kind = 'player'
+            # detect piece initial in the log line
+            pl_match = _piece_letter_re.search(sline)
+            piece_letter = pl_match.group(1).upper() if pl_match else None
+            # prepare display line with the piece letter removed so the icon
+            # doesn't duplicate the letter in text. We remove the first
+            # occurrence when it is followed by typical separators (e.g. 'を',
+            # whitespace, punctuation) and fall back to removing the first
+            # occurrence of the letter if necessary.
+            display_sline = sline
+            if piece_letter:
+                try:
+                    pl = re.escape(piece_letter)
+                    m = re.search(rf"{pl}(?=を|\s|[:：,。.\)\(]|$)", sline, re.IGNORECASE)
+                    if m:
+                        display_sline = sline[:m.start()] + sline[m.end():]
+                    else:
+                        display_sline = re.sub(pl, '', sline, count=1, flags=re.IGNORECASE)
+                    display_sline = display_sline.strip()
+                except Exception:
+                    display_sline = sline
+
+            for wline in wrap_text(display_sline, max_log_width):
+                wrapped_lines.append((wline, kind, piece_letter))
 
         # スクロールオフセットの範囲制限
         # 行高さは現在のフォントから取得し、各文章ごとに1行分の余白を入れる
@@ -226,23 +437,112 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # 下部に余白を設けて見やすくする（最後の行が枠にくっつかないように）
         bottom_padding_px = 28  # ここを調整すると余白サイズを変更できます
         max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // line_step)
-        max_scroll = max(0, len(wrapped_lines) - max_lines_visible)
+        total_wrapped = len(wrapped_lines)
+        max_scroll = max(0, total_wrapped - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
 
         # 表示範囲を計算（最新が下）
-        if len(wrapped_lines) <= max_lines_visible:
+        if total_wrapped <= max_lines_visible:
             visible_lines = wrapped_lines
         else:
-            start_idx = len(wrapped_lines) - max_lines_visible - log_scroll_offset
+            start_idx = total_wrapped - max_lines_visible - log_scroll_offset
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
         # ログ描画開始位置（見出しとヒントの下）
         # 先ほどタイトルの上に1行分の余白を入れたので、描画開始位置も同じ分だけ下げる
         log_y = log_panel_top + 56 + top_line_h
-        for wline in visible_lines:
+        # reduce horizontal padding so more space is available for text
+        pad_x = 6
+        pad_y = 4
+        # Clear per-frame icon rects
+        global log_icon_rects
+        log_icon_rects = []
+
+        for wline, kind, piece_letter in visible_lines:
             if log_y < log_panel_top + log_panel_height - bottom_padding_px:
-                draw_text(screen, wline, log_panel_left + 10, log_y, (60, 60, 60))
+                # テキストサーフェスを作成して幅を測る
+                try:
+                    text_surf = FONT.render(wline, True, (30, 30, 30))
+                except Exception:
+                    text_surf = pygame.font.SysFont(None, 18).render(wline, True, (30, 30, 30))
+
+                tw = text_surf.get_width()
+                th = text_surf.get_height()
+
+                # prepare optional piece icon
+                icon_surf = None
+                icon_w = icon_h = 0
+                try:
+                    if piece_letter and 'get_piece_image_surface' in globals() and get_piece_image_surface:
+                        # choose color based on kind: AI -> black, player -> white
+                        color = 'black' if kind == 'ai' else 'white'
+                        # icon size approximately line height
+                        icon_h = icon_w = th
+                        icon_surf = get_piece_image_surface(piece_letter, color, (icon_w, icon_h))
+                        if icon_surf is None:
+                            icon_w = icon_h = 0
+                except Exception:
+                    icon_surf = None
+
+                if kind == 'ai':
+                    # 左揃え、薄赤背景
+                    bx = log_panel_left + 10
+                    by = log_y - pad_y
+                    # adjust background width to include icon if present
+                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                    bh = th + pad_y * 2
+                    pygame.draw.rect(screen, (255, 230, 230), (bx, by, bw, bh))
+                    pygame.draw.rect(screen, (200, 140, 140), (bx, by, bw, bh), 1)
+                    # draw icon (left of text) if available
+                    tx = bx + pad_x
+                    if icon_surf:
+                        try:
+                            screen.blit(icon_surf, (tx, log_y))
+                            # record icon rect for hover tooltip (use background top by)
+                            try:
+                                # record icon rect using the actual blit Y (log_y)
+                                icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                                # map piece letter to human-friendly name (Japanese)
+                                _name_map = {'K': 'キング', 'Q': 'クイーン', 'R': 'ルーク', 'B': 'ビショップ', 'N': 'ナイト', 'P': 'ポーン'}
+                                pname = _name_map.get(piece_letter, piece_letter) if piece_letter else ''
+                                label = f"黒：{pname}" if pname else ''
+                                log_icon_rects.append((icon_rect, label))
+                            except Exception:
+                                pass
+                            tx += icon_w + 6
+                        except Exception:
+                            pass
+                    screen.blit(text_surf, (tx, log_y))
+                else:
+                    # プレイヤー/右揃え、薄水色背景
+                    # compute background width first (include icon if present)
+                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                    bx = log_panel_left + log_panel_width - 10 - bw
+                    by = log_y - pad_y
+                    bh = th + pad_y * 2
+                    pygame.draw.rect(screen, (220, 240, 255), (bx, by, bw, bh))
+                    pygame.draw.rect(screen, (140, 170, 200), (bx, by, bw, bh), 1)
+                    # for right-aligned, text is placed inside the box; icon should be left of text
+                    tx = bx + pad_x
+                    if icon_surf:
+                        try:
+                            # place icon just before the text area (left side)
+                            screen.blit(icon_surf, (tx, log_y))
+                            # record icon rect for hover tooltip (use actual blit Y log_y)
+                            try:
+                                icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                                _name_map = {'K': 'キング', 'Q': 'クイーン', 'R': 'ルーク', 'B': 'ビショップ', 'N': 'ナイト', 'P': 'ポーン'}
+                                pname = _name_map.get(piece_letter, piece_letter) if piece_letter else ''
+                                label = f"白：{pname}" if pname else ''
+                                log_icon_rects.append((icon_rect, label))
+                            except Exception:
+                                pass
+                            tx += icon_w + 6
+                        except Exception:
+                            pass
+                    screen.blit(text_surf, (tx, log_y))
+
                 # 次の文章は空行を挟んで描画する
                 log_y += line_step
 
@@ -257,7 +557,7 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
             pygame.draw.rect(screen, (200, 200, 200), 
                            (scrollbar_x, scrollbar_y, scrollbar_width, scrollbar_height))
             # スクロール位置を計算
-            total_lines = len(wrapped_lines)
+            total_lines = total_wrapped
             scroll_ratio = log_scroll_offset / max_scroll if max_scroll > 0 else 0
             # つまみのサイズと位置
             thumb_height = max(20, scrollbar_height * max_lines_visible / total_lines)
@@ -270,6 +570,59 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         else:
             scrollbar_rect = None
             
+        # Debug: log number of recorded icon rects (print so appearing in console reliably)
+        try:
+            logger.debug(f"overlay: log_icon_rects count={len(log_icon_rects)}")
+        except Exception:
+            pass
+        try:
+            print(f"[overlay-debug] icon_rects={len(log_icon_rects)}")
+        except Exception:
+            pass
+
+        # Tooltip: show piece name when mouse hovers an icon in the log
+        try:
+            mx, my = pygame.mouse.get_pos()
+            hovered_label = None
+            for r, label in log_icon_rects:
+                try:
+                    if r.collidepoint((mx, my)):
+                        hovered_label = label
+                        break
+                except Exception:
+                    continue
+            if hovered_label:
+                try:
+                    logger.debug(f"overlay: hovered_label={hovered_label} at {mx},{my}")
+                except Exception:
+                    pass
+                try:
+                    # also print to stdout for run-time debugging
+                    try:
+                        print(f"[overlay-debug] hovered_label={hovered_label} mx,my={mx},{my}")
+                    except Exception:
+                        pass
+                    # draw tooltip near mouse
+                    font = FONT
+                    txt_surf = font.render(hovered_label, True, (10, 10, 10))
+                    tw = txt_surf.get_width()
+                    th = txt_surf.get_height()
+                    pad = 6
+                    tx = mx + 12
+                    ty = my + 12
+                    # keep tooltip on-screen
+                    if tx + tw + pad*2 > W:
+                        tx = W - tw - pad*2 - 8
+                    if ty + th + pad*2 > H:
+                        ty = H - th - pad*2 - 8
+                    pygame.draw.rect(screen, (255, 255, 220), (tx, ty, tw + pad*2, th + pad*2))
+                    pygame.draw.rect(screen, (120, 120, 100), (tx, ty, tw + pad*2, th + pad*2), 1)
+                    screen.blit(txt_surf, (tx + pad, ty + pad))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         return log_scroll_offset, log_toggle_rect
     else:
         # ログ非表示時のヒント (右パネルに寄せる)
@@ -283,14 +636,6 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         
         return log_scroll_offset, None
 
-
-def get_scrollbar_state():
-    """スクロールバーの状態を取得する
-    
-    Returns:
-        tuple: (scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset)
-    """
-    return scrollbar_rect, dragging_scrollbar, drag_start_y, drag_start_offset
 
 
 def set_scrollbar_state(rect, dragging, start_y, start_offset):
@@ -337,8 +682,8 @@ def draw_grave_overlay(screen, game, show_grave, W, H):
         from ..assets.image_loader import get_card_image
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text
-            from CCB.assets.image_loader import get_card_image
+            from CCB.ui.layout import draw_text  # type: ignore[reportMissingImports]
+            from CCB.assets.image_loader import get_card_image  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys
@@ -405,7 +750,7 @@ def draw_opponent_hand_overlay(screen, get_opponent_hand_count, show_opponent_ha
         from .layout import draw_text
     except ImportError:
         try:
-            from CCB.ui.layout import draw_text
+            from CCB.ui.layout import draw_text  # type: ignore[reportMissingImports]
         except ImportError:
             # Fallback for direct execution
             import sys

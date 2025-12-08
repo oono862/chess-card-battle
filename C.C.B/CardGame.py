@@ -501,8 +501,22 @@ except ImportError:
             return None
 
         def build_deck_for_mode(mode: str):
-            try: return new_game_with_rule_deck().player.deck
-            except Exception: return None
+            """モードに応じてデッキを構築する"""
+            try:
+                if mode == 'custom':
+                    # 作成デッキを読み込む
+                    try:
+                        saved_decks = load_saved_decks()
+                        if saved_decks and saved_decks[0]:
+                            return build_game_from_card_names(
+                                [card.get('name', '') for card in saved_decks[0].get('cards', [])]
+                            ).player.deck
+                    except Exception:
+                        pass
+                # 固定デッキまたはカスタムデッキ読み込み失敗時
+                return new_game_with_rule_deck().player.deck
+            except Exception:
+                return None
 
         def build_ai_player(mode: str):
             try:
@@ -1192,7 +1206,27 @@ def restart_game():
 
         # 既存 game がなければ、現在の DECK_MODE に従って新しいゲームを作成する（モーダルは表示しない）
         try:
-            game = new_game_with_mode(DECK_MODE)
+            if DECK_MODE == 'custom':
+                # 作成デッキを読み込んでゲームを作成
+                try:
+                    saved_decks = load_saved_decks()
+                    if saved_decks and saved_decks[0] and isinstance(saved_decks[0], dict):
+                        deck_card_names = [card.get('name', '') for card in saved_decks[0].get('cards', [])]
+                        if deck_card_names and 'build_game_from_card_names' in globals():
+                            game = build_game_from_card_names(deck_card_names)
+                        else:
+                            # フォールバック: 作成デッキが無い場合は固定デッキ
+                            game = new_game_with_mode('fixed')
+                    else:
+                        # 保存されたデッキが無い場合は固定デッキ
+                        game = new_game_with_mode('fixed')
+                except Exception:
+                    logger.exception("Failed to load custom deck, falling back to fixed")
+                    game = new_game_with_mode('fixed')
+            else:
+                # 固定デッキ
+                game = new_game_with_mode('fixed')
+            
             try:
                 ai_player = build_ai_player(DECK_MODE)
                 try:
@@ -6240,20 +6274,7 @@ def draw_panel():
         # 見出しのすぐ下にスクロールのヒントを表示
         draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
 
-        # 上部右側にログ切替ヒントを表示（背景は無し、文字をやや細めにする）
-        try:
-            hint_text = "ログ切り替え［C］"
-            try:
-                size = max(14, top_line_h - 4)
-                hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", size, bold=False)
-            except Exception:
-                hint_font = pygame.font.SysFont(None, max(14, top_line_h - 4), bold=False)
-            s = hint_font.render(hint_text, True, (90, 90, 120))
-            hx = log_panel_left + log_panel_width - s.get_width() - 12
-            hy = log_panel_top + 8 + (top_line_h - s.get_height()) // 2
-            screen.blit(s, (hx, hy))
-        except Exception:
-            pass
+
 
         # ログの折り返し処理 — ビューに応じてフィルタを行い、各行に種類を付与（AI / player）して後続描画で差別化
         def _is_piece_line(s):
@@ -6321,7 +6342,17 @@ def draw_panel():
             active_view = 'detail'
 
         if active_view == 'detail':
-            source_lines = list(game.log)
+            # 詳細ビュー: 全てのログを表示（ゲームログとチェスログを結合）
+            combined = []
+            try:
+                combined.extend(list(game.log))
+            except Exception:
+                pass
+            try:
+                combined.extend(list(chess_log))
+            except Exception:
+                pass
+            source_lines = combined
         elif active_view == 'piece':
             # 駒ビュー: 駒移動を示す行を含めるが、カードに関するログは除外する
             # プレイヤーの駒移動はローカルな `chess_log` に記録されることがあるため
@@ -6426,7 +6457,7 @@ def draw_panel():
                             flash_font = HELP_FONT if HELP_FONT else pygame.font.SysFont(None, 28, bold=True)
                         except Exception:
                             flash_font = pygame.font.SysFont(None, 28, bold=True)
-                        s = flash_font.render(f"ログビュー: {flash_label}", True, (10, 10, 10))
+                        s = flash_font.render(f"ログ: {flash_label}", True, (10, 10, 10))
                         bx = log_panel_left + (log_panel_width - s.get_width()) // 2 - 8
                         by = log_panel_top + 6
                         bw = s.get_width() + 16
@@ -6528,14 +6559,16 @@ def draw_panel():
                     tooltip_surf = tooltip_font.render(piece_name, True, (255, 255, 255))
                     tooltip_w = tooltip_surf.get_width() + 12
                     tooltip_h = tooltip_surf.get_height() + 8
-                    # ツールチップの位置（マウスカーソルの下に表示）
-                    tooltip_x = mx + 10
-                    tooltip_y = my + 10
+                    # ツールチップの位置（アイコンの下に固定表示）
+                    tooltip_x = icon_rect.left + (icon_rect.width - tooltip_w) // 2
+                    tooltip_y = icon_rect.bottom + 4
                     # 画面外に出ないように調整
+                    if tooltip_x < 0:
+                        tooltip_x = 0
                     if tooltip_x + tooltip_w > W:
                         tooltip_x = W - tooltip_w - 5
                     if tooltip_y + tooltip_h > H:
-                        tooltip_y = my - tooltip_h - 5
+                        tooltip_y = icon_rect.top - tooltip_h - 4
                     # 背景を描画
                     pygame.draw.rect(screen, (60, 60, 80), (tooltip_x, tooltip_y, tooltip_w, tooltip_h))
                     pygame.draw.rect(screen, (200, 200, 220), (tooltip_x, tooltip_y, tooltip_w, tooltip_h), 1)
@@ -6568,6 +6601,16 @@ def draw_panel():
             scrollbar_rect = pygame.Rect(scrollbar_x, thumb_y, scrollbar_width, thumb_height)
         else:
             scrollbar_rect = None
+        
+        # ログパネルの下にログ切り替え［C］を表示（ログ表示時にも表示）
+        try:
+            hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+            hint_s = hint_font.render("ログ切り替え［C］", True, (80, 80, 110))
+            hint_y = log_panel_top + log_panel_height + 12
+            screen.blit(hint_s, (layout['right_panel_x'] + 12, hint_y))
+        except Exception:
+            hint_y = log_panel_top + log_panel_height + 12
+            draw_text(screen, "ログ切り替え［C］", layout['right_panel_x'] + 12, hint_y, (100, 100, 120), bold=True, scale=1.4)
     else:
         # ログ非表示時のヒント (右パネルに寄せる)
         # Make the label more visible by using a bolder font if available.
@@ -6577,6 +6620,13 @@ def draw_panel():
             screen.blit(lbl_s, (layout['right_panel_x'] + 12, board_area_top + board_area_height - 30))
         except Exception:
             draw_text(screen, "[L] ログ表示", layout['right_panel_x'] + 12, board_area_top + board_area_height - 30, (100, 100, 120))
+        # ログ切り替え［C］を下に表示（大きく太字）
+        try:
+            hint_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+            hint_s = hint_font.render("ログ切り替え［C］", True, (80, 80, 110))
+            screen.blit(hint_s, (layout['right_panel_x'] + 12, board_area_top + board_area_height + 8))
+        except Exception:
+            draw_text(screen, "ログ切り替え［C］", layout['right_panel_x'] + 12, board_area_top + board_area_height + 8, (100, 100, 120), bold=True, scale=1.4)
 
     # 下部エリア: 手札（横並び最大7枚、クリックで拡大）
     card_area_top = layout['card_area_top']
@@ -8695,16 +8745,16 @@ def main_loop():
                         dy = event.pos[1] - drag_start_y
                         # scrollbar_rectの高さを使って比率計算
                         if scrollbar_rect.height > 0 and _max_scroll > 0:
-                            scroll_delta = -dy * _max_scroll / scrollbar_rect.height
+                            scroll_delta = dy * _max_scroll / scrollbar_rect.height
                             new_offset = drag_start_offset + scroll_delta
                             log_scroll_offset = int(max(0, min(new_offset, _max_scroll)))
             elif event.type == pygame.MOUSEWHEEL:
                 # マウスホイールでログスクロール（ログ表示中のみ）
                 if show_log:
                     if event.y > 0:  # 上スクロール
-                        log_scroll_offset += 1
-                    elif event.y < 0:  # 下スクロール
                         log_scroll_offset = max(0, log_scroll_offset - 1)
+                    elif event.y < 0:  # 下スクロール
+                        log_scroll_offset += 1
 
         # --- 自動処理: AI の保留昇格を即時解決 ---
         # どこかの効果でAI（黒）のポーンがプロモーション待ちになった場合、

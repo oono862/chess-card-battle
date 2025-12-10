@@ -1467,7 +1467,7 @@ def _prepare_new_battle_after_deck_already_selected():
                 except Exception:
                     pass
             if hasattr(game, 'log'):
-                game.log.append(f"バトル開始: プレイヤーはデッキから{draw_count}枚ドローしました。")
+                game.log.append(f"バトル開始時にデッキから{draw_count}枚ドローしました。")
     except Exception as e:
         logger.debug("Failed to draw initial player hand during rematch init: %s", e)
 
@@ -1515,7 +1515,7 @@ def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) 
                 if card:
                     ai.hand.add(card)
             if draw_count and game_obj and hasattr(game_obj, 'log'):
-                game_obj.log.append(f"相手はバトル開始時にデッキから{draw_count}枚ドローしました。")
+                game_obj.log.append(f"AI: バトル開始時にデッキから{draw_count}枚ドローしました。")
         except Exception:
             pass
     except Exception:
@@ -4701,6 +4701,9 @@ def ai_make_move():
                 c = ai_player.deck.draw()
                 if c:
                     ai_player.hand.add(c)
+                    # AI ターン開始フラグをリセット
+                    game._ai_turn_sep_added = False
+                    game.log.append("    ───── AIのターン ─────")
                     game.log.append("AI: ターン開始で1枚ドローしました。")
     except Exception:
         # defensive: ignore if ai_player not properly initialized
@@ -5122,6 +5125,10 @@ def ai_make_move():
     except Exception:
         src_r = src_c = None
     apply_move(p, mv[0], mv[1])
+    # AIの最初の駒移動に区切り線を追加（囲わず中央揃え）
+    if not hasattr(globals().get('game', None), '_ai_turn_sep_added'):
+        game.log.append("    ───── AIのターン ─────")
+        game._ai_turn_sep_added = True
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
     # 移動アニメーションを開始する（移動元: 赤パルス、移動先: 青パルス、両者を矢印で結ぶ）
     try:
@@ -6287,11 +6294,11 @@ def draw_panel():
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
         # タイトル（クリックで閉じる）
-        # 1行分の余白をタイトル上部に入れる（視認性向上）
-        top_line_h = FONT.get_height()
-        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8 + top_line_h, (60, 60, 100))
-        # 見出しのすぐ下にスクロールのヒントを表示
-        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
+        # 上部余白を減らしてログ表示エリアを確保
+        top_line_h = 0  # 上部余白を削除
+        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 6, (60, 60, 100))
+        # 見出しのすぐ下にスクロールのヒントを表示（間隔を詰める）
+        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 26, (100, 100, 120))
 
 
 
@@ -6396,15 +6403,23 @@ def draw_panel():
         # except Exception:
         #     pass
 
-        wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
-        max_log_width = max(40, log_panel_width - 60)
+        wrapped_lines = []  # list of (text_line, kind, piece_letter, is_first_line) where kind in ('ai','player','separator')
+        max_log_width = max(40, log_panel_width - 110)
         _ai_re = re.compile(r"^\s*AI(?=$|[:：\s\(])", re.IGNORECASE)
+        # ターン区切り線の判定用正規表現
+        _separator_re = re.compile(r"^\s*───+.*───+\s*$")
         # piece letter detection (e.g. 'P','N','B','R','Q','K')
         _piece_letter_re = re.compile(r"\b([KQRBNP])\b", re.IGNORECASE)
         for line in source_lines:
             try:
                 sline = str(line)
-                kind = 'ai' if _ai_re.match(sline) else 'player'
+                # ターン区切り線かどうかを判定
+                if _separator_re.match(sline):
+                    kind = 'separator'
+                elif _ai_re.match(sline):
+                    kind = 'ai'
+                else:
+                    kind = 'player'
             except Exception:
                 sline = str(line)
                 kind = 'player'
@@ -6427,8 +6442,14 @@ def draw_panel():
                 except Exception:
                     display_sline = sline
 
-            for wline in wrap_text(display_sline, max_log_width):
-                wrapped_lines.append((wline, kind, piece_letter))
+            # ターン区切り線は折り返さず1行で扱う
+            if kind == 'separator':
+                wrapped_lines.append((display_sline, kind, piece_letter, True))
+            else:
+                wrapped = wrap_text(display_sline, max_log_width)
+                for idx, wline in enumerate(wrapped):
+                    is_first = (idx == 0)
+                    wrapped_lines.append((wline, kind, piece_letter, is_first))
 
         # スクロールオフセットの範囲制限
         global log_scroll_offset
@@ -6454,8 +6475,8 @@ def draw_panel():
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
-        # ログ描画開始位置（見出しとヒントの下）
-        log_y = log_panel_top + 56 + top_line_h
+        # ログ描画開始位置（見出しとヒントの下、間隔を詰める）
+        log_y = log_panel_top + 48
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4
@@ -6492,77 +6513,166 @@ def draw_panel():
         # ログアイコンのツールチップ表示用リスト（位置と駒の種類を記録）
         log_icon_tooltips = []
         
-        for wline, kind, piece_letter in visible_lines:
-            if log_y < log_panel_top + log_panel_height - bottom_padding_px:
+        # グループ化: 同じ文章（is_first=Falseが連続）をまとめる
+        line_groups = []
+        current_group = []
+        for item in visible_lines:
+            wline, kind, piece_letter, is_first = item
+            if is_first and current_group:
+                line_groups.append(current_group)
+                current_group = []
+            current_group.append((wline, kind, piece_letter))
+        if current_group:
+            line_groups.append(current_group)
+        
+        for group in line_groups:
+            if log_y >= log_panel_top + log_panel_height - bottom_padding_px:
+                break
+            
+            # グループの最初の行から種類とアイコン情報を取得
+            first_wline, kind, piece_letter = group[0]
+            
+            # 各行のテキストサーフェスを準備
+            text_surfs = []
+            max_tw = 0
+            total_th = 0
+            for wline, _, _ in group:
                 try:
-                    text_surf = FONT.render(wline, True, (30, 30, 30))
+                    ts = FONT.render(wline, True, (30, 30, 30))
                 except Exception:
-                    text_surf = pygame.font.SysFont(None, 18).render(wline, True, (30, 30, 30))
-
-                tw = text_surf.get_width()
-                th = text_surf.get_height()
-
-                # prepare optional piece icon
+                    ts = pygame.font.SysFont(None, 18).render(wline, True, (30, 30, 30))
+                text_surfs.append(ts)
+                max_tw = max(max_tw, ts.get_width())
+                total_th += ts.get_height()
+            
+            th = text_surfs[0].get_height() if text_surfs else line_h
+            
+            # アイコンの準備
+            icon_surf = None
+            icon_w = icon_h = 0
+            try:
+                if piece_letter and 'get_piece_image_surface' in globals() and get_piece_image_surface:
+                    color = 'black' if kind == 'ai' else 'white'
+                    icon_h = icon_w = th
+                    icon_surf = get_piece_image_surface(piece_letter, color, (icon_w, icon_h))
+                    if icon_surf is None:
+                        icon_w = icon_h = 0
+            except Exception:
                 icon_surf = None
-                icon_w = icon_h = 0
-                icon_rect = None
-                try:
-                    if piece_letter and 'get_piece_image_surface' in globals() and get_piece_image_surface:
-                        # choose color based on kind: AI -> black, player -> white
-                        color = 'black' if kind == 'ai' else 'white'
-                        # icon size approximately line height
-                        icon_h = icon_w = th
-                        icon_surf = get_piece_image_surface(piece_letter, color, (icon_w, icon_h))
-                        if icon_surf is None:
-                            icon_w = icon_h = 0
-                except Exception:
-                    icon_surf = None
-
-                if kind == 'ai':
-                    # 左揃え、薄赤背景
-                    bx = log_panel_left + 10
-                    by = log_y - pad_y
-                    # adjust background width to include icon if present
-                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
-                    bh = th + pad_y * 2
-                    pygame.draw.rect(screen, (255, 230, 230), (bx, by, bw, bh))
-                    pygame.draw.rect(screen, (200, 140, 140), (bx, by, bw, bh), 1)
-                    # draw icon (left of text) if available
-                    tx = bx + pad_x
-                    if icon_surf:
-                        try:
-                            screen.blit(icon_surf, (tx, log_y))
-                            # アイコンの矩形を記録（ツールチップ用）
-                            icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
-                            log_icon_tooltips.append((icon_rect, piece_letter))
-                            tx += icon_w + 6
-                        except Exception:
-                            pass
-                    screen.blit(text_surf, (tx, log_y))
-                else:
-                    # プレイヤー/右揃え、薄水色背景
-                    # calculate background width including icon, then set left coordinate
-                    bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
-                    bx = log_panel_left + log_panel_width - 10 - bw
-                    by = log_y - pad_y
-                    bh = th + pad_y * 2
-                    pygame.draw.rect(screen, (220, 240, 255), (bx, by, bw, bh))
-                    pygame.draw.rect(screen, (140, 170, 200), (bx, by, bw, bh), 1)
-                    # for right-aligned, text is placed inside the box; icon should be left of text
-                    tx = bx + pad_x
-                    if icon_surf:
-                        try:
-                            screen.blit(icon_surf, (tx, log_y))
-                            # アイコンの矩形を記録（ツールチップ用）
-                            icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
-                            log_icon_tooltips.append((icon_rect, piece_letter))
-                            tx += icon_w + 6
-                        except Exception:
-                            pass
-                    screen.blit(text_surf, (tx, log_y))
-
-                # 次の文章は空行を挟んで描画する
-                log_y += line_step
+            
+            # グループ全体の囲いを描画
+            group_height = total_th + pad_y * 2
+            
+            if kind == 'separator':
+                # ターン区切り線：1行で横いっぱいに「─」で埋めて、中央にテキストを配置
+                ty = log_y
+                # 区切り線テキストは1行のみ
+                if text_surfs:
+                    ts = text_surfs[0]
+                    text_w = ts.get_width()
+                    text_x = log_panel_left + (log_panel_width - text_w) // 2
+                    
+                    # フォント幅を取得
+                    try:
+                        dash_width = FONT.render('─', True, (30, 30, 30)).get_width()
+                    except Exception:
+                        dash_width = 10
+                    
+                    # パネル内の有効な領域（左右の余白、枠線、スクロールバー用の余白を確保）
+                    panel_left = log_panel_left + 12  # 枠線2px + 余白10px
+                    panel_right = log_panel_left + log_panel_width - 32  # 枠線2px + 余白30px
+                    
+                    # 左側の「─」の数を計算
+                    left_available = max(0, text_x - panel_left)
+                    left_dashes = max(0, left_available // dash_width)
+                    
+                    # 右側の「─」の数を計算
+                    right_start_x = text_x + text_w
+                    right_available_width = max(0, panel_right - right_start_x)
+                    right_dashes = max(0, right_available_width // dash_width)
+                    
+                    # 左側の「─」を描画
+                    if left_dashes > 0:
+                        left_line = '─' * left_dashes
+                        left_surf = FONT.render(left_line, True, (30, 30, 30))
+                        # 描画位置がパネル内に収まるか確認
+                        if panel_left < log_panel_left + log_panel_width:
+                            screen.blit(left_surf, (panel_left, ty))
+                    
+                    # 中央のテキストを描画
+                    screen.blit(ts, (text_x, ty))
+                    
+                    # 右側の「─」を描画（パネルの右端を超えないように）
+                    if right_dashes > 0:
+                        right_line = '─' * right_dashes
+                        right_surf = FONT.render(right_line, True, (30, 30, 30))
+                        # 実際の描画幅を確認
+                        right_surf_width = right_surf.get_width()
+                        # 右端がパネルを超えないように調整
+                        if right_start_x + right_surf_width > panel_right:
+                            # はみ出す場合は描画しない、または短くする
+                            adjusted_dashes = max(0, (panel_right - right_start_x) // dash_width - 1)
+                            if adjusted_dashes > 0:
+                                right_line = '─' * adjusted_dashes
+                                right_surf = FONT.render(right_line, True, (30, 30, 30))
+                                screen.blit(right_surf, (right_start_x, ty))
+                        else:
+                            screen.blit(right_surf, (right_start_x, ty))
+            elif kind == 'ai':
+                # 左揃え、薄赤背景
+                bx = log_panel_left + 10
+                by = log_y - pad_y
+                bw = max_tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                bh = group_height
+                pygame.draw.rect(screen, (255, 230, 230), (bx, by, bw, bh))
+                pygame.draw.rect(screen, (200, 140, 140), (bx, by, bw, bh), 1)
+                
+                # アイコンを最初の行に描画
+                tx = bx + pad_x
+                if icon_surf:
+                    try:
+                        screen.blit(icon_surf, (tx, log_y))
+                        icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                        log_icon_tooltips.append((icon_rect, piece_letter))
+                        tx += icon_w + 6
+                    except Exception:
+                        pass
+                
+                # 各行のテキストを描画
+                ty = log_y
+                for idx, ts in enumerate(text_surfs):
+                    text_x = bx + pad_x + (icon_w + 6 if icon_w and idx == 0 else 0)
+                    screen.blit(ts, (text_x, ty))
+                    ty += ts.get_height()
+            else:
+                # プレイヤー/右揃え、薄水色背景（スクロールバー用に右余白を増やす）
+                bw = max_tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
+                bx = log_panel_left + log_panel_width - 30 - bw  # 10→30pxに変更
+                by = log_y - pad_y
+                bh = group_height
+                pygame.draw.rect(screen, (220, 240, 255), (bx, by, bw, bh))
+                pygame.draw.rect(screen, (140, 170, 200), (bx, by, bw, bh), 1)
+                
+                # アイコンを最初の行に描画
+                tx = bx + pad_x
+                if icon_surf:
+                    try:
+                        screen.blit(icon_surf, (tx, log_y))
+                        icon_rect = pygame.Rect(tx, log_y, icon_w, icon_h)
+                        log_icon_tooltips.append((icon_rect, piece_letter))
+                        tx += icon_w + 6
+                    except Exception:
+                        pass
+                
+                # 各行のテキストを描画
+                ty = log_y
+                for idx, ts in enumerate(text_surfs):
+                    text_x = bx + pad_x + (icon_w + 6 if icon_w and idx == 0 else 0)
+                    screen.blit(ts, (text_x, ty))
+                    ty += ts.get_height()
+            
+            # 次の文章グループは適度な間隔を空けて描画（読みやすく）
+            log_y += group_height + int(line_h * 1.3)  # 間隔を少し広げる
         
         # マウス位置がログアイコン上にある場合、ツールチップを表示
         try:
@@ -7221,6 +7331,8 @@ def attempt_start_turn():
     if getattr(game, 'pending', None) is not None:
         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
         return
+    # ターン開始時に区切り線を表示（中婴揃え、囲まなし）
+    game.log.append("    ───── 自分のターン ─────")
     # 既に開始済み
     if getattr(game, 'turn_active', False):
         game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
@@ -8022,6 +8134,7 @@ def handle_mouse_click(pos):
                             play_heat_gif_at(row, col)
                         except Exception:
                             pass
+                        game.log.append(f"『灼熱』を使用しました: {(row,col)} を中心に3x3の範囲を {turns} ターン封鎖")
                         game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
                     game.pending = None
                 else:
@@ -8061,7 +8174,7 @@ def handle_mouse_click(pos):
                                 if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱'):
                                     blocked_count += 1
                             if blocked_count > 0:
-                                game.log.append(f"{blocked_count}マスを {turns} ターン封鎖しました")
+                                game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
                             game.pending = None
                             game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
@@ -8526,6 +8639,8 @@ def handle_mouse_click(pos):
                 if chess_current_turn == 'black':
                     import time
                     global cpu_wait, cpu_wait_start
+                    # プレイヤーターン終了の区切り線を表示（横いっぱいに「─」で埋める）
+                    game.log.append("───── 自分のターン終了 ─────")
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:

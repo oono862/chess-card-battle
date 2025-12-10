@@ -329,6 +329,15 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # ログの折り返し処理
         # 指定されたビューにフィルタしてから、各ログ行をAI/プレイヤーで分類して折り返す
         # より寛容な駒移動判定（AI/プレイヤー問わず駒の移動ログを検出する）
+        
+        # テストケース（デバッグ用）
+        _test_logs = [
+            "AI: 氷結で相手の駒を (7,2) に 1ターン凍結しました。",
+            "AI: 灼熱で封鎖マスを適用しました: [(6, 4), (6, 3), (6, 2)]",
+            "Pを (3,3) へ移動",
+            "AI(2): を (3,6) に移動"
+        ]
+        
         def _is_card_line(s):
             """カード関連のログかどうかを判定（ギミックカード効果を含む）
             
@@ -385,6 +394,15 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                 return False
             except Exception:
                 return False
+        
+        # 関数テスト（初回のみ実行）
+        if not hasattr(_is_card_line, '_tested'):
+            print("[overlay] Testing filter functions...")
+            for test_log in _test_logs:
+                is_card = _is_card_line(test_log)
+                is_piece = _is_piece_line(test_log)
+                print(f"  '{test_log[:50]}...' -> card={is_card}, piece={is_piece}")
+            _is_card_line._tested = True
 
         # active_view is already determined above; ensure it's valid
         if active_view not in ('detail', 'piece', 'card'):

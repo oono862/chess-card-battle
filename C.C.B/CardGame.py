@@ -6354,17 +6354,51 @@ def draw_panel():
 
         # ログの折り返し処理 — ビューに応じてフィルタを行い、各行に種類を付与（AI / player）して後続描画で差別化
         def _is_piece_line(s):
+            """駒の移動に関するログかどうかを判定
+            
+            「移動」「飛び越」を含むログのみを駒行として判定
+            ただし、カード行として判定されるログは除外
+            """
             try:
                 ss = str(s)
-                _piece_re = re.compile(r"移動|飛び越|→|->|\(\s*\d+\s*,\s*\d+\s*\)|駒|マス", re.UNICODE)
+                # まず、カード行かどうかをチェック
+                if _is_card_line(ss):
+                    # 例外: 迅雷の追加移動のみ許可
+                    if '迅雷' in ss and '移動' in ss:
+                        return True
+                    return False
+                # 駒移動の典型的なパターン
+                _piece_re = re.compile(r"移動|飛び越|→|->", re.UNICODE)
                 return bool(_piece_re.search(ss))
             except Exception:
                 return False
 
         def _is_card_line(s):
+            """カード関連のログかどうかを判定（ギミックカード効果を含む）
+            
+            優先順位:
+            1. 迅雷の追加移動は駒行として扱う（False返却）
+            2. ギミックカード効果は全てカード行として扱う（True返却）
+            """
             try:
                 ss = str(s)
-                return ('『' in ss) or ('カード' in ss) or ('ドロー' in ss) or ('使用' in ss) or ('墓地' in ss) or ('ギミック' in ss)
+                # 迅雷の追加移動ログは駒ビューに表示するため、カード行として扱わない
+                if '迅雷' in ss and '移動' in ss:
+                    return False
+                
+                # ギミックカード名を含む場合は全てカード行
+                gimmick_cards = ['氷結', '灼熱', '暴風', '迅雷', '鉄壁', '蘇生', '2ドロー', '3ドロー', '摂取', '錬成', '墓地ルーレット', '負けるわけないだろ']
+                for card in gimmick_cards:
+                    if card in ss:
+                        return True
+                
+                # カード関連のキーワード
+                card_keywords = ['『', 'カード', 'ドロー', '使用', '墓地', 'ギミック', '封鎖', '凍結', '効果', '適用', '解除', 'マスの封鎖', 'で封鎖マス', 'を凍結', 'ターン凍結']
+                for kw in card_keywords:
+                    if kw in ss:
+                        return True
+                
+                return False
             except Exception:
                 return False
 

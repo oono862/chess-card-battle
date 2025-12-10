@@ -2305,9 +2305,10 @@ def show_deck_editor(screen, existing_deck, slot_idx):
     scroll_offset = 0
     input_active = False
     input_text = deck_name
+    textinput_buffer = ""  # TEXTINPUTイベント用バッファ（重複入力防止）
     
     global W, H
-    # 日本語入力を有効化
+    # テキスト入力モード：一度有効にしたら無効にしない（日本語IME互換性のため）
     pygame.key.start_text_input()
     # initialize local window size variables (static analyzer friendly)
     win_w, win_h = screen.get_size()
@@ -2326,22 +2327,30 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit(0)
-            
-            # TEXTINPUT イベントで日本語・英数字入力を受け取る（Pygame 2.x以降）
-            if event.type == pygame.TEXTINPUT and input_active:
-                if len(input_text) < 20:
-                    input_text += event.text
-            
+
+            # KEYDOWN イベント処理：制御キー（バックスペース、エンター、ESC）のみ
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
+                    # ESCキー：入力終了して画面から抜ける
                     pygame.key.stop_text_input()
                     return None
+                
+                # テキストボックスが活性状態の場合のみ制御キーを処理
                 if input_active:
                     if event.key == pygame.K_RETURN:
+                        # エンターで入力終了
                         input_active = False
                     elif event.key == pygame.K_BACKSPACE:
+                        # バックスペースで文字削除
                         input_text = input_text[:-1]
             
+            # TEXTINPUT イベント：全ての文字入力（アルファベット、日本語IME確定など）
+            # このイベントが発火していることが前提
+            if event.type == pygame.TEXTINPUT:
+                if input_active and len(input_text) < 20:
+                    # TEXTINPUTで入力された文字を直接追加
+                    input_text += event.text
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:  # 右クリック
                 mx, my = event.pos
                 # カード画像ローダーをインポート
@@ -2473,50 +2482,56 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                     pygame.key.stop_text_input()
                     return None
                 
-                # 名前入力欄
-                name_rect = pygame.Rect(150, 20, 400, 40)
+                # テキストボックスをクリックした場合（名前入力を活性化）
+                name_rect = pygame.Rect(300, 20, 400, 40)
                 if name_rect.collidepoint(mx, my):
+                    # テキストボックスをクリック → 入力モードON
                     input_active = True
+                    # IME状態をリセット（IME使用中に別の入力に切り替わった場合の対策）
+                    pygame.key.stop_text_input()
+                    pygame.key.start_text_input()
+                    # これ以上のイベント処理をスキップ
                 else:
+                    # テキストボックス以外をクリック → 入力モード終了
                     input_active = False
-                
-                # カードリストクリック（追加）
-                list_start_y = 110  # 描画と同じ位置に修正
-                card_h = 50
-                for i, card in enumerate(available_cards):
-                    card_y = list_start_y + i * card_h - scroll_offset
-                    if 110 <= card_y < H - 100:  # 範囲も修正
-                        card_rect = pygame.Rect(20, card_y, 500, card_h - 5)
-                        if card_rect.collidepoint(mx, my):
-                            # 同じカードが最大3枚まで
-                            count = sum(1 for c in deck_cards if c['name'] == card['name'])
-                            if count < 3:
-                                deck_cards.append(card.copy())
-                            break
-                
-                # デッキカードクリック（削除）- 集計表示に対応
-                deck_start_x = win_w - 420
-                # カードを集計
-                card_counts = {}
-                for card in deck_cards:
-                    key = card['name']
-                    if key not in card_counts:
-                        card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
-                    card_counts[key]['count'] += 1
-                
-                display_idx = 0
-                for card_info in card_counts.values():
-                    card_y = list_start_y + display_idx * card_h
-                    if 110 <= card_y < win_h - 100:
-                        card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
-                        if card_rect.collidepoint(mx, my):
-                            # このカードを1枚削除
-                            for i, c in enumerate(deck_cards):
-                                if c['name'] == card_info['name']:
-                                    deck_cards.pop(i)
-                                    break
-                            break
-                    display_idx += 1
+                    
+                    # カードリストクリック（追加）
+                    list_start_y = 110  # 描画と同じ位置に修正
+                    card_h = 50
+                    for i, card in enumerate(available_cards):
+                        card_y = list_start_y + i * card_h - scroll_offset
+                        if 110 <= card_y < H - 100:  # 範囲も修正
+                            card_rect = pygame.Rect(20, card_y, 500, card_h - 5)
+                            if card_rect.collidepoint(mx, my):
+                                # 同じカードが最大3枚まで
+                                count = sum(1 for c in deck_cards if c['name'] == card['name'])
+                                if count < 3:
+                                    deck_cards.append(card.copy())
+                                break
+                    
+                    # デッキカードクリック（削除）- 集計表示に対応
+                    deck_start_x = win_w - 420
+                    # カードを集計
+                    card_counts = {}
+                    for card in deck_cards:
+                        key = card['name']
+                        if key not in card_counts:
+                            card_counts[key] = {'name': card['name'], 'cost': card['cost'], 'count': 0}
+                        card_counts[key]['count'] += 1
+                    
+                    display_idx = 0
+                    for card_info in card_counts.values():
+                        card_y = list_start_y + display_idx * card_h
+                        if 110 <= card_y < win_h - 100:
+                            card_rect = pygame.Rect(deck_start_x, card_y, 400, card_h - 5)
+                            if card_rect.collidepoint(mx, my):
+                                # このカードを1枚削除
+                                for i, c in enumerate(deck_cards):
+                                    if c['name'] == card_info['name']:
+                                        deck_cards.pop(i)
+                                        break
+                                break
+                        display_idx += 1
             
             if event.type == pygame.MOUSEWHEEL:
                 scroll_offset -= event.y * 30
@@ -2531,7 +2546,7 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         screen.blit(title, (20, 25))
         
         # 名前入力欄
-        name_rect = pygame.Rect(150, 20, 400, 40)
+        name_rect = pygame.Rect(300, 20, 400, 40)
         pygame.draw.rect(screen, (255, 255, 255) if input_active else (240, 240, 240), name_rect)
         pygame.draw.rect(screen, (100, 150, 255) if input_active else (100, 100, 100), name_rect, 2)
         # 日本語対応フォントを直接ファイル指定で取得
@@ -2635,6 +2650,9 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         
         pygame.display.flip()
         clock.tick(30)
+    
+    # ループ終了時必ずテキスト入力モードを無効化
+    pygame.key.stop_text_input()
 
 
 def show_deck_modal_old(screen):

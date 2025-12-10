@@ -6098,6 +6098,8 @@ def draw_panel():
                     who = '白' if color == 'white' else '黒'
                     result_msg = "YOU LOSE！黒の勝利！" if color == 'white' else "YOU WIN！白の勝利！"
                     game.log.append(f"{who}はチェックメイト！{result_msg}")
+                    # ゲームオーバー時は昇格処理をクリア
+                    chess.promotion_pending = None
                     # チェックメイト判定は一度だけ行う
                     break
 
@@ -6996,7 +6998,8 @@ def draw_panel():
             screen.blit(no_s, (confirm_no_rect.centerx - no_s.get_width()//2, confirm_no_rect.centery - no_s.get_height()//2))
 
     # プロモーション選択オーバーレイ (Q/R/B/N) - プレイヤー（白）の駒のみ
-    if chess.promotion_pending is not None:
+    # ゲームオーバー時は昇格UIを表示しない
+    if chess.promotion_pending is not None and not game_over:
         promot = chess.promotion_pending
         promo_color = promot.get('color', None)
         
@@ -8350,6 +8353,8 @@ def handle_mouse_click(pos):
                             game_over = True
                             game_over_winner = 'draw'
                             game.log.append("両者のキングが取られました。引き分け。")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                             globals()['dual_king_capture_test'] = False
                             globals()['first_king_captured'] = None
                         elif not white_king_exists:
@@ -8428,11 +8433,15 @@ def handle_mouse_click(pos):
                                             game_over_winner = 'black'
                                             game.log.append("「負けるわけないだろwww」の自動発動に失敗しました。")
                                             game.log.append("YOU LOSE！黒の勝利！")
+                                            # ゲームオーバー時は昇格処理をクリア
+                                            chess.promotion_pending = None
                                     else:
                                         game_over = True
                                         game_over_winner = 'black'
                                         game.log.append("「負けるわけないだろwww」の発動に失敗しました。")
                                         game.log.append("YOU LOSE！黒の勝利！")
+                                        # ゲームオーバー時は昇格処理をクリア
+                                        chess.promotion_pending = None
                             else:
                                 # 発動条件を満たしていない（通常通り負け）
                                 # 自動発動の緩和条件で救済できるか試行
@@ -8445,14 +8454,20 @@ def handle_mouse_click(pos):
                                         game_over = True
                                         game_over_winner = 'black'
                                         game.log.append("YOU LOSE！黒の勝利！")
+                                        # ゲームオーバー時は昇格処理をクリア
+                                        chess.promotion_pending = None
                                 else:
                                     game_over = True
                                     game_over_winner = 'black'
                                     game.log.append("YOU LOSE！黒の勝利！")
+                                    # ゲームオーバー時は昇格処理をクリア
+                                    chess.promotion_pending = None
                         elif not black_king_exists:
                             game_over = True
                             game_over_winner = 'white'
                             game.log.append("YOU WIN！白の勝利")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                 
                 # ゲーム終了していなければターン切替
                 if not game_over:
@@ -8872,16 +8887,22 @@ def main_loop():
                         game_over = True
                         game_over_winner = 'draw'
                         game.log.append("同時チェック: 両者のキングが取られました。引き分け。")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                     # 白のキングのみ取られた場合は黒の勝利
                     elif not white_king_exists:
                         game_over = True
                         game_over_winner = 'black'
                         game.log.append("同時チェック: 白のキングが取られました。黒の勝利！")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                     # 黒のキングのみ取られた場合は白の勝利
                     elif not black_king_exists:
                         game_over = True
                         game_over_winner = 'white'
                         game.log.append("同時チェック: 黒のキングが取られました。白の勝利！")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                     # 両者のキングが残っている場合
                     elif white_king_exists and black_king_exists:
                         # 両者とも解除失敗の場合は引き分け
@@ -8889,15 +8910,21 @@ def main_loop():
                             game_over = True
                             game_over_winner = 'draw'
                             game.log.append("同時チェック: 両者とも解除できませんでした。引き分け。")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                         # 白のみ解除成功
                         elif wres == 'cleared' and bres == 'failed':
                             game_over = True
                             game_over_winner = 'white'
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                             game.log.append("同時チェック: 白のみ解除成功。白の勝利！")
                         # 黒のみ解除成功
                         elif wres == 'failed' and bres == 'cleared':
                             game_over = True
                             game_over_winner = 'black'
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                             game.log.append("同時チェック: 黒のみ解除成功。黒の勝利！")
                         else:
                             # 両者解除成功 → 通常続行
@@ -8934,6 +8961,8 @@ def main_loop():
                             game_over = True
                             game_over_winner = 'black'
                             game.log.append('[自動発動失敗] カード消費失敗。YOU LOSE！黒の勝利！')
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                     else:
                         # 条件不足の詳細をログ
                         try:
@@ -8946,6 +8975,8 @@ def main_loop():
                         game_over = True
                         game_over_winner = 'black'
                         game.log.append('YOU LOSE！黒の勝利！（チェックメイト）')
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                     # 同時チェック状態をクリア
                     if globals().get('simul_check_active', False):
                         globals()['simul_check_active'] = False
@@ -8994,6 +9025,8 @@ def main_loop():
                         game_over = True
                         game_over_winner = 'draw'
                         game.log.append("両者のキングが取られました。引き分け。")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                         # テストモードを終了
                         globals()['dual_king_capture_test'] = False
                         globals()['first_king_captured'] = None
@@ -9008,6 +9041,8 @@ def main_loop():
                             game_over = True
                             game_over_winner = 'draw'
                             game.log.append("両者のキングが取られました。引き分け。")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                             globals()['dual_king_capture_test'] = False
                             globals()['first_king_captured'] = None
                     elif not black_king:
@@ -9021,6 +9056,8 @@ def main_loop():
                             game_over = True
                             game_over_winner = 'draw'
                             game.log.append("両者のキングが取られました。引き分け。")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                             globals()['dual_king_capture_test'] = False
                             globals()['first_king_captured'] = None
                 else:
@@ -9030,6 +9067,8 @@ def main_loop():
                         game_over = True
                         game_over_winner = 'draw'
                         game.log.append("両者のキングが取られました。引き分け。")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                         if globals().get('simul_check_active', False):
                             globals()['simul_check_active'] = False
                             globals()['simul_white_deadline_turn'] = None
@@ -9047,6 +9086,8 @@ def main_loop():
                                 game_over = True
                                 game_over_winner = 'black'
                                 game.log.append("[自動発動失敗] カード消費処理失敗。YOU LOSE！黒の勝利！")
+                                # ゲームオーバー時は昇格処理をクリア
+                                chess.promotion_pending = None
                         else:
                             # 発動条件NGの詳細を併せてログ
                             try:
@@ -9059,6 +9100,8 @@ def main_loop():
                             game_over = True
                             game_over_winner = 'black'
                             game.log.append("YOU LOSE！黒の勝利！")
+                            # ゲームオーバー時は昇格処理をクリア
+                            chess.promotion_pending = None
                         # 同時チェック状態をクリア
                         if globals().get('simul_check_active', False):
                             globals()['simul_check_active'] = False
@@ -9070,6 +9113,8 @@ def main_loop():
                         game_over = True
                         game_over_winner = 'white'
                         game.log.append("YOU WIN！白の勝利")
+                        # ゲームオーバー時は昇格処理をクリア
+                        chess.promotion_pending = None
                         # 同時チェック状態をクリア
                         if globals().get('simul_check_active', False):
                             globals()['simul_check_active'] = False

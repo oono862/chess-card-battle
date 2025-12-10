@@ -889,6 +889,16 @@ def new_game_with_mode(mode: str):
         deck.shuffle()
         player = PlayerState(deck=deck)
         game = Game(player=player)
+        # Wrap game.log so appended messages are recorded into master_log too
+        try:
+            # preserve any existing entries
+            existing = list(getattr(game, 'log', []) or [])
+            game.log = LogList('game', existing)
+        except Exception:
+            try:
+                game.log = LogList('game')
+            except Exception:
+                pass
         # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
             player.reset_pp()
@@ -1073,7 +1083,37 @@ CPU_DIFFICULTY = 2
 _image_cache = {}
 card_rects = []  # カードのクリック判定用矩形リスト
 _piece_image_cache = {}
-chess_log = []  # チェス専用ログ（カード用の game.log と分離）
+# master_log: 全ログの時系列マスター（各ログ追加を一意の連番で記録）
+master_log = []  # list of tuples (seq:int, source:str, msg:str)
+_log_seq = 0
+
+
+class LogList(list):
+    """List wrapper that records appended messages into master_log with sequence IDs.
+
+    Behaves like a normal list for existing code, but intercepts append/extend to
+    also add entries to `master_log` for cross-list chronological ordering.
+    """
+    def __init__(self, name, initial=None):
+        super().__init__(initial or [])
+        self._name = name
+
+    def append(self, item):
+        global _log_seq, master_log
+        try:
+            _log_seq += 1
+            master_log.append((_log_seq, self._name, str(item)))
+            print(f"[DEBUG LogList] {self._name}.append: seq={_log_seq}, msg={str(item)[:50]}, master_log size={len(master_log)}")
+        except Exception as e:
+            print(f"[DEBUG LogList] {self._name}.append FAILED: {e}")
+        return super().append(item)
+
+    def extend(self, items):
+        for it in items:
+            self.append(it)
+
+
+chess_log = LogList('chess')  # チェス専用ログ（カード用の game.log と分離）
 
 # プレイ画面用背景画像の候補とキャッシュ
 PLAY_BG_FILENAME = "ChatGPT Image 2025年11月4日 11_12_06.png"
@@ -4694,17 +4734,24 @@ def ai_make_move():
         if ai_continuation:
             # This is an extra consecutive AI move; do not reset PP or draw.
             ai_continuation = False
+            print("[DEBUG] AI連続ターン: フラグリセットスキップ")
         else:
+            # AI ターン開始フラグをリセット（ドロー前に実行）
+            game._ai_turn_sep_added = False
+            print(f"[DEBUG] AIターン開始: _ai_turn_sep_added={game._ai_turn_sep_added}")
             ai_player.reset_pp()
             # draw 1 card if available and hand limit not exceeded
             if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
                 c = ai_player.deck.draw()
                 if c:
                     ai_player.hand.add(c)
-                    # AI ターン開始フラグをリセット
-                    game._ai_turn_sep_added = False
-                    game.log.append("  ─── AIターン ───")
+                    game.log.append("─── AIのターン ───")
                     game.log.append("AI: ターン開始で1枚ドローしました。")
+                    print("[DEBUG] AIドロー成功")
+            else:
+                # ドローしない場合でもAIターン開始を記録
+                game.log.append("─── AIのターン ───")
+                print("[DEBUG] AI手札満杯のためドローなし")
     except Exception:
         # defensive: ignore if ai_player not properly initialized
         pass
@@ -5125,11 +5172,14 @@ def ai_make_move():
     except Exception:
         src_r = src_c = None
     apply_move(p, mv[0], mv[1])
-    # AIの最初の駒移動に区切り線を追加（囲わず中央揃え）
-    if not hasattr(globals().get('game', None), '_ai_turn_sep_added'):
-        game.log.append("  ─── AIターン ───")
+    # AIの最初の駒移動に区切り線を追加
+    if not getattr(game, '_ai_turn_sep_added', False):
+        game.log.append("─── AIのターン ───")
         game._ai_turn_sep_added = True
-    game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
+        print(f"[DEBUG] AIターン開始ログ追加: _ai_turn_sep_added={game._ai_turn_sep_added}")
+    log_msg = f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動"
+    game.log.append(log_msg)
+    print(f"[DEBUG] AI駒移動ログ追加: {log_msg}, master_log size={len(master_log)}")
     # 移動アニメーションを開始する（移動元: 赤パルス、移動先: 青パルス、両者を矢印で結ぶ）
     try:
         ai_move_anim['active'] = True
@@ -6367,34 +6417,23 @@ def draw_panel():
         if active_view not in ('detail', 'piece', 'card'):
             active_view = 'detail'
 
+        # Use the chronological master_log for all views so entries are shown
+        # in the order they occurred instead of being grouped by source lists.
+        try:
+            # master_log is list of tuples (seq:int, source:str, msg:str)
+            timeline = list(master_log) if isinstance(master_log, list) else []
+            timeline.sort(key=lambda t: t[0])  # ensure chronological order
+        except Exception:
+            timeline = []
+
         if active_view == 'detail':
-            # 詳細ビュー: 全てのログを表示（ゲームログとチェスログを結合）
-            combined = []
-            try:
-                combined.extend(list(game.log))
-            except Exception:
-                pass
-            try:
-                combined.extend(list(chess_log))
-            except Exception:
-                pass
-            source_lines = combined
+            # 詳細ビュー: 全てのログを時系列で表示
+            source_lines = [t[2] for t in timeline]
         elif active_view == 'piece':
-            # 駒ビュー: 駒移動を示す行を含めるが、カードに関するログは除外する
-            # プレイヤーの駒移動はローカルな `chess_log` に記録されることがあるため
-            # `game.log` と `chess_log` を結合してフィルタする。
-            combined = []
-            try:
-                combined.extend(list(game.log))
-            except Exception:
-                pass
-            try:
-                combined.extend(list(chess_log))
-            except Exception:
-                pass
-            source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+            # 駒ビュー: マスタータイムラインから駒移動に関係する行のみ時系列で抽出
+            source_lines = [t[2] for t in timeline if _is_piece_line(t[2]) and (not _is_card_line(t[2]))]
         else:  # 'card'
-            source_lines = [l for l in game.log if _is_card_line(l)]
+            source_lines = [t[2] for t in timeline if _is_card_line(t[2])]
 
         # Debug: 描画ルートで現在のビューとフィルタ結果を端末に出力（診断用の一時出力）
         # try:
@@ -7302,7 +7341,12 @@ def start_player_turn(ai_end_msg: str = None):
             non_draw_new = [e for e in new_entries if e not in draw_entries]
             # rebuild game.log keeping only non-draw new entries (we will NOT append draw_entries or the AI-end message)
             try:
-                game.log = game.log[:prev_log_len] + non_draw_new
+                # game.logをLogListのまま維持するため、インプレースで削除と追加を行う
+                # まず、prev_log_len以降のエントリを削除
+                del game.log[prev_log_len:]
+                # 次に、non_draw_newを追加（appendを使って master_log にも記録）
+                for entry in non_draw_new:
+                    game.log.append(entry)
             except Exception:
                 # fallback: if direct assignment fails, leave as-is
                 pass
@@ -7331,8 +7375,8 @@ def attempt_start_turn():
     if getattr(game, 'pending', None) is not None:
         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
         return
-    # ターン開始時に区切り線を表示（中婴揃え、囲まなし）
-    game.log.append("  ─── 自分のターン ───")
+    # ターン開始時に区切り線を表示
+    game.log.append("─── 自分のターン ───")
     # 既に開始済み
     if getattr(game, 'turn_active', False):
         game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
@@ -8135,7 +8179,7 @@ def handle_mouse_click(pos):
                         except Exception:
                             pass
                         game.log.append(f"『灼熱』を使用しました: {(row,col)} を中心に3x3の範囲を {turns} ターン封鎖")
-                        game.log.append(f"封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
+                        game.log.append(f"『灼熱』による封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
                     game.pending = None
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
@@ -8150,7 +8194,7 @@ def handle_mouse_click(pos):
                         # toggle off
                         sel.remove((row, col))
                         game.pending.info['selected'] = sel
-                        game.log.append(f"封鎖候補から {(row,col)} を解除 ({len(sel)}/{tmax})")
+                        game.log.append(f"『灼熱』: 封鎖候補から {(row,col)} を解除 ({len(sel)}/{tmax})")
                         return
                     else:
                         # add if room
@@ -8163,7 +8207,7 @@ def handle_mouse_click(pos):
                         except Exception:
                             pass
                         game.pending.info['selected'] = sel
-                        game.log.append(f"封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
+                        game.log.append(f"『灼熱』: 封鎖候補に {(row,col)} を追加 ({len(sel)}/{tmax})")
                         # APPLY only when reached required count
                         if len(sel) >= tmax:
                             turns = game.pending.info.get('turns', 2)
@@ -8176,7 +8220,7 @@ def handle_mouse_click(pos):
                             if blocked_count > 0:
                                 game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
                             game.pending = None
-                            game.log.append(f"封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             game.pending = None
                         return
                 else:
@@ -8451,7 +8495,9 @@ def handle_mouse_click(pos):
                     name = selected_piece.name
                 except Exception:
                     name = selected_piece.get('name', str(selected_piece)) if isinstance(selected_piece, dict) else str(selected_piece)
-                chess_log.append(f"{name} を {(row,col)} へ移動")
+                log_msg = f"{name} を {(row,col)} へ移動"
+                chess_log.append(log_msg)
+                print(f"[DEBUG] プレイヤー駒移動ログ追加: {log_msg}, master_log size={len(master_log)}")
                 
                 # 駒移動直後はキング存在チェック（即座に勝敗判定）
                 # 迅雷使用中もそうでない場合も、駒移動直後に判定
@@ -9521,6 +9567,7 @@ def main_loop():
                     cpu_wait_start = time.time()
                 else:
                     # no extra AI turns -> restore player turn
+                    game.log.append("─── AIのターン終了 ───")
                     cpu_wait = False
                     chess_current_turn = 'white'
                     # プレイヤーターン開始テロップを1秒表示

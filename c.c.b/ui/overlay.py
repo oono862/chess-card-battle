@@ -329,23 +329,50 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # ログの折り返し処理
         # 指定されたビューにフィルタしてから、各ログ行をAI/プレイヤーで分類して折り返す
         # より寛容な駒移動判定（AI/プレイヤー問わず駒の移動ログを検出する）
-        def _is_piece_line(s):
+        def _is_card_line(s):
+            """カード関連のログかどうかを判定（ギミックカード効果を含む）
+            
+            優先順位:
+            1. 迅雷の追加移動は駒行として扱う（False返却）
+            2. ギミックカード効果は全てカード行として扱う（True返却）
+            """
             try:
                 ss = str(s)
-                # 一部のログは短い表現や句読点で揺れるので正規表現で幅広くマッチさせる
-                # - 「移動」「飛び越」などのキーワード
-                # - 矢印や -> 記号
-                # - 座標形式の (x, y)
-                # - 「駒」や「マス」など、駒操作を示唆する語
-                _piece_re = re.compile(r"移動|飛び越|→|->|\(\s*\d+\s*,\s*\d+\s*\)|駒|マス", re.UNICODE)
-                return bool(_piece_re.search(ss))
-            except Exception:
+                # 迅雷の追加移動ログは駒ビューに表示するため、カード行として扱わない
+                # 「迅雷」と「移動」の両方を含む場合のみ駒行とする
+                if '迅雷' in ss and '移動' in ss:
+                    return False
+                
+                # ギミックカード名を含む場合は全てカード行（迅雷の移動以外）
+                # AIのログもプレイヤーのログも同様に判定
+                gimmick_cards = ['氷結', '灼熱', '暴風', '迅雷', '鉄壁', '蘇生', '2ドロー', '3ドロー', '摂取', '錬成', '墓地ルーレット', '負けるわけないだろ']
+                for card in gimmick_cards:
+                    if card in ss:
+                        return True
+                
+                # カード関連のキーワード（AIのログも含む）
+                card_keywords = ['『', 'カード', 'ドロー', '使用', '墓地', 'ギミック', '封鎖', '凍結', '効果', '適用', '解除', 'マスの封鎖', 'で封鎖マス', 'を凍結', 'ターン凍結']
+                for kw in card_keywords:
+                    if kw in ss:
+                        return True
+                
+                return False
+            except Exception as e:
+                # デバッグ用: エラーが発生した場合は出力
+                print(f"[_is_card_line error] {e}")
                 return False
 
-        def _is_card_line(s):
+        def _is_piece_line(s):
+            """駒の移動に関するログかどうかを判定（純粋に移動パターンのみ）
+            
+            「移動」「飛び越」を含むログのみを駒行として判定
+            """
             try:
                 ss = str(s)
-                return ('『' in ss) or ('カード' in ss) or ('ドロー' in ss) or ('使用' in ss) or ('墓地' in ss) or ('ギミック' in ss)
+                # 駒移動の典型的なパターン：「移動」「飛び越」
+                if '移動' in ss or '飛び越' in ss:
+                    return True
+                return False
             except Exception:
                 return False
 
@@ -355,41 +382,110 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
 
         source_lines = []
         if active_view == 'detail':
-            source_lines = list(game.log)
-        elif active_view == 'piece':
-            # 駒ビュー: 駒移動を示す行を含めるが、カード関連のログは除外する
-            # ゲーム実装により駒移動ログは `game.log` ではなくグローバルな `chess_log`
-            # に記録されることがあるため、両方を参照して結合する。
-            combined = []
+            # Use master_log from CardGame if available to preserve chronological order
             try:
-                combined.extend(list(game.log))
-            except Exception:
-                pass
-            # try to include chess_log from the game object if present
-            try:
-                if hasattr(game, 'chess_log'):
-                    combined.extend(list(getattr(game, 'chess_log', [])))
+                import importlib
+                cg = importlib.import_module('c.c.b.CardGame')
+                ml = getattr(cg, 'master_log', None)
+                if ml:
+                    # master_log stores tuples (seq, source, msg)
+                    source_lines = [t[2] for t in ml]
                 else:
-                    # fallback: try importing CardGame module to access its chess_log global
+                    # fallback to merging game.log and chess_log
+                    combined = []
                     try:
-                        import importlib
-                        cg = importlib.import_module('c.c.b.CardGame')
-                        combined.extend(list(getattr(cg, 'chess_log', [])))
+                        combined.extend(list(game.log))
                     except Exception:
                         pass
+                    try:
+                        cg_ch = getattr(cg, 'chess_log', None)
+                        if cg_ch:
+                            combined.extend(list(cg_ch))
+                    except Exception:
+                        pass
+                    source_lines = combined
             except Exception:
-                pass
-            source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+                try:
+                    source_lines = list(game.log)
+                except Exception:
+                    source_lines = []
+        elif active_view == 'piece':
+            # 駒ビュー: master_log が利用可能ならそれを時系列ソースとして使う。
+            # そうすることでプレイヤー/AI を分離せず、実際の発生順に表示される。
+            try:
+                import importlib
+                cg = importlib.import_module('c.c.b.CardGame')
+                ml = getattr(cg, 'master_log', None)
+                if ml:
+                    # master_log stores tuples (seq, source, msg)
+                    # seqでソートして時系列順を保証
+                    sorted_ml = sorted(ml, key=lambda t: t[0])
+                    # フィルタリング：カード行を優先的に除外
+                    source_lines = []
+                    for t in sorted_ml:
+                        msg = t[2]
+                        # まずカード行かどうかをチェック
+                        if _is_card_line(msg):
+                            # カード行なので駒ビューには含めない
+                            continue
+                        # 次に駒行かどうかをチェック
+                        if _is_piece_line(msg):
+                            source_lines.append(msg)
+                else:
+                    # fallback to merging game.log and chess_log (best-effort)
+                    combined = []
+                    try:
+                        combined.extend(list(game.log))
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(game, 'chess_log'):
+                            combined.extend(list(getattr(game, 'chess_log', [])))
+                        else:
+                            try:
+                                combined.extend(list(getattr(cg, 'chess_log', [])))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+            except Exception:
+                # final fallback
+                try:
+                    combined = []
+                    combined.extend(list(game.log))
+                    source_lines = [l for l in combined if _is_piece_line(l) and (not _is_card_line(l))]
+                except Exception:
+                    source_lines = []
         else:  # 'card'
-            source_lines = [l for l in game.log if _is_card_line(l)]
+            # Prefer master_log so card entries from any source appear
+            try:
+                import importlib
+                cg = importlib.import_module('c.c.b.CardGame')
+                ml = getattr(cg, 'master_log', None)
+                if ml:
+                    source_lines = [t[2] for t in ml if _is_card_line(t[2])]
+                else:
+                    source_lines = [l for l in game.log if _is_card_line(l)]
+            except Exception:
+                source_lines = [l for l in game.log if _is_card_line(l)]
 
         # Debug: 出力先の端末に現在のビューとフィルタ結果を表示（自動診断用の一時的ログ）
         try:
-            # 表示される最初の数行をサンプル表示（長いログを避ける）
-            sample = source_lines[:3]
-            print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
-        except Exception:
-            pass
+            if active_view == 'piece':
+                # 駒ビューの場合、詳細なデバッグ情報を出力
+                print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)}")
+                # 最初の10行を表示して順序を確認し、カード判定も表示
+                for idx, line in enumerate(source_lines[:10]):
+                    kind = 'AI' if line.startswith('AI') or 'AI(' in line else 'Player'
+                    is_card = _is_card_line(line)
+                    is_piece = _is_piece_line(line)
+                    print(f"  [{idx}] {kind}: card={is_card} piece={is_piece} {line[:60]}")
+            else:
+                sample = source_lines[:3]
+                print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
+        except Exception as e:
+            print(f"[overlay-debug] error: {e}")
 
         wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
         # reduce wrap width to avoid lines overflowing the panel; leave more
@@ -430,13 +526,20 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                 wrapped_lines.append((wline, kind, piece_letter))
 
         # スクロールオフセットの範囲制限
-        # 行高さは現在のフォントから取得し、各文章ごとに1行分の余白を入れる
+        # 行高さは現在のフォントから取得
         line_h = FONT.get_height()
-        # 表示行のステップはテキスト行 + 空行分（＝行高 * 2）
-        line_step = line_h * 2
-        # 下部に余白を設けて見やすくする（最後の行が枠にくっつかないように）
-        bottom_padding_px = 28  # ここを調整すると余白サイズを変更できます
-        max_lines_visible = max(0, (log_panel_height - 50 - bottom_padding_px) // line_step)
+        # 表示行のステップはテキスト行 + 小さな余白（行高より少し広め）
+        line_step = line_h + 6
+        # 下部に最小限の余白を設ける（最後の行が枠にくっつかないように）
+        bottom_padding_px = 8
+
+        # ログ描画開始位置（見出しとヒントの下）
+        # 先ほどタイトルやヒントを描画したオフセット分だけ下げる
+        log_y = log_panel_top + 56 + top_line_h
+
+        # 利用可能高さを正確に計算して表示行数を決定する
+        available_h = (log_panel_top + log_panel_height) - log_y - bottom_padding_px
+        max_lines_visible = max(0, available_h // line_step)
         total_wrapped = len(wrapped_lines)
         max_scroll = max(0, total_wrapped - max_lines_visible)
         log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
@@ -448,10 +551,6 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
             start_idx = total_wrapped - max_lines_visible - log_scroll_offset
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
-
-        # ログ描画開始位置（見出しとヒントの下）
-        # 先ほどタイトルの上に1行分の余白を入れたので、描画開始位置も同じ分だけ下げる
-        log_y = log_panel_top + 56 + top_line_h
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4

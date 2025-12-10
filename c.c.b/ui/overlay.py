@@ -460,7 +460,17 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         log_icon_rects = []
 
         for wline, kind, piece_letter in visible_lines:
-            if log_y < log_panel_top + log_panel_height - bottom_padding_px:
+                if log_y < log_panel_top + log_panel_height - bottom_padding_px:
+                    # Restrict drawing to the interior of the log panel so
+                    # decorative lines / long text cannot draw outside the panel.
+                    try:
+                        old_clip = screen.get_clip()
+                        clip_rect = pygame.Rect(log_panel_left + 2, log_panel_top + 2,
+                                               max(0, log_panel_width - 4),
+                                               max(0, log_panel_height - 4))
+                        screen.set_clip(clip_rect)
+                    except Exception:
+                        old_clip = None
                 # テキストサーフェスを作成して幅を測る
                 try:
                     text_surf = FONT.render(wline, True, (30, 30, 30))
@@ -492,6 +502,14 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                     # adjust background width to include icon if present
                     bw = tw + pad_x * 2 + (icon_w + 6 if icon_w else 0)
                     bh = th + pad_y * 2
+                    # Ensure the background box does not overflow the log panel
+                    max_bw = max(40, log_panel_width - 20)
+                    if bw > max_bw:
+                        bw = max_bw
+                    # If bw was reduced, adjust bx so the box still fits
+                    if bx + bw > log_panel_left + log_panel_width - 6:
+                        bw = max(8, log_panel_left + log_panel_width - 6 - bx)
+
                     pygame.draw.rect(screen, (255, 230, 230), (bx, by, bw, bh))
                     pygame.draw.rect(screen, (200, 140, 140), (bx, by, bw, bh), 1)
                     # draw icon (left of text) if available
@@ -513,7 +531,19 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                             tx += icon_w + 6
                         except Exception:
                             pass
-                    screen.blit(text_surf, (tx, log_y))
+                    # Clip text if it would overflow the background box
+                    try:
+                        allowed_text_w = bw - pad_x * 2 - (icon_w + 6 if icon_w else 0)
+                        if allowed_text_w < 0:
+                            allowed_text_w = 0
+                        if text_surf.get_width() > allowed_text_w and allowed_text_w > 0:
+                            clipped = pygame.Surface((int(allowed_text_w), th), pygame.SRCALPHA)
+                            clipped.blit(text_surf, (0, 0))
+                            screen.blit(clipped, (tx, log_y))
+                        else:
+                            screen.blit(text_surf, (tx, log_y))
+                    except Exception:
+                        screen.blit(text_surf, (tx, log_y))
                 else:
                     # プレイヤー/右揃え、薄水色背景
                     # compute background width first (include icon if present)
@@ -521,6 +551,17 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                     bx = log_panel_left + log_panel_width - 10 - bw
                     by = log_y - pad_y
                     bh = th + pad_y * 2
+                    # Prevent the box from extending outside the panel
+                    max_bw = max(40, log_panel_width - 20)
+                    if bw > max_bw:
+                        bw = max_bw
+                        bx = log_panel_left + log_panel_width - 10 - bw
+                    # ensure left edge does not go past panel left
+                    if bx < log_panel_left + 6:
+                        bx = log_panel_left + 6
+                        # if we had to shift bx, recompute bw to fit
+                        bw = log_panel_left + log_panel_width - 10 - bx
+
                     pygame.draw.rect(screen, (220, 240, 255), (bx, by, bw, bh))
                     pygame.draw.rect(screen, (140, 170, 200), (bx, by, bw, bh), 1)
                     # for right-aligned, text is placed inside the box; icon should be left of text
@@ -541,10 +582,32 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                             tx += icon_w + 6
                         except Exception:
                             pass
-                    screen.blit(text_surf, (tx, log_y))
+                    # Clip text if it would overflow the background box
+                    try:
+                        allowed_text_w = bw - pad_x * 2 - (icon_w + 6 if icon_w else 0)
+                        if allowed_text_w < 0:
+                            allowed_text_w = 0
+                        if text_surf.get_width() > allowed_text_w and allowed_text_w > 0:
+                            clipped = pygame.Surface((int(allowed_text_w), th), pygame.SRCALPHA)
+                            clipped.blit(text_surf, (0, 0))
+                            screen.blit(clipped, (tx, log_y))
+                        else:
+                            screen.blit(text_surf, (tx, log_y))
+                    except Exception:
+                        screen.blit(text_surf, (tx, log_y))
 
                 # 次の文章は空行を挟んで描画する
                 log_y += line_step
+
+                # restore clip
+                try:
+                    if old_clip is not None:
+                        screen.set_clip(old_clip)
+                except Exception:
+                    try:
+                        screen.set_clip(None)
+                    except Exception:
+                        pass
 
         # スクロールバー表示
         if max_scroll > 0:

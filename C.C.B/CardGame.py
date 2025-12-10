@@ -4703,7 +4703,7 @@ def ai_make_move():
                     ai_player.hand.add(c)
                     # AI ターン開始フラグをリセット
                     game._ai_turn_sep_added = False
-                    game.log.append("    ───── AIのターン ─────")
+                    game.log.append("  ─── AIターン ───")
                     game.log.append("AI: ターン開始で1枚ドローしました。")
     except Exception:
         # defensive: ignore if ai_player not properly initialized
@@ -5127,7 +5127,7 @@ def ai_make_move():
     apply_move(p, mv[0], mv[1])
     # AIの最初の駒移動に区切り線を追加（囲わず中央揃え）
     if not hasattr(globals().get('game', None), '_ai_turn_sep_added'):
-        game.log.append("    ───── AIのターン ─────")
+        game.log.append("  ─── AIターン ───")
         game._ai_turn_sep_added = True
     game.log.append(f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動")
     # 移動アニメーションを開始する（移動元: 赤パルス、移動先: 青パルス、両者を矢印で結ぶ）
@@ -7332,7 +7332,7 @@ def attempt_start_turn():
         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
         return
     # ターン開始時に区切り線を表示（中婴揃え、囲まなし）
-    game.log.append("    ───── 自分のターン ─────")
+    game.log.append("  ─── 自分のターン ───")
     # 既に開始済み
     if getattr(game, 'turn_active', False):
         game.log.append("既にターンが開始されています。カードや駒の操作を行ってください。")
@@ -8640,7 +8640,7 @@ def handle_mouse_click(pos):
                     import time
                     global cpu_wait, cpu_wait_start
                     # プレイヤーターン終了の区切り線を表示（横いっぱいに「─」で埋める）
-                    game.log.append("───── 自分のターン終了 ─────")
+                    game.log.append("─── 自分のターン終了 ───")
                     cpu_wait = True
                     cpu_wait_start = time.time()
             else:

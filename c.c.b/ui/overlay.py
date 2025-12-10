@@ -351,6 +351,7 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                         return True
                 
                 # カード関連のキーワード（AIのログも含む）
+                # 「封鎖」「凍結」は必ずカード行として判定
                 card_keywords = ['『', 'カード', 'ドロー', '使用', '墓地', 'ギミック', '封鎖', '凍結', '効果', '適用', '解除', 'マスの封鎖', 'で封鎖マス', 'を凍結', 'ターン凍結']
                 for kw in card_keywords:
                     if kw in ss:
@@ -366,9 +367,18 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
             """駒の移動に関するログかどうかを判定（純粋に移動パターンのみ）
             
             「移動」「飛び越」を含むログのみを駒行として判定
+            ただし、カード行として判定されるログは除外
             """
             try:
                 ss = str(s)
+                # まず、カード行かどうかをチェック
+                # カード行であれば、たとえ「移動」を含んでいても駒行ではない
+                if _is_card_line(ss):
+                    # 例外: 迅雷の追加移動のみ許可
+                    if '迅雷' in ss and '移動' in ss:
+                        return True
+                    return False
+                
                 # 駒移動の典型的なパターン：「移動」「飛び越」
                 if '移動' in ss or '飛び越' in ss:
                     return True

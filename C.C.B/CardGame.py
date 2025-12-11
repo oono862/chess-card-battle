@@ -784,7 +784,7 @@ def _debug_report_anim_scales(context_label: str = ''):
         except Exception:
             vals['imported_animation'] = None
         try:
-            print(f"DEBUG_ANIM_SCALES {context_label}: {vals}")
+            logger.debug("DEBUG_ANIM_SCALES %s: %s", context_label, vals)
         except Exception:
             pass
     except Exception:
@@ -815,6 +815,8 @@ show_log = False  # ログ表示切替（デフォルト非表示）
 log_scroll_offset = 0  # ログスクロール用オフセット（0=最新）
 enlarged_card_index = None  # 拡大表示中のカードインデックス（None=非表示）
 enlarged_card_name = None  # 墓地など手札以外の拡大表示用カード名（未定義での参照を防止）
+enlarged_card_scale = 1.0  # 拡大表示のスケール倍率（1.0=デフォルトサイズ）
+enlarged_card_mouse_y = None  # 拡大表示開始時のマウスY座標
 show_opponent_hand = False  # 相手の手札表示切替（デフォルト非表示）
 # モジュールローカルのログビュー（overlayモジュールの複数ロード問題対策）
 current_log_view = 'detail'
@@ -1103,9 +1105,9 @@ class LogList(list):
         try:
             _log_seq += 1
             master_log.append((_log_seq, self._name, str(item)))
-            print(f"[DEBUG LogList] {self._name}.append: seq={_log_seq}, msg={str(item)[:50]}, master_log size={len(master_log)}")
+            logger.debug("[DEBUG LogList] %s.append: seq=%s, msg=%s, master_log size=%d", self._name, _log_seq, str(item)[:50], len(master_log))
         except Exception as e:
-            print(f"[DEBUG LogList] {self._name}.append FAILED: {e}")
+            logger.debug("[DEBUG LogList] %s.append FAILED: %s", self._name, e)
         return super().append(item)
 
     def extend(self, items):
@@ -1193,8 +1195,40 @@ notice_until = 0.0
 
 def restart_game():
     """ゲームを初期状態にリセットして再戦する"""
-    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
+    global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait, game, ai_player
     global log_scroll_offset
+
+    # Clear previous logs so rematch/difficulty-change starts with fresh logs
+    try:
+        global master_log, _log_seq, chess_log
+        # clear master and per-list logs
+        try:
+            master_log.clear()
+        except Exception:
+            master_log = []
+        try:
+            _log_seq = 0
+        except Exception:
+            _log_seq = 0
+        try:
+            if 'chess_log' in globals() and getattr(chess_log, 'clear', None):
+                chess_log.clear()
+        except Exception:
+            pass
+        try:
+            if 'game' in globals() and game is not None and getattr(game, 'log', None):
+                try:
+                    game.log.clear()
+                except Exception:
+                    # replace with fresh LogList
+                    try:
+                        game.log = LogList('game')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    except Exception:
+        pass
     
     # チェス盤を初期配置に（盤リセットは共通処理に任せる）
     try:
@@ -1223,7 +1257,6 @@ def restart_game():
     cpu_wait = False
 
     # カードゲーム部分もリセット
-    global game, ai_player
 
     # ユーザー要望: 再戦時は確認モーダルを表示せず、直前に使っていたデッキをそのまま使う
     try:
@@ -1396,6 +1429,36 @@ def _prepare_new_battle_after_deck_already_selected():
     selected_piece = None
     highlight_squares = []
     cpu_wait = False
+
+    # Also ensure logs are reset for the new battle
+    try:
+        global master_log, _log_seq, chess_log
+        try:
+            master_log.clear()
+        except Exception:
+            master_log = []
+        try:
+            _log_seq = 0
+        except Exception:
+            _log_seq = 0
+        try:
+            if getattr(chess_log, 'clear', None):
+                chess_log.clear()
+        except Exception:
+            pass
+        try:
+            if game is not None and getattr(game, 'log', None):
+                try:
+                    game.log.clear()
+                except Exception:
+                    try:
+                        game.log = LogList('game')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     # Reset card/chess-effect state on the Game object so lingering tiles/auras are cleared
     try:
@@ -1979,7 +2042,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                 try:
                     logger.info(f"anim modal MOUSEBUTTONDOWN at {mx},{my}")
                 except Exception:
-                    print(f"anim modal MOUSEBUTTONDOWN at {mx},{my}")
+                    logger.debug("anim modal MOUSEBUTTONDOWN at %d,%d", mx, my)
                 # Back button click (画面下部の「戻る」)
                 back_chk = pygame.Rect(20, H - 70, 120, 50)
                 if back_chk.collidepoint(mx, my):
@@ -3835,7 +3898,7 @@ def show_animation_settings_screen(screen):
                 try:
                     logger.info(f"anim modal MOUSEBUTTONDOWN at {mx},{my} ; fast_rect={fast_rect} slow_rect={slow_rect}")
                 except Exception:
-                    print(f"anim modal MOUSEBUTTONDOWN at {mx},{my} ; fast_rect={fast_rect} slow_rect={slow_rect}")
+                    logger.debug("anim modal MOUSEBUTTONDOWN at %d,%d ; fast_rect=%s slow_rect=%s", mx, my, fast_rect, slow_rect)
 
                 if fast_rect.collidepoint(mx, my):
                     try:
@@ -4027,7 +4090,7 @@ def show_animation_settings_screen(screen):
                                             save_user_anim_scale(float(slow_scale))
                                         except Exception:
                                             pass
-                                        print(f"set_anim_time_scale -> {slow_scale} (via import)")
+                                        logger.debug("set_anim_time_scale -> %s (via import)", slow_scale)
                                     else:
                                         try:
                                             setattr(mod, 'ANIM_TIME_SCALE', float(slow_scale))
@@ -4041,7 +4104,7 @@ def show_animation_settings_screen(screen):
                                                 save_user_anim_scale(float(slow_scale))
                                             except Exception:
                                                 pass
-                                            print(f"ANIM_TIME_SCALE set -> {slow_scale} (via import setattr)")
+                                            logger.debug("ANIM_TIME_SCALE set -> %s (via import setattr)", slow_scale)
                                         except Exception:
                                             pass
                                     try:
@@ -4065,7 +4128,7 @@ def show_animation_settings_screen(screen):
                             if il and hasattr(il, '_gif_animation_cache'):
                                 try:
                                     il._gif_animation_cache.clear()
-                                    print('image_loader: gif cache cleared')
+                                    logger.debug('image_loader: gif cache cleared')
                                 except Exception:
                                     pass
                         except Exception:
@@ -4080,20 +4143,20 @@ def show_animation_settings_screen(screen):
                                         if hasattr(mod, 'set_anim_time_scale'):
                                             try:
                                                 mod.set_anim_time_scale(slow_scale)
-                                                print(f"set_anim_time_scale -> {slow_scale} (via sys.modules {name})")
+                                                logger.debug("set_anim_time_scale -> %s (via sys.modules %s)", slow_scale, name)
                                             except Exception:
                                                 pass
                                         else:
                                             try:
                                                 setattr(mod, 'ANIM_TIME_SCALE', float(slow_scale))
-                                                print(f"ANIM_TIME_SCALE set -> {slow_scale} (via sys.modules {name})")
+                                                logger.debug("ANIM_TIME_SCALE set -> %s (via sys.modules %s)", slow_scale, name)
                                             except Exception:
                                                 pass
                                     if mf and mf.replace('/', os.sep).endswith(os.path.join('assets', 'image_loader.py')):
                                         if hasattr(mod, '_gif_animation_cache'):
                                             try:
                                                 mod._gif_animation_cache.clear()
-                                                print(f"image_loader: gif cache cleared (via sys.modules {name})")
+                                                logger.debug("image_loader: gif cache cleared (via sys.modules %s)", name)
                                             except Exception:
                                                 pass
                                 except Exception:
@@ -4217,7 +4280,7 @@ def show_animation_settings_screen(screen):
             try:
                 logger.debug(f"animation radios drawn: cur_scale={cur_scale:.3f} fast={fast_scale:.3f} slow={slow_scale:.3f}")
             except Exception:
-                print(f"animation radios drawn: cur_scale={cur_scale} fast={fast_scale} slow={slow_scale}")
+                logger.debug("animation radios drawn: cur_scale=%s fast=%s slow=%s", cur_scale, fast_scale, slow_scale)
         except Exception:
             pass
 
@@ -4734,11 +4797,11 @@ def ai_make_move():
         if ai_continuation:
             # This is an extra consecutive AI move; do not reset PP or draw.
             ai_continuation = False
-            print("[DEBUG] AI連続ターン: フラグリセットスキップ")
+            logger.debug("AI連続ターン: フラグリセットスキップ")
         else:
             # AI ターン開始フラグをリセット（ドロー前に実行）
             game._ai_turn_sep_added = False
-            print(f"[DEBUG] AIターン開始: _ai_turn_sep_added={game._ai_turn_sep_added}")
+            logger.debug("AIターン開始: _ai_turn_sep_added=%s", getattr(game, '_ai_turn_sep_added', None))
             ai_player.reset_pp()
             # draw 1 card if available and hand limit not exceeded
             if len(ai_player.hand.cards) < getattr(ai_player, 'hand_limit', 7):
@@ -4747,11 +4810,11 @@ def ai_make_move():
                     ai_player.hand.add(c)
                     game.log.append("─── AIのターン ───")
                     game.log.append("AI: ターン開始で1枚ドローしました。")
-                    print("[DEBUG] AIドロー成功")
+                    logger.debug("AIドロー成功")
             else:
                 # ドローしない場合でもAIターン開始を記録
                 game.log.append("─── AIのターン ───")
-                print("[DEBUG] AI手札満杯のためドローなし")
+                logger.debug("AIドロースキップ: 手札満杯")
     except Exception:
         # defensive: ignore if ai_player not properly initialized
         pass
@@ -5176,10 +5239,10 @@ def ai_make_move():
     if not getattr(game, '_ai_turn_sep_added', False):
         game.log.append("─── AIのターン ───")
         game._ai_turn_sep_added = True
-        print(f"[DEBUG] AIターン開始ログ追加: _ai_turn_sep_added={game._ai_turn_sep_added}")
+        logger.debug("AIターン開始ログ追加: _ai_turn_sep_added=%s", getattr(game, '_ai_turn_sep_added', None))
     log_msg = f"AI({CPU_DIFFICULTY}): {p.name} を {mv} に移動"
     game.log.append(log_msg)
-    print(f"[DEBUG] AI駒移動ログ追加: {log_msg}, master_log size={len(master_log)}")
+    logger.debug("AI駒移動ログ追加: %s, master_log size=%d", log_msg, len(master_log))
     # 移動アニメーションを開始する（移動元: 赤パルス、移動先: 青パルス、両者を矢印で結ぶ）
     try:
         ai_move_anim['active'] = True
@@ -5195,7 +5258,7 @@ def ai_make_move():
             scale = 1.0
         ai_move_anim['duration'] = base_ai_move_duration * scale
         try:
-            print(f"DEBUG: ai_move_anim set duration -> base={base_ai_move_duration} scale={scale} duration={ai_move_anim['duration']}")
+            logger.debug("ai_move_anim set duration -> base=%s scale=%s duration=%s", base_ai_move_duration, scale, ai_move_anim.get('duration'))
         except Exception:
             pass
         try:
@@ -6127,16 +6190,16 @@ def draw_panel():
                 # 自動発動の条件を満たす場合は先に試行
                 can_auto_no_lose_exists = hasattr(game, 'can_auto_no_lose')
                 if not can_auto_no_lose_exists:
-                    game.log.append("[DEBUG] can_auto_no_lose が未定義です")
+                    logger.debug("can_auto_no_lose is not defined")
                 can_auto = can_auto_no_lose_exists and game.can_auto_no_lose(color)
                 if not can_auto:
-                    # 失敗理由の詳細を記録（手札・PPの状況を抜粋）
+                    # 失敗理由の詳細を記録（手札・PPの状況を抜粋） - debug only
                     try:
                         pp = getattr(game.player, 'pp_current', None)
                         hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
-                        game.log.append(f"[DEBUG] 自動発動不可: color={color}, PP={pp}, 手札={hand_names}")
+                        logger.debug("自動発動不可: color=%s, PP=%s, 手札=%s", color, pp, hand_names)
                     except Exception:
-                        game.log.append(f"[DEBUG] 自動発動不可: color={color} 詳細取得に失敗")
+                        logger.debug("自動発動不可: color=%s 詳細取得に失敗", color)
                 
                 auto_triggered = False
                 if can_auto and hasattr(game, 'auto_trigger_no_lose'):
@@ -6146,7 +6209,7 @@ def draw_panel():
                         # 自動発動成功時はゲームオーバーにせず、次の描画サイクルでpending処理に委ねる
                         auto_triggered = True
                     else:
-                        game.log.append("[DEBUG] auto_trigger_no_lose が False を返しました")
+                        logger.debug("auto_trigger_no_lose returned False for color=%s", color)
                 
                 # 自動発動に成功しなかった場合のみゲームオーバー
                 if not auto_triggered:
@@ -7011,9 +7074,11 @@ def draw_panel():
     if enlarged_card_index is not None and 0 <= enlarged_card_index < len(game.player.hand.cards):
         c = game.player.hand.cards[enlarged_card_index]
         
-        # 拡大カードサイズ
-        enlarged_w = 300
-        enlarged_h = 420
+        # 拡大カードサイズ（スケール倍率を適用）
+        base_w = 300
+        base_h = 420
+        enlarged_w = int(base_w * enlarged_card_scale)
+        enlarged_h = int(base_h * enlarged_card_scale)
         enlarged_x = (W - enlarged_w) // 2
         enlarged_y = (H - enlarged_h) // 2
         
@@ -7026,10 +7091,16 @@ def draw_panel():
         # 拡大画像のみ表示
         large_img = get_card_image(c.name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
+        
+        # 拡大率表示（デバッグ用）
+        scale_text = SMALL.render(f"拡大率: {enlarged_card_scale:.1f}x (マウスを上下に動かして調整)", True, (255, 255, 255))
+        screen.blit(scale_text, (10, H - 30))
     elif enlarged_card_name is not None:
         # 手札以外（例: 墓地）からの拡大表示
-        enlarged_w = 300
-        enlarged_h = 420
+        base_w = 300
+        base_h = 420
+        enlarged_w = int(base_w * enlarged_card_scale)
+        enlarged_h = int(base_h * enlarged_card_scale)
         enlarged_x = (W - enlarged_w) // 2
         enlarged_y = (H - enlarged_h) // 2
 
@@ -7040,6 +7111,10 @@ def draw_panel():
 
         large_img = get_card_image(enlarged_card_name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
+        
+        # 拡大率表示
+        scale_text = SMALL.render(f"拡大率: {enlarged_card_scale:.1f}x (マウスを上下に動かして調整)", True, (255, 255, 255))
+        screen.blit(scale_text, (10, H - 30))
 
     # 保留中操作の説明オーバーレイ（捨て札選択、ターゲット指定等）
     if getattr(game, 'pending', None) is not None:
@@ -7435,7 +7510,7 @@ def attempt_start_turn():
 
 
 def handle_keydown(key):
-    global log_scroll_offset, show_log, enlarged_card_index, notice_msg, notice_until, show_grave, show_opponent_hand, current_log_view
+    global log_scroll_offset, show_log, enlarged_card_index, enlarged_card_scale, enlarged_card_mouse_y, notice_msg, notice_until, show_grave, show_opponent_hand, current_log_view
     
     # ゲーム終了時のキー操作
     if game_over:
@@ -7772,7 +7847,7 @@ def handle_keydown(key):
 
 def handle_mouse_click(pos):
     """マウスクリック時の処理"""
-    global enlarged_card_index, enlarged_card_name, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand, notice_msg, notice_until, game_over
+    global enlarged_card_index, enlarged_card_name, enlarged_card_scale, enlarged_card_mouse_y, selected_piece, highlight_squares, chess_current_turn, show_grave, show_opponent_hand, notice_msg, notice_until, game_over
     
     # ゲーム終了画面のボタン処理
     if game_over:
@@ -7890,20 +7965,28 @@ def handle_mouse_click(pos):
                             game.log.append("カード使用に失敗しました。")
                 # close enlarged after activation/click
                 enlarged_card_index = None
+                enlarged_card_scale = 1.0
+                enlarged_card_mouse_y = None
                 return
             else:
                 # Not activating (e.g. double-click mode but this was a single click): just close overlay
                 enlarged_card_index = None
                 enlarged_card_name = None
+                enlarged_card_scale = 1.0
+                enlarged_card_mouse_y = None
                 return
         # clicking anywhere when enlarged closes it
         enlarged_card_index = None
         enlarged_card_name = None
+        enlarged_card_scale = 1.0
+        enlarged_card_mouse_y = None
         return
     elif enlarged_card_name is not None:
         # for non-hand enlarged name (grave, etc.), a click closes the overlay
         enlarged_card_index = None
         enlarged_card_name = None
+        enlarged_card_scale = 1.0
+        enlarged_card_mouse_y = None
         return
 
     # 2) 次点: ラベルのクリックで墓地/相手手札の開閉（互いに排他）
@@ -7934,8 +8017,12 @@ def handle_mouse_click(pos):
                 if rect.collidepoint(pos):
                     if enlarged_card_name == card_name:
                         enlarged_card_name = None
+                        enlarged_card_scale = 1.0
+                        enlarged_card_mouse_y = None
                     else:
                         enlarged_card_name = card_name
+                        enlarged_card_scale = 1.0
+                        enlarged_card_mouse_y = None
                     return
         return
 
@@ -8135,8 +8222,12 @@ def handle_mouse_click(pos):
             # 閲覧（拡大表示）はターン開始前でも許可する
             if enlarged_card_index == idx:
                 enlarged_card_index = None
+                enlarged_card_scale = 1.0
+                enlarged_card_mouse_y = None
             else:
                 enlarged_card_index = idx
+                enlarged_card_scale = 1.0
+                enlarged_card_mouse_y = None
             return
 
     # プロモーション選択オーバーレイクリック対応
@@ -8497,7 +8588,7 @@ def handle_mouse_click(pos):
                     if globals().get('DEBUG_COUNTER_CHECK_CARD_MODE', False) and getattr(game, '_debug_last_action_was_card', False):
                         setattr(game, '_debug_last_action_was_card', False)
                         try:
-                            game.log.append("[DEBUG] カード使用扱いフラグを消費しました。")
+                            logger.debug("カード使用扱いフラグを消費しました。")
                         except Exception:
                             pass
                 except Exception:
@@ -8531,7 +8622,7 @@ def handle_mouse_click(pos):
                     name = selected_piece.get('name', str(selected_piece)) if isinstance(selected_piece, dict) else str(selected_piece)
                 log_msg = f"{name} を {(row,col)} へ移動"
                 chess_log.append(log_msg)
-                print(f"[DEBUG] プレイヤー駒移動ログ追加: {log_msg}, master_log size={len(master_log)}")
+                logger.debug("プレイヤー駒移動ログ追加: %s, master_log size=%d", log_msg, len(master_log))
                 
                 # 駒移動直後はキング存在チェック（即座に勝敗判定）
                 # 迅雷使用中もそうでない場合も、駒移動直後に判定
@@ -8802,6 +8893,8 @@ def main_loop():
     global W, H, screen, play_bg_img, play_bg_surf
     # スクロール関連の初期化（ローカル扱いによるUnboundLocalErrorを防止）
     global dragging_scrollbar, drag_start_y, drag_start_offset, scrollbar_rect
+    # カード拡大表示関連の変数
+    global enlarged_card_index, enlarged_card_name, enlarged_card_scale, enlarged_card_mouse_y
     dragging_scrollbar = False
     drag_start_y = 0
     drag_start_offset = 0
@@ -8976,12 +9069,27 @@ def main_loop():
                             new_offset = drag_start_offset + scroll_delta
                             log_scroll_offset = int(max(0, min(new_offset, _max_scroll)))
             elif event.type == pygame.MOUSEWHEEL:
-                # マウスホイールでログスクロール（ログ表示中のみ）
-                if show_log:
-                    if event.y > 0:  # 上スクロール
-                        log_scroll_offset = max(0, log_scroll_offset - 1)
-                    elif event.y < 0:  # 下スクロール
-                        log_scroll_offset += 1
+                # マウスホイール: 拡大表示中はカードの拡大縮小に割り当てる
+                try:
+                    if (enlarged_card_index is not None) or (enlarged_card_name is not None):
+                        # event.y > 0 => 上スクロール => 拡大
+                        enlarged_card_scale = max(0.5, min(2.5, enlarged_card_scale + (event.y * 0.1)))
+                        # マウスベースの増分は無効化してジャンプ防止
+                        enlarged_card_mouse_y = None
+                    else:
+                        # 従来のログスクロール処理
+                        if show_log:
+                            if event.y > 0:  # 上スクロール
+                                log_scroll_offset = max(0, log_scroll_offset - 1)
+                            elif event.y < 0:  # 下スクロール
+                                log_scroll_offset += 1
+                except Exception:
+                    # フォールバック: 元のログスクロールのみ行う
+                    if show_log:
+                        if event.y > 0:
+                            log_scroll_offset = max(0, log_scroll_offset - 1)
+                        elif event.y < 0:
+                            log_scroll_offset += 1
 
         # --- 自動処理: AI の保留昇格を即時解決 ---
         # どこかの効果でAI（黒）のポーンがプロモーション待ちになった場合、
@@ -9477,10 +9585,10 @@ def main_loop():
                     try:
                         player_hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
                         ai_hand_names = [c.name for c in getattr(getattr(game, 'ai_player', None).hand, 'cards', [])] if getattr(game, 'ai_player', None) else []
-                        game.log.append(f"[DEBUG board_reset before] player_hand={player_hand_names} ai_hand={ai_hand_names} player_deck={len(getattr(game.player.deck,'cards',[]))} ai_deck={len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'}")
-                        game.log.append(f"[DEBUG board_reset before] iron_wall: player={getattr(game.player,'iron_wall_active',False)} ai={getattr(game,'ai_iron_wall_active',False)}")
+                        logger.debug("board_reset before: player_hand=%s ai_hand=%s player_deck=%d ai_deck=%s", player_hand_names, ai_hand_names, len(getattr(game.player.deck,'cards',[])), (len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'))
+                        logger.debug("board_reset before: iron_wall: player=%s ai=%s", getattr(game.player,'iron_wall_active',False), getattr(game,'ai_iron_wall_active',False))
                     except Exception:
-                        game.log.append("[DEBUG board_reset before] snapshot failed")
+                        logger.debug("board_reset before: snapshot failed")
                     # 盤面を初期状態にリセット
                     chess.pieces[:] = chess.create_pieces()
                     chess.en_passant_target = None
@@ -9526,10 +9634,10 @@ def main_loop():
                     try:
                         player_hand_names = [c.name for c in getattr(game.player.hand, 'cards', [])]
                         ai_hand_names = [c.name for c in getattr(getattr(game, 'ai_player', None).hand, 'cards', [])] if getattr(game, 'ai_player', None) else []
-                        game.log.append(f"[DEBUG board_reset after] player_hand={player_hand_names} ai_hand={ai_hand_names} player_deck={len(getattr(game.player.deck,'cards',[]))} ai_deck={len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'}")
-                        game.log.append(f"[DEBUG board_reset after] iron_wall: player={getattr(game.player,'iron_wall_active',False)} ai={getattr(game,'ai_iron_wall_active',False)}")
+                        logger.debug("board_reset after: player_hand=%s ai_hand=%s player_deck=%d ai_deck=%s", player_hand_names, ai_hand_names, len(getattr(game.player.deck,'cards',[])), (len(getattr(getattr(game,'ai_player',None).deck,'cards',[])) if getattr(game,'ai_player',None) else 'NA'))
+                        logger.debug("board_reset after: iron_wall: player=%s ai=%s", getattr(game.player,'iron_wall_active',False), getattr(game,'ai_iron_wall_active',False))
                     except Exception:
-                        game.log.append("[DEBUG board_reset after] snapshot failed")
+                        logger.debug("board_reset after: snapshot failed")
                     
                 except Exception as e:
                     game.log.append(f"盤面リセット中にエラーが発生しました: {e}")

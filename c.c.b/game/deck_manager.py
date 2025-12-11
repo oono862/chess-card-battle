@@ -294,6 +294,35 @@ def build_game_from_card_names(names):
         player = PlayerState(deck=deck)
         g = Game(player=player)
 
+        # Ensure the game's log is wrapped with the main module's LogList so
+        # appended messages are recorded into the global master_log used by UI.
+        try:
+            main = get_main_module()
+            LogList = getattr(main, 'LogList', None)
+            # Ensure master_log/_log_seq exist on main
+            if main is not None and getattr(main, 'master_log', None) is None:
+                try:
+                    setattr(main, 'master_log', [])
+                except Exception:
+                    pass
+            if main is not None and getattr(main, '_log_seq', None) is None:
+                try:
+                    setattr(main, '_log_seq', 0)
+                except Exception:
+                    pass
+            if LogList is not None:
+                try:
+                    existing = list(getattr(g, 'log', []) or [])
+                    g.log = LogList('game', existing)
+                except Exception:
+                    try:
+                        # fallback: set a fresh LogList if possible
+                        g.log = LogList('game')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # PPを最大に回復（setup_battleの代わりに手動で行う）
         try:
             player.reset_pp()

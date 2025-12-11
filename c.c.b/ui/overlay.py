@@ -368,8 +368,8 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                 
                 return False
             except Exception as e:
-                # デバッグ用: エラーが発生した場合は出力
-                print(f"[_is_card_line error] {e}")
+                # デバッグ用: エラーが発生した場合はログ出力（UIログには出さない）
+                logger.debug(f"[_is_card_line error] {e}")
                 return False
 
         def _is_piece_line(s):
@@ -397,11 +397,11 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         
         # 関数テスト（初回のみ実行）
         if not hasattr(_is_card_line, '_tested'):
-            print("[overlay] Testing filter functions...")
+            logger.debug("[overlay] Testing filter functions...")
             for test_log in _test_logs:
                 is_card = _is_card_line(test_log)
                 is_piece = _is_piece_line(test_log)
-                print(f"  '{test_log[:50]}...' -> card={is_card}, piece={is_piece}")
+                logger.debug(f"  '{test_log[:50]}...' -> card={is_card}, piece={is_piece}")
             _is_card_line._tested = True
 
         # active_view is already determined above; ensure it's valid
@@ -502,18 +502,18 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         try:
             if active_view == 'piece':
                 # 駒ビューの場合、詳細なデバッグ情報を出力
-                print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)}")
+                logger.debug(f"overlay: active_view={active_view} source_lines={len(source_lines)}")
                 # 最初の10行を表示して順序を確認し、カード判定も表示
                 for idx, line in enumerate(source_lines[:10]):
                     kind = 'AI' if line.startswith('AI') or 'AI(' in line else 'Player'
                     is_card = _is_card_line(line)
                     is_piece = _is_piece_line(line)
-                    print(f"  [{idx}] {kind}: card={is_card} piece={is_piece} {line[:60]}")
+                    logger.debug(f"  [{idx}] {kind}: card={is_card} piece={is_piece} {line[:60]}")
             else:
                 sample = source_lines[:3]
-                print(f"[overlay-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
+                logger.debug(f"overlay: active_view={active_view} source_lines={len(source_lines)} sample={sample}")
         except Exception as e:
-            print(f"[overlay-debug] error: {e}")
+            logger.debug("overlay: error when building debug sample: %s", e)
 
         wrapped_lines = []  # list of (text_line, kind, piece_letter) where kind in ('ai','player')
         # reduce wrap width to avoid lines overflowing the panel; leave more
@@ -766,7 +766,7 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         except Exception:
             pass
         try:
-            print(f"[overlay-debug] icon_rects={len(log_icon_rects)}")
+            logger.debug("overlay: icon_rects=%d", len(log_icon_rects))
         except Exception:
             pass
 
@@ -789,7 +789,7 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
                 try:
                     # also print to stdout for run-time debugging
                     try:
-                        print(f"[overlay-debug] hovered_label={hovered_label} mx,my={mx},{my}")
+                        logger.debug("overlay: hovered_label=%s mx,my=%d,%d", hovered_label, mx, my)
                     except Exception:
                         pass
                     # draw tooltip near mouse

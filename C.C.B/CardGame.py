@@ -1010,7 +1010,13 @@ def show_deck_choice_modal(screen):
                     return False
                 # fixed deck
                 if left_x <= mx <= left_x + btn_w and by <= my <= by + btn_h:
+                    # If user explicitly chooses fixed deck, clear any previously
+                    # saved custom-deck selection so it doesn't accidentally
+                    # override later deck rebuilds.
+                    global _selected_deck_card_names, _selected_deck_slot_idx
                     DECK_MODE = 'fixed'
+                    _selected_deck_card_names = None
+                    _selected_deck_slot_idx = None
                     return True
                 # created deck
                 if right_x <= mx <= right_x + btn_w and by <= my <= by + btn_h:
@@ -1529,9 +1535,9 @@ def _prepare_new_battle_after_deck_already_selected():
     except Exception as e:
         logger.debug("Failed to reset AI card state: %s", e)
 
-    # Rebuild decks from saved card names (for custom decks) or from mode (for fixed)
+    # Rebuild decks from saved card names (only when DECK_MODE == 'custom')
     rebuilt = False
-    if _selected_deck_card_names:
+    if DECK_MODE == 'custom' and _selected_deck_card_names:
         try:
             rebuilt = _rebuild_deck_from_card_names(_selected_deck_card_names)
         except Exception as e:

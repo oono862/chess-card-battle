@@ -7375,6 +7375,19 @@ def draw_panel():
                     current_winner = 'draw'
             except Exception:
                 current_winner = 'draw'
+
+        # Defensive correction: if the stored result is 'draw' but the board
+        # actually has only one king, prefer that side as the winner.
+        try:
+            if game_over_winner == 'draw':
+                w_exists = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+                b_exists = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+                if w_exists and not b_exists:
+                    current_winner = 'white'
+                elif b_exists and not w_exists:
+                    current_winner = 'black'
+        except Exception:
+            pass
         
         if current_winner == 'white':
             msg = "YOU WIN！"
@@ -9445,8 +9458,29 @@ def main_loop():
                     globals().get('simul_check_active', False),
                 )
                 if is_over:
+                    # Apply reported result, but guard against stale 'draw' when
+                    # the board actually contains only a single king (checkmate).
+                    # Sometimes higher-level detectors may return 'draw' due to
+                    # timing of turn switches — prefer actual king existence.
+                    try:
+                        if winner == 'draw':
+                            wk = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
+                            bk = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
+                            if wk and not bk:
+                                corrected = 'white'
+                            elif bk and not wk:
+                                corrected = 'black'
+                            else:
+                                corrected = 'draw'
+                        else:
+                            corrected = winner
+                    except Exception:
+                        corrected = winner
+
                     game_over = True
-                    game_over_winner = winner
+                    game_over_winner = corrected
+                    if corrected != winner and game is not None:
+                        game.log.append(f"勝敗補正: 盤面のキング状態に基づき勝者を {corrected} に訂正しました(元: {winner})")
             except Exception:
                 # Fallback: basic local checks if chess_rules is unavailable
                 try:
@@ -9478,7 +9512,7 @@ def main_loop():
                         # effect originated from AI targeting AI -> shouldn't happen, but skip blocking
                         pass
                     # target is ai_player (black)
-                    if getattr(ai_player, 'iron_wall_active', False) and source_color != 'black':
+                    if getattr(ai_player, 'iron_wall_active', False) and source_color is not None and source_color != 'black':
                         ai_player.iron_wall_active = False
                         game.log.append("『鉄壁』が効果を防いだ（相手の『ハンです☆』）。")
                         game.pending = None
@@ -9513,7 +9547,7 @@ def main_loop():
                 # If target has iron_wall_active, block the effect entirely
                 try:
                     source_color = game.pending.info.get('source_color') if game.pending and isinstance(game.pending.info, dict) else None
-                    if target_player is not None and getattr(target_player, 'iron_wall_active', False) and source_color != target_color:
+                    if target_player is not None and getattr(target_player, 'iron_wall_active', False) and source_color is not None and source_color != target_color:
                         # Only consume iron_wall if the effect is incoming (origin color != target color)
                         target_player.iron_wall_active = False
                         game.log.append("『鉄壁』が効果を防いだ（命がけのギャンブル）。")
@@ -9581,6 +9615,30 @@ def main_loop():
                         except Exception:
                             pass
                         game.log.append("自ターンをスキップします。")
+
+                # --- 互換性同期: dictベース実装がある場合はそちらも更新 ---
+                try:
+                    # chess is the engine module (object-based). chess_rules may be dict-based.
+                    if 'chess_rules' in globals() and getattr(chess_rules, 'pieces', None) is not None:
+                        cr_pcs = []
+                        for p in getattr(chess, 'pieces', []) or []:
+                            try:
+                                row = getattr(p, 'row', None) if not isinstance(p, dict) else p.get('row')
+                                col = getattr(p, 'col', None) if not isinstance(p, dict) else p.get('col')
+                                name = getattr(p, 'name', None) if not isinstance(p, dict) else p.get('name')
+                                color = getattr(p, 'color', None) if not isinstance(p, dict) else p.get('color')
+                                has_moved = getattr(p, 'has_moved', False) if not isinstance(p, dict) else p.get('has_moved', False)
+                                if row is None or col is None or name is None or color is None:
+                                    continue
+                                cr_pcs.append({'row': int(row), 'col': int(col), 'name': name, 'color': color, 'has_moved': bool(has_moved)})
+                            except Exception:
+                                continue
+                        try:
+                            chess_rules.pieces = cr_pcs
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
                 game.pending = None
 

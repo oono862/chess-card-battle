@@ -222,6 +222,34 @@ class Game:
                     self.ai_ironwall_protection_turns -= 1
                 except Exception:
                     pass
+        # If protection turns have expired, ensure any transient iron_wall_active
+        # flags are cleared so the effect does not persist beyond the intended
+        # single turn.
+        try:
+            if getattr(self, 'player_ironwall_protection_turns', 0) <= 0:
+                try:
+                    if getattr(self.player, 'iron_wall_active', False):
+                        self.player.iron_wall_active = False
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'ai_ironwall_protection_turns', 0) <= 0:
+                # clear game-level AI flag
+                try:
+                    if getattr(self, 'ai_iron_wall_active', False):
+                        setattr(self, 'ai_iron_wall_active', False)
+                except Exception:
+                    pass
+                # clear AI player instance flag if present
+                try:
+                    if getattr(getattr(self, 'ai_player', None), 'iron_wall_active', False):
+                        getattr(self, 'ai_player').iron_wall_active = False
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         # Decay blocked tiles: only decrement tiles that belong to the color
         # whose turn just ended (if provided).
@@ -1464,11 +1492,14 @@ def eff_iron_wall(game: Game, player: PlayerState) -> str:
     player.iron_wall_active = True
     
     # Set 1-turn protection from harmful gimmick cards
+    # Use 2 turns here so that decay at the end of the current turn
+    # followed by decay at the end of the opponent's turn results in
+    # the protection lasting through the opponent's entire turn.
     try:
         if player is game.player:
-            game.player_ironwall_protection_turns = 1
+            game.player_ironwall_protection_turns = 2
         else:
-            game.ai_ironwall_protection_turns = 1
+            game.ai_ironwall_protection_turns = 2
     except Exception:
         pass
     

@@ -54,7 +54,7 @@ def _debug_mark_card_played():
             
             setattr(game, '_debug_last_action_was_card', True)
             try:
-                game.log.append("[DEBUG] カード使用扱いフラグをセット（次の1手）。")
+                logger.debug("カード使用扱いフラグをセット（次の1手）。")
             except Exception:
                 pass
         except Exception:
@@ -90,7 +90,7 @@ def debug_setup_castling():
         setattr(main_module, 'highlight_squares', [])
         setattr(main_module, 'chess_current_turn', 'white')
         chess.en_passant_target = None
-        game.log.append("[DEBUG] キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
+        logger.debug("キャスリング検証用の盤面をセットしました（白番）。e1のKとa1/h1のRのみ配置。")
     except Exception as e:
         logger.debug("debug_setup_castling failed: %s", e)
 
@@ -120,7 +120,7 @@ def debug_setup_en_passant():
         setattr(main_module, 'selected_piece', None)
         setattr(main_module, 'highlight_squares', [])
         setattr(main_module, 'chess_current_turn', 'white')
-        game.log.append("[DEBUG] アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
+        logger.debug("アンパサン検証用の盤面をセットしました（白番）。e5の白Pがf6へアンパサン可能です。")
     except Exception as e:
         logger.debug("debug_setup_en_passant failed: %s", e)
 
@@ -148,7 +148,7 @@ def debug_setup_promotion():
         setattr(main_module, 'selected_piece', None)
         setattr(main_module, 'highlight_squares', [])
         setattr(main_module, 'chess_current_turn', 'white')
-        game.log.append("[DEBUG] 昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
+        logger.debug("昇格検証用の盤面をセットしました（白番）。a7の白Pをa8へ移動すると昇格ダイアログが出ます。")
     except Exception as e:
         logger.debug("debug_setup_promotion failed: %s", e)
 
@@ -174,7 +174,7 @@ def debug_reset_initial():
         setattr(main_module, 'selected_piece', None)
         setattr(main_module, 'highlight_squares', [])
         setattr(main_module, 'chess_current_turn', 'white')
-        game.log.append("[DEBUG] 初期配置にリセットしました（白番）。")
+        logger.debug("初期配置にリセットしました（白番）。")
     except Exception as e:
         logger.debug("debug_reset_initial failed: %s", e)
 
@@ -206,7 +206,7 @@ def debug_setup_checkmate():
         setattr(main_module, 'highlight_squares', [])
         setattr(main_module, 'chess_current_turn', 'white')
         chess.en_passant_target = None
-        game.log.append("[DEBUG] チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
+        logger.debug("チェックメイト検証用の盤面をセットしました（白番・詰み状態）。")
     except Exception as e:
         logger.debug("debug_setup_checkmate failed: %s", e)
 
@@ -263,8 +263,8 @@ def debug_setup_counter_check_white():
         except Exception:
             pass
         try:
-            game.log.append("[DEBUG] 反撃チェック検証用の盤面をセットしました（白番・白Kはe8の黒Rからチェック中）。")
-            game.log.append("白Rb1→b6で黒Kにチェックを与える手は通常不合法ですが、迅雷有効時またはF6+F7時のみ合法です。")
+            logger.debug("反撃チェック検証用の盤面をセットしました（白番・白Kはe8の黒Rからチェック中）。")
+            logger.debug("白Rb1→b6で黒Kにチェックを与える手は通常不合法ですが、迅雷有効時またはF6+F7時のみ合法です。")
         except Exception:
             pass
     except Exception as e:
@@ -323,8 +323,8 @@ def debug_setup_simul_check_start():
             pass
 
         try:
-            game.log.append("[DEBUG] 同時チェック検証用の盤面をセットしました（白番）。")
-            game.log.append("両者がチェック状態です。次の自分の手番開始までにチェックを解除する必要があります。")
+            logger.debug("同時チェック検証用の盤面をセットしました（白番）。")
+            logger.debug("両者がチェック状態です。次の自分の手番開始までにチェックを解除する必要があります。")
         except Exception:
             pass
     except Exception as e:

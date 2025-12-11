@@ -33,8 +33,10 @@ def create_pieces() -> List[Dict]:
     return p
 
 
-def get_piece_at(row: int, col: int) -> Optional[Dict]:
-    for pc in pieces:
+def get_piece_at(row: int, col: int, pcs: Optional[List[Dict]] = None) -> Optional[Dict]:
+    # If pcs provided, search it, otherwise use module-level pieces
+    search = pcs if pcs is not None else pieces
+    for pc in search:
         if pc['row'] == row and pc['col'] == col:
             return pc
     return None
@@ -84,10 +86,10 @@ def get_valid_moves(piece: Dict, pcs: Optional[List[Dict]] = None, ignore_check:
     r,c = piece['row'], piece['col']
 
     def occupied(rr,cc):
-        return get_piece_at(rr,cc) is not None
+        return get_piece_at(rr,cc,pcs) is not None
 
     def occupied_by_color(rr,cc,color):
-        p = get_piece_at(rr,cc)
+        p = get_piece_at(rr,cc,pcs)
         return p is not None and p['color']==color
 
     global en_passant_target

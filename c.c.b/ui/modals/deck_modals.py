@@ -16,21 +16,114 @@ logger = logging.getLogger(__name__)
 _last_deck_choice_open_time = None
 
 
-def show_deck_choice_modal(screen, W, H, get_font, FONT, SMALL, DECK_MODE_getter, DECK_MODE_setter, load_saved_decks=None):
+def show_deck_choice_modal(screen, *args, **kwargs):
     """デッキ選択モーダル（fixed/custom選択）
-    
-    Args:
-        screen: pygame surface
-        W, H: ウィンドウサイズ
-        get_font: フォント取得関数
-        FONT, SMALL: フォントオブジェクト
-        DECK_MODE_getter: 現在のデッキモードを取得する関数
-        DECK_MODE_setter: デッキモードを設定する関数
-        load_saved_decks: (未使用) デッキ読み込み関数
-    
-    Returns:
-        bool: True=選択完了, False=キャンセル
+
+    Flexible signature: supports both the new explicit-arg style used by
+    `ui.modals.screen_modals` and the legacy single-`screen` call used by
+    older callers (e.g. `CardGame.show_start_screen`). When only `screen` is
+    provided, this function will attempt to obtain `W,H,get_font,FONT,SMALL`
+    and DECK_MODE getter/setter from the main module or `c.c.b.CardGame`.
     """
+    # Normalize parameters: allow two calling conventions
+    # (screen, W, H, get_font, FONT, SMALL, DECK_MODE_getter, DECK_MODE_setter, load_saved_decks=None)
+    # or (screen,) in which case resolve dependencies from __main__ / CardGame.
+    screen_obj = screen
+    W = kwargs.get('W', None)
+    H = kwargs.get('H', None)
+    get_font = kwargs.get('get_font', None)
+    FONT = kwargs.get('FONT', None)
+    SMALL = kwargs.get('SMALL', None)
+    DECK_MODE_getter = kwargs.get('DECK_MODE_getter', None)
+    DECK_MODE_setter = kwargs.get('DECK_MODE_setter', None)
+    load_saved_decks = kwargs.get('load_saved_decks', None)
+
+    # If positional args were passed (legacy explicit form), unpack them
+    if len(args) >= 1:
+        # args[0] is screen (already assigned), remaining may be full set
+        if len(args) >= 8:
+            # (screen, W, H, get_font, FONT, SMALL, DECK_MODE_getter, DECK_MODE_setter)
+            _, W, H, get_font, FONT, SMALL, DECK_MODE_getter, DECK_MODE_setter = args[:8]
+            if len(args) > 8:
+                load_saved_decks = args[8]
+
+    # Fallback: try to resolve missing globals from __main__ or c.c.b.CardGame
+    if any(x is None for x in (W, H, get_font, FONT, SMALL, DECK_MODE_getter, DECK_MODE_setter)):
+        try:
+            import __main__ as _m
+        except Exception:
+            _m = None
+        cg = None
+        try:
+            # prefer package-relative import when used as a package
+            from .. import CardGame as cgmod
+            cg = cgmod
+        except Exception:
+            try:
+                # fallback to absolute package import (older layouts)
+                from c.c.b import CardGame as cgmod
+                cg = cgmod
+            except Exception:
+                try:
+                    # final fallback: top-level module name
+                    import CardGame as cgmod
+                    cg = cgmod
+                except Exception:
+                    cg = None
+
+        def _get_attr(name, default=None):
+            if _m and hasattr(_m, name):
+                return getattr(_m, name)
+            if cg and hasattr(cg, name):
+                return getattr(cg, name)
+            return default
+
+        if W is None:
+            try:
+                W = _get_attr('W', screen_obj.get_size()[0] if hasattr(screen_obj, 'get_size') else None)
+            except Exception:
+                W = screen_obj.get_size()[0] if hasattr(screen_obj, 'get_size') else None
+        if H is None:
+            try:
+                H = _get_attr('H', screen_obj.get_size()[1] if hasattr(screen_obj, 'get_size') else None)
+            except Exception:
+                H = screen_obj.get_size()[1] if hasattr(screen_obj, 'get_size') else None
+        if get_font is None:
+            get_font = _get_attr('get_font', None)
+        if FONT is None:
+            FONT = _get_attr('FONT', None)
+        if SMALL is None:
+            SMALL = _get_attr('SMALL', None)
+        if DECK_MODE_getter is None:
+            def _dm_get():
+                return _get_attr('DECK_MODE', 'fixed')
+            DECK_MODE_getter = _dm_get
+        if DECK_MODE_setter is None:
+            def _dm_set(v):
+                try:
+                    if _m and hasattr(_m, 'DECK_MODE'):
+                        setattr(_m, 'DECK_MODE', v)
+                    if cg and hasattr(cg, 'DECK_MODE'):
+                        setattr(cg, 'DECK_MODE', v)
+                except Exception:
+                    pass
+            DECK_MODE_setter = _dm_set
+        if load_saved_decks is None:
+            try:
+                from game.deck_manager import load_saved_decks as _lds
+                load_saved_decks = _lds
+            except Exception:
+                load_saved_decks = lambda: [None]*9
+
+    # Now assign the normalized names used below
+    W = int(W) if W is not None else screen_obj.get_size()[0]
+    H = int(H) if H is not None else screen_obj.get_size()[1]
+    get_font = get_font
+    FONT = FONT
+    SMALL = SMALL
+    # For backward compatibility, make these available as locals used in the function
+    screen = screen_obj
+
     global _last_deck_choice_open_time
     
     clk = pygame.time.Clock()
@@ -89,6 +182,20 @@ def show_deck_choice_modal(screen, W, H, get_font, FONT, SMALL, DECK_MODE_getter
                 # fixed deck
                 if left_x <= mx <= left_x + btn_w and by <= my <= by + btn_h:
                     DECK_MODE_setter('fixed')
+                    # Ensure any previously selected custom-deck choice is cleared
+                    # so a stale selection doesn't persist across UI implementations.
+                    try:
+                        import __main__
+                        try:
+                            __main__._selected_deck_card_names = None
+                        except Exception:
+                            pass
+                        try:
+                            __main__._selected_deck_slot_idx = None
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
                     return True
                 # created deck
                 if right_x <= mx <= right_x + btn_w and by <= my <= by + btn_h:
@@ -146,10 +253,166 @@ def show_deck_choice_modal(screen, W, H, get_font, FONT, SMALL, DECK_MODE_getter
 _last_deck_modal_open_time = None
 
 
-def show_deck_modal(screen, W, H, get_font, FONT, SMALL, load_saved_decks, save_decks_to_file,
-                    show_deck_action_modal_func, show_deck_battle_confirm_func, show_deck_editor_func,
-                    new_game_with_mode_func, build_ai_player_func, build_game_from_card_names_func,
-                    DECK_MODE_getter, DECK_MODE_setter, battle_select_mode=False):
+def show_deck_modal(screen, *args, **kwargs):
+    """デッキリスト画面（3x3グリッド表示）
+
+    Flexible signature to support callers that provide explicit helpers
+    or legacy callers that only pass `screen`. Missing dependencies are
+    resolved from __main__ or `c.c.b.CardGame` when possible.
+    """
+    screen_obj = screen
+    # Try kwargs first
+    W = kwargs.get('W', None)
+    H = kwargs.get('H', None)
+    get_font = kwargs.get('get_font', None)
+    FONT = kwargs.get('FONT', None)
+    SMALL = kwargs.get('SMALL', None)
+    load_saved_decks = kwargs.get('load_saved_decks', None)
+    save_decks_to_file = kwargs.get('save_decks_to_file', None)
+    show_deck_action_modal_func = kwargs.get('show_deck_action_modal_func', None)
+    show_deck_battle_confirm_func = kwargs.get('show_deck_battle_confirm_func', None)
+    show_deck_editor_func = kwargs.get('show_deck_editor_func', None)
+    new_game_with_mode_func = kwargs.get('new_game_with_mode_func', None)
+    build_ai_player_func = kwargs.get('build_ai_player_func', None)
+    build_game_from_card_names_func = kwargs.get('build_game_from_card_names_func', None)
+    DECK_MODE_getter = kwargs.get('DECK_MODE_getter', None)
+    DECK_MODE_setter = kwargs.get('DECK_MODE_setter', None)
+    battle_select_mode = kwargs.get('battle_select_mode', False)
+
+    # If positional args provided (explicit full signature), unpack
+    if len(args) >= 1:
+        if len(args) >= 13:
+            # (screen, W, H, get_font, FONT, SMALL, load_saved_decks, save_decks_to_file,
+            #  show_deck_action_modal_func, show_deck_battle_confirm_func, show_deck_editor_func,
+            #  new_game_with_mode_func, build_ai_player_func, build_game_from_card_names_func,
+            #  DECK_MODE_getter, DECK_MODE_setter, battle_select_mode)
+            # Unpack as many as available (skip screen)
+            unpack = args[1:]
+            # Fill variables in order
+            try:
+                W, H, get_font, FONT, SMALL, load_saved_decks, save_decks_to_file, show_deck_action_modal_func, show_deck_battle_confirm_func, show_deck_editor_func, new_game_with_mode_func, build_ai_player_func, build_game_from_card_names_func = unpack[:13]
+                rest = unpack[13:]
+                if len(rest) >= 1:
+                    DECK_MODE_getter = rest[0]
+                if len(rest) >= 2:
+                    DECK_MODE_setter = rest[1]
+                if len(rest) >= 3:
+                    battle_select_mode = rest[2]
+            except Exception:
+                pass
+
+    # Fallback resolver from __main__ / CardGame
+    if any(x is None for x in (W, H, get_font, FONT, SMALL, load_saved_decks, save_decks_to_file,
+                               show_deck_action_modal_func, show_deck_battle_confirm_func, show_deck_editor_func,
+                               new_game_with_mode_func, build_ai_player_func, build_game_from_card_names_func,
+                               DECK_MODE_getter, DECK_MODE_setter)):
+        try:
+            import __main__ as _m
+        except Exception:
+            _m = None
+        cg = None
+        try:
+            from .. import CardGame as cgmod
+            cg = cgmod
+        except Exception:
+            try:
+                from c.c.b import CardGame as cgmod
+                cg = cgmod
+            except Exception:
+                try:
+                    import CardGame as cgmod
+                    cg = cgmod
+                except Exception:
+                    cg = None
+
+        def _get_attr(name, default=None):
+            if _m and hasattr(_m, name):
+                return getattr(_m, name)
+            if cg and hasattr(cg, name):
+                return getattr(cg, name)
+            return default
+
+        if W is None:
+            try:
+                W = _get_attr('W', screen_obj.get_size()[0] if hasattr(screen_obj, 'get_size') else None)
+            except Exception:
+                W = screen_obj.get_size()[0]
+        if H is None:
+            try:
+                H = _get_attr('H', screen_obj.get_size()[1] if hasattr(screen_obj, 'get_size') else None)
+            except Exception:
+                H = screen_obj.get_size()[1]
+        if get_font is None:
+            get_font = _get_attr('get_font', None)
+        if FONT is None:
+            FONT = _get_attr('FONT', None)
+        if SMALL is None:
+            SMALL = _get_attr('SMALL', None)
+        if load_saved_decks is None:
+            try:
+                from game.deck_manager import load_saved_decks as _lds
+                load_saved_decks = _lds
+            except Exception:
+                load_saved_decks = lambda: [None]*9
+        if save_decks_to_file is None:
+            try:
+                from game.deck_manager import save_decks_to_file as _sdf
+                save_decks_to_file = _sdf
+            except Exception:
+                save_decks_to_file = lambda d: None
+        if show_deck_action_modal_func is None:
+            show_deck_action_modal_func = globals().get('show_deck_action_modal', None)
+        if show_deck_battle_confirm_func is None:
+            show_deck_battle_confirm_func = globals().get('show_deck_battle_confirm', None)
+        if show_deck_editor_func is None:
+            # try to find an editor in the same package
+            try:
+                from .deck_modals import show_deck_editor as _sde
+                show_deck_editor_func = _sde
+            except Exception:
+                show_deck_editor_func = None
+        if new_game_with_mode_func is None:
+            new_game_with_mode_func = _get_attr('new_game_with_mode', None)
+        if build_ai_player_func is None:
+            build_ai_player_func = _get_attr('build_ai_player', None)
+        if build_game_from_card_names_func is None:
+            build_game_from_card_names_func = _get_attr('build_game_from_card_names', None)
+        if DECK_MODE_getter is None:
+            DECK_MODE_getter = lambda: _get_attr('DECK_MODE', 'fixed')
+        if DECK_MODE_setter is None:
+            def _dm_set(v):
+                try:
+                    if _m and hasattr(_m, 'DECK_MODE'):
+                        setattr(_m, 'DECK_MODE', v)
+                    if cg and hasattr(cg, 'DECK_MODE'):
+                        setattr(cg, 'DECK_MODE', v)
+                except Exception:
+                    pass
+            DECK_MODE_setter = _dm_set
+
+    # Normalize locals used below
+    screen = screen_obj
+    W = int(W) if W is not None else screen.get_size()[0]
+    H = int(H) if H is not None else screen.get_size()[1]
+    get_font = get_font
+    FONT = FONT
+    SMALL = SMALL
+    load_saved_decks = load_saved_decks
+    save_decks_to_file = save_decks_to_file
+    show_deck_action_modal_func = show_deck_action_modal_func
+    show_deck_battle_confirm_func = show_deck_battle_confirm_func
+    show_deck_editor_func = show_deck_editor_func
+    new_game_with_mode_func = new_game_with_mode_func
+    build_ai_player_func = build_ai_player_func
+    build_game_from_card_names_func = build_game_from_card_names_func
+    DECK_MODE_getter = DECK_MODE_getter
+    DECK_MODE_setter = DECK_MODE_setter
+    battle_select_mode = bool(battle_select_mode)
+
+    global _last_deck_modal_open_time
+    
+    # Present the deck-selection screen as a fullscreen view (non-blocking overlay)
+    clk = pygame.time.Clock()
     """デッキリスト画面（3x3グリッド表示）
     
     既存の saved_decks.json を読み込み、9スロットを表示します。

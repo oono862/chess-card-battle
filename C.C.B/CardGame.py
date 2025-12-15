@@ -6415,9 +6415,9 @@ def draw_panel():
         # タイトル（クリックで閉じる）
         # 上部余白を減らしてログ表示エリアを確保
         top_line_h = 0  # 上部余白を削除
-        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 6, (60, 60, 100))
-        # 見出しのすぐ下にスクロールのヒントを表示（間隔を詰める）
-        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 26, (100, 100, 120))
+        log_toggle_rect = draw_text(screen, "ログ履歴  [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
+        # 見出しのすぐ下にスクロールのヒントを表示（上下に余白を確保）
+        draw_text(screen, "↑ ↓  /  ホイールでスクロール", log_panel_left + 10, log_panel_top + 32, (100, 100, 120))
 
 
 
@@ -6617,8 +6617,8 @@ def draw_panel():
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
-        # ログ描画開始位置（見出しとヒントの下、間隔を詰める）
-        log_y = log_panel_top + 48
+        # ログ描画開始位置（見出しとヒントの下に十分な余白をとる）
+        log_y = log_panel_top + 64
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4

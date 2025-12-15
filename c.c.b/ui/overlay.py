@@ -266,9 +266,9 @@ def draw_log_panel(screen, game, show_log, log_scroll_offset, layout, W, H, boar
         # タイトル（クリックで閉じる）
         # 1行分の余白をタイトル上部に入れる（視認性向上）
         top_line_h = FONT.get_height()
-        log_toggle_rect = draw_text(screen, "ログ履歴 [L]閉じる", log_panel_left + 10, log_panel_top + 8 + top_line_h, (60, 60, 100))
-        # 見出しのすぐ下にスクロールのヒントを表示
-        draw_text(screen, "↑↓ / ホイールでスクロール", log_panel_left + 10, log_panel_top + 30 + top_line_h, (100, 100, 120))
+        log_toggle_rect = draw_text(screen, "ログ履歴  [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
+        # 見出しのすぐ下にスクロールのヒントを表示（上下に余白を確保）
+        draw_text(screen, "↑ ↓  /  ホイールでスクロール", log_panel_left + 10, log_panel_top + 32, (100, 100, 120))
 
         # 上部右側にログ切替ヒントを表示（背景は無し、文字をやや細めにする）
         try:

@@ -2266,7 +2266,7 @@ def show_deck_options(screen, deck):
         dialog_x = (W - dialog_w) // 2
         dialog_y = (H - dialog_h) // 2
         dialog_surf = pygame.Surface((dialog_w, dialog_h))
-        dialog_surf.fill((245, 245, 250))
+        dialog_surf.fill((210, 215, 220))
         pygame.draw.rect(dialog_surf, (80, 80, 80), (0, 0, dialog_w, dialog_h), 3)
         
         # タイトル
@@ -2363,7 +2363,11 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
         overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
         box = pygame.Surface((w, h))
-        box.fill((210,215,220))
+        box.fill((240,235,230))
+        try:
+            logger.debug("show_deck_contents_overlay: C.C.B/CardGame.py bg=(240,235,230), size=(%d,%d)", w, h)
+        except Exception:
+            pass
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render("このデッキでバトルしますか？", True, (30,30,30))
         box.blit(title, (20, 18))
@@ -3208,7 +3212,7 @@ def show_deck_action_modal(screen, deck, slot_idx):
         overlay.fill((0,0,0,190))
         screen.blit(overlay, (0, 0))
         box = pygame.Surface((w, h))
-        box.fill((250, 250, 250))
+        box.fill((210, 215, 220))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck_name, True, (30,30,30))
         box.blit(title, (20, 18))
@@ -3397,7 +3401,7 @@ def show_deck_contents_overlay(screen, deck):
         screen.blit(overlay, (0,0))
 
         box = pygame.Surface((w, h))
-        box.fill((210,215,220))
+        box.fill((240,235,230))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck.get('name', 'デッキ'), True, (30,30,30))
         box.blit(title, (20, 12))
@@ -4223,10 +4227,10 @@ def show_animation_settings_screen(screen):
 
         # draw modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((30,30,30,40) if not get_ui_effects_enabled() else (0,0,0,160))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
         surf = pygame.Surface((w, h))
-        surf.fill((245,245,250))
+        surf.fill((210,215,220))
         pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
         title = FONT.render("駒移動アニメーション設定", True, (30,30,30))
         surf.blit(title, (20, 12))

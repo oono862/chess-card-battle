@@ -224,7 +224,7 @@ def show_deck_choice_modal(screen, *args, **kwargs):
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
-        surf.fill((245,245,250))
+        surf.fill((240,235,230))
         pygame.draw.rect(surf, (80,80,80), (0,0,w,h), 3)
 
         title = FONT.render("デッキを選択してください", True, (30,30,30))
@@ -727,7 +727,7 @@ def show_deck_battle_confirm(screen, W, H, get_font, FONT, SMALL, deck, slot_idx
         overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
         box = pygame.Surface((w, h))
-        box.fill((210,215,220))
+        box.fill((240,235,230))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render("このデッキでバトルしますか？", True, (30,30,30))
         box.blit(title, (20, 18))
@@ -863,7 +863,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
 
                         # redraw modal box under confirm
                         box = pygame.Surface((w, h))
-                        box.fill((210,215,220))
+                        box.fill((240,235,230))
                         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
                         title = title_font.render(deck_name, True, (30,30,30))
                         box.blit(title, (20, 18))
@@ -897,7 +897,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
 
                         # draw confirm box
                         confirm_surf = pygame.Surface((confirm_w, confirm_h))
-                        confirm_surf.fill((210,215,220))
+                        confirm_surf.fill((240,235,230))
                         pygame.draw.rect(confirm_surf, (80,80,80), (0,0,confirm_w,confirm_h), 3)
                         q_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
                         qtxt = q_font.render("本当にこのデッキを削除しますか？", True, (30,30,30))
@@ -963,7 +963,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
         overlay.fill((0,0,0,190))
         screen.blit(overlay, (0, 0))
         box = pygame.Surface((w, h))
-        box.fill((250, 250, 250))
+        box.fill((240,235,230))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck_name, True, (30,30,30))
         box.blit(title, (20, 18))
@@ -1094,7 +1094,7 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         screen.blit(overlay, (0,0))
 
         box = pygame.Surface((w, h))
-        box.fill((210,215,220))
+        box.fill((240,235,230))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck.get('name', 'デッキ'), True, (30,30,30))
         box.blit(title, (20, 12))
@@ -1692,7 +1692,7 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
-        surf.fill((210,215,220))
+        surf.fill((240,235,230))
         pygame.draw.rect(surf, (80,80,80), (0,0,w,h), 3)
         title = FONT.render("作成デッキを選択してください", True, (30,30,30))
         surf.blit(title, (20, 12))

@@ -6069,8 +6069,39 @@ def draw_panel():
             shadow = telop_font.render(turn_telop_msg, True, (0, 0, 0))
             tx = bx + (bs - telop_surf.get_width()) // 2
             ty = by + (bs - telop_surf.get_height()) // 2
-            screen.blit(shadow, (tx + 2, ty + 2))
-            screen.blit(telop_surf, (tx, ty))
+
+            # 'YOUR TURN' の場合は背景を描かずテキストのみ表示する
+            draw_bg = True
+            try:
+                if isinstance(turn_telop_msg, str) and turn_telop_msg.strip().upper() == 'YOUR TURN':
+                    draw_bg = False
+            except Exception:
+                draw_bg = True
+
+            if draw_bg:
+                try:
+                    pad_x = max(10, telop_font_size // 5)
+                    pad_y = max(6, telop_font_size // 8)
+                    bxx = tx - pad_x
+                    byy = ty - pad_y
+                    bbw = telop_surf.get_width() + pad_x * 2
+                    bbh = telop_surf.get_height() + pad_y * 2
+                    bg = pygame.Surface((bbw, bbh))
+                    bg.fill((28, 28, 28))
+                    screen.blit(bg, (bxx, byy))
+                    pygame.draw.rect(screen, (220, 180, 60), (bxx, byy, bbw, bbh), 2)
+                except Exception:
+                    pass
+
+            # 影と文字
+            try:
+                screen.blit(shadow, (tx + 3, ty + 3))
+            except Exception:
+                pass
+            try:
+                screen.blit(telop_surf, (tx, ty))
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -6085,15 +6116,22 @@ def draw_panel():
             shadow = notice_font.render(notice_msg, True, (0,0,0))
             bx = board_left + (board_size - notice_surf.get_width()) // 2
             by = board_top + 8
-            # background box
+            # 背景ボックスは常に不透明にして視認性を確保
             try:
-                tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
-                tmp.fill((0,0,0,40 if not get_ui_effects_enabled() else 160))
+                bw = notice_surf.get_width() + 20
+                bh = notice_surf.get_height() + 12
+                tmp = pygame.Surface((bw, bh))
+                tmp.fill((28, 28, 28))
                 screen.blit(tmp, (bx-10, by-6))
-            except Exception:
-                pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
-            if get_ui_effects_enabled():
+                pygame.draw.rect(screen, (220, 180, 60), (bx-10, by-6, bw, bh), 2)
                 screen.blit(shadow, (bx+2, by+2))
+            except Exception:
+                try:
+                    pygame.draw.rect(screen, (28,28,28), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+                    pygame.draw.rect(screen, (220,180,60), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12), 2)
+                    screen.blit(shadow, (bx+2, by+2))
+                except Exception:
+                    pass
             screen.blit(notice_surf, (bx, by))
     except Exception:
         pass
@@ -6463,8 +6501,11 @@ def draw_panel():
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
         # タイトル（クリックで閉じる）
-        # 上部余白を減らしてログ表示エリアを確保
-        top_line_h = 0  # 上部余白を削除
+        # 上部余白を確保して、見出し／ヒントに被らないようにする
+        try:
+            top_line_h = FONT.get_height() if 'FONT' in globals() and FONT is not None else 20
+        except Exception:
+            top_line_h = 20
         log_toggle_rect = draw_text(screen, "ログ履歴  [L]閉じる", log_panel_left + 10, log_panel_top + 8, (60, 60, 100))
         # 見出しのすぐ下にスクロールのヒントを表示（上下に余白を確保）
         draw_text(screen, "↑ ↓  /  ホイールでスクロール", log_panel_left + 10, log_panel_top + 32, (100, 100, 120))
@@ -6667,8 +6708,9 @@ def draw_panel():
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
-        # ログ描画開始位置（見出しとヒントの下、間隔を詰める）
-        log_y = log_panel_top + 48
+        # ログ描画開始位置（見出しとヒントの下に余白を確保）
+        # overlay.py と揃えるため top_line_h を考慮する
+        log_y = log_panel_top + 56 + top_line_h
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4

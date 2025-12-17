@@ -1135,10 +1135,19 @@ while running:
             tx = BOARD_OFFSET_X + WIDTH // 2 - txt_surf.get_width() // 2
             ty = BOARD_OFFSET_Y + HEIGHT // 2 - txt_surf.get_height() // 2
 
-            # 半透明の背景を用意（フェードに合わせてアルファを変える）
+            # 半透明の背景を用意（演出無効時は即時に薄い黒で固定）
             bg_w = txt_surf.get_width() + 20
             bg_h = txt_surf.get_height() + 12
-            bg_alpha = int(160 * alpha)
+            # UI演出フラグに応じてアルファを決定
+            try:
+                from ui.config import get_ui_effects_enabled
+                effects_on = get_ui_effects_enabled()
+            except Exception:
+                effects_on = True
+            if effects_on:
+                bg_alpha = int(160 * alpha)
+            else:
+                bg_alpha = 40
             try:
                 overlay = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
                 overlay.fill((0, 0, 0, bg_alpha))
@@ -1150,10 +1159,17 @@ while running:
             try:
                 txt_copy = txt_surf.copy()
                 if alpha < 1.0:
-                    temp = pygame.Surface(txt_copy.get_size(), pygame.SRCALPHA)
-                    temp.blit(txt_copy, (0,0))
-                    temp.fill((255,255,255,int(255*alpha)), special_flags=pygame.BLEND_RGBA_MULT)
-                    txt_copy = temp
+                    # 演出有効時のみフェードを適用
+                    try:
+                        from ui.config import get_ui_effects_enabled
+                        effects_on = get_ui_effects_enabled()
+                    except Exception:
+                        effects_on = True
+                    if effects_on:
+                        temp = pygame.Surface(txt_copy.get_size(), pygame.SRCALPHA)
+                        temp.blit(txt_copy, (0,0))
+                        temp.fill((255,255,255,int(255*alpha)), special_flags=pygame.BLEND_RGBA_MULT)
+                        txt_copy = temp
                 screen.blit(txt_copy, (tx, ty))
             except Exception:
                 screen.blit(txt_surf, (tx, ty))

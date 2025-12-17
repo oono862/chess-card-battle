@@ -456,13 +456,21 @@ def draw_notice_message(screen, layout, notice_msg, notice_until):
             shadow = notice_font.render(notice_msg, True, (0,0,0))
             bx = board_left + (board_size - notice_surf.get_width()) // 2
             by = board_top + 8
-            try:
-                tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
-                tmp.fill((0,0,0,160))
-                screen.blit(tmp, (bx-10, by-6))
-            except Exception:
-                pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
-            screen.blit(shadow, (bx+2, by+2))
+            if get_ui_effects_enabled():
+                try:
+                    tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
+                    tmp.fill((0,0,0,160))
+                    screen.blit(tmp, (bx-10, by-6))
+                except Exception:
+                    pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+                screen.blit(shadow, (bx+2, by+2))
+            else:
+                try:
+                    tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
+                    tmp.fill((0,0,0,40))
+                    screen.blit(tmp, (bx-10, by-6))
+                except Exception:
+                    pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
             screen.blit(notice_surf, (bx, by))
     except Exception:
         pass

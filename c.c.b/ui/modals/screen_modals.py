@@ -9,6 +9,7 @@ import pygame
 import os
 import sys
 import logging
+from ui.config import get_ui_effects_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,7 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
 
         # gentle dark overlay to maintain contrast but keep background visible
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,80))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
 
         # Title with outline (dark fill with light outline to match screenshot)
@@ -459,11 +460,11 @@ def show_settings_screen(screen, get_font, W, H, FONT, SMALL, TINY,
 
         # draw modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,160))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
-        surf.fill((245,245,250))
+        surf.fill((210,215,220))
         pygame.draw.rect(surf, (70,70,70), (0,0,w,h), 3)
 
         title = FONT.render("設定", True, (30,30,30))

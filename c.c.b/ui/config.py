@@ -17,6 +17,9 @@ DEFAULT_HEIGHT = 800
 current_width = DEFAULT_WIDTH
 current_height = DEFAULT_HEIGHT
 
+# UI effects: fades/overlays. Default is disabled per user preference for instant, thin overlays.
+UI_EFFECTS_ENABLED = False
+
 
 def get_screen_size():
     """現在の画面サイズを取得"""
@@ -28,6 +31,11 @@ def set_screen_size(width, height):
     global current_width, current_height
     current_width = width
     current_height = height
+
+
+def get_ui_effects_enabled() -> bool:
+    """Return whether UI effects (fades/overlays) are enabled."""
+    return UI_EFFECTS_ENABLED
 
 
 # ==================== フォント設定 ====================

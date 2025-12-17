@@ -1,0 +1,11 @@
+2025-11-18 14:29:29,673 INFO root: run_headless_game.py starting; logfile=C:\Users\Student\Desktop\‘²Œ¤—–{”Ô—p‘—¿\chess-card-battle\c.c.b\headless_logs\headless_run_20251118_142929.log
+2025-11-18 14:29:31,124 INFO root: Starting headless main_loop
+2025-11-18 14:29:37,126 INFO root: stopper posted QUIT event
+2025-11-18 14:29:37,240 INFO root: main_loop exited via SystemExit
+2025-11-18 14:29:37,240 INFO root: headless run complete
+=== run_headless_game.py starting ===
+logfile: C:\Users\Student\Desktop\å’ç ”ï¼ æœ¬ç•ªç”¨è³‡æ–™\chess-card-battle\c.c.b\headless_logs\headless_run_20251118_142929.log
+Starting headless main_loop (will stop after ~6s)
+stopper: posted QUIT event
+main_loop exited via SystemExit
+headless run complete

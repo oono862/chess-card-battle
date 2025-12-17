@@ -5,6 +5,7 @@
 """
 
 import pygame
+from ui.config import get_ui_effects_enabled
 import sys
 import time as _ct_time
 import logging
@@ -152,6 +153,12 @@ def show_deck_choice_modal(screen, *args, **kwargs):
     x = (W - w)//2
     y = (H - h)//2
 
+    # snapshot background to keep underlying screen visible
+    try:
+        _bg_frame = screen.copy()
+    except Exception:
+        _bg_frame = None
+
     # Button geometry
     btn_w = 220
     btn_h = 80
@@ -206,9 +213,14 @@ def show_deck_choice_modal(screen, *args, **kwargs):
                     return True
 
         # draw overlay/modal
+        if _bg_frame is not None:
+            try:
+                screen.blit(_bg_frame, (0,0))
+            except Exception:
+                pass
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        # make overlay darker so underlying UI (前の画面) is not visible/clickable
-        overlay.fill((0,0,0,220))
+        # Unified dark overlay so background is barely visible
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
@@ -663,6 +675,12 @@ def show_deck_battle_confirm(screen, W, H, get_font, FONT, SMALL, deck, slot_idx
     y = (H - h)//2
     title_font = get_font(28)
 
+    # snapshot background once so the previous screen remains visible under overlay
+    try:
+        _bg_frame = screen.copy()
+    except Exception:
+        _bg_frame = None
+
     while True:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -700,11 +718,16 @@ def show_deck_battle_confirm(screen, W, H, get_font, FONT, SMALL, deck, slot_idx
                     return True
 
         # draw
+        if _bg_frame is not None:
+            try:
+                screen.blit(_bg_frame, (0,0))
+            except Exception:
+                pass
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,160))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
         box = pygame.Surface((w, h))
-        box.fill((245,245,250))
+        box.fill((210,215,220))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render("このデッキでバトルしますか？", True, (30,30,30))
         box.blit(title, (20, 18))
@@ -766,6 +789,12 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
     title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
     btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 22)
     deck_name = deck.get('name', f'デッキ{slot_idx+1}')
+
+    # snapshot background to keep previous screen visible under overlay
+    try:
+        _bg_frame = screen.copy()
+    except Exception:
+        _bg_frame = None
 
     # build short preview lines for the deck (first few card names)
     preview_lines = []
@@ -829,12 +858,12 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
                         cy = y + (h - confirm_h)//2
                         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
                         # darken fully so the background deck list is not visible
-                        overlay.fill((0,0,0,220))
+                        overlay.fill((0,0,0,190))
                         screen.blit(overlay, (0,0))
 
                         # redraw modal box under confirm
                         box = pygame.Surface((w, h))
-                        box.fill((250,250,250))
+                        box.fill((210,215,220))
                         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
                         title = title_font.render(deck_name, True, (30,30,30))
                         box.blit(title, (20, 18))
@@ -868,7 +897,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
 
                         # draw confirm box
                         confirm_surf = pygame.Surface((confirm_w, confirm_h))
-                        confirm_surf.fill((250,250,250))
+                        confirm_surf.fill((210,215,220))
                         pygame.draw.rect(confirm_surf, (80,80,80), (0,0,confirm_w,confirm_h), 3)
                         q_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
                         qtxt = q_font.render("本当にこのデッキを削除しますか？", True, (30,30,30))
@@ -925,8 +954,13 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
                     # end confirmation loop
 
         # 描画
+        if _bg_frame is not None:
+            try:
+                screen.blit(_bg_frame, (0,0))
+            except Exception:
+                pass
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 160))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0, 0))
         box = pygame.Surface((w, h))
         box.fill((250, 250, 250))
@@ -1013,6 +1047,12 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
         title_font = pygame.font.SysFont(None, 28)
         count_font = pygame.font.SysFont(None, 18)
 
+    # snapshot the background so the underlying screen shows through
+    try:
+        _bg_frame = screen.copy()
+    except Exception:
+        _bg_frame = None
+
     # カードを集計（重複をカウント）
     card_counts = {}
     for c in deck.get('cards', []):
@@ -1044,12 +1084,17 @@ def show_deck_contents_overlay(screen, W, H, FONT, SMALL, TINY, deck):
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
 
+        if _bg_frame is not None:
+            try:
+                screen.blit(_bg_frame, (0,0))
+            except Exception:
+                pass
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
 
         box = pygame.Surface((w, h))
-        box.fill((245,245,250))
+        box.fill((210,215,220))
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck.get('name', 'デッキ'), True, (30,30,30))
         box.blit(title, (20, 12))
@@ -1250,11 +1295,11 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
 
                             # 警告ダイアログ描画
                             overlay = pygame.Surface((win_w, win_h), pygame.SRCALPHA)
-                            overlay.fill((0, 0, 0, 160))
+                            overlay.fill((0,0,0,190))
                             screen.blit(overlay, (0, 0))
 
                             dialog_surf = pygame.Surface((dialog_w, dialog_h))
-                            dialog_surf.fill((245, 245, 250))
+                            dialog_surf.fill((210,215,220))
                             pygame.draw.rect(dialog_surf, (200, 100, 100), (0, 0, dialog_w, dialog_h), 4)
 
                             # メッセージ
@@ -1461,8 +1506,8 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                         # 枚数表示（右下に×n）
                         if card_info['count'] > 1:
                             # 半透明の背景
-                            count_bg = pygame.Surface((40, 25), pygame.SRCALPHA)
-                            count_bg.fill((0, 0, 0, 180))
+                            count_bg = pygame.Surface((40, 28), pygame.SRCALPHA)
+                            count_bg.fill((0, 0, 0, 40 if not get_ui_effects_enabled() else 180))
                             screen.blit(count_bg, (card_x + card_img_width - 45, card_y + card_img_height - 30))
                             
                             # ×n表示
@@ -1643,11 +1688,11 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
 
         # draw overlay and modal
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((0,0,0,160))
+        overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
 
         surf = pygame.Surface((w, h))
-        surf.fill((245,245,250))
+        surf.fill((210,215,220))
         pygame.draw.rect(surf, (80,80,80), (0,0,w,h), 3)
         title = FONT.render("作成デッキを選択してください", True, (30,30,30))
         surf.blit(title, (20, 12))

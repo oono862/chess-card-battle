@@ -7458,10 +7458,13 @@ def draw_panel():
 
     # ゲーム終了画面（勝敗表示と再戦ボタン）
     if game_over:
-        # 半透明オーバーレイを全画面に表示
+        # 半透明オーバーレイを全画面に表示（より強く暗くして文字を目立たせる）
         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-        overlay.fill((15, 15, 15, 50) if not get_ui_effects_enabled() else (0, 0, 0, 180))
+        # Always use a strong dark overlay for game-over so the end UI stands out.
+        overlay.fill((0, 0, 0, 220) if get_ui_effects_enabled() else (15, 15, 15, 220))
         screen.blit(overlay, (0, 0))
+
+        # (タイトルとボタン背後の専用パネルは表示しない)
         
         # 勝敗メッセージ
         title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 48, bold=True)

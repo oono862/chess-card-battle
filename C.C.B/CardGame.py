@@ -1654,6 +1654,19 @@ def show_start_screen():
     # 選択結果をグローバルに反映
     global CPU_DIFFICULTY, W, H, screen
     global _selected_deck_card_names, _selected_deck_slot_idx
+
+    # NOTE:
+    # Avoid unintentionally reusing a previously persisted custom-deck
+    # selection when the user returns to the difficulty/start screen.
+    # Persisted selections are useful for "rematch" flows, but when the
+    # user explicitly returns to the difficulty menu we should show the
+    # deck-selection UI again. Clear the persisted selection here so the
+    # deck list/modal is presented normally.
+    try:
+        _selected_deck_card_names = None
+        _selected_deck_slot_idx = None
+    except Exception:
+        pass
     # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
     user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"

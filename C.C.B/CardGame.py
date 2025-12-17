@@ -5445,17 +5445,17 @@ def draw_panel():
         info_y += left_line_step - 6
     
     # 鉄壁効果の表示（1回限りの防御）
-    if getattr(game.player, 'iron_wall_active', False):
+    player_ironwall_show = False
+    try:
+        player_ironwall_show = getattr(game, 'ironwall_showing', {}).get('white', False) or getattr(game.player, 'iron_wall_active', False)
+    except Exception:
+        player_ironwall_show = getattr(game.player, 'iron_wall_active', False)
+    if player_ironwall_show:
         info_y += 6
         draw_text(screen, "🛡 鉄壁：敵の妨害を防御", info_x, info_y, (200, 80, 0), bold=True, scale=layout.get('scale', 1.0))
         info_y += left_line_step - 6
     
-    # 鉄壁保護効果の表示（1ターン保護）
-    ironwall_protection = getattr(game, 'player_ironwall_protection_turns', 0)
-    if ironwall_protection > 0:
-        info_y += 6
-        draw_text(screen, "🛡 鉄壁：1ターン保護", info_x, info_y, (220, 140, 20), bold=True, scale=layout.get('scale', 1.0))
-        info_y += left_line_step - 6
+    # 鉄壁保護（UI表示を削除）
     info_y += left_line_step
     
     # 山札
@@ -5489,13 +5489,15 @@ def draw_panel():
     except Exception:
         pass
     
-    if ai_has_ironwall_active:
+    try:
+        ai_ironwall_show = getattr(game, 'ironwall_showing', {}).get('black', False) or ai_has_ironwall_active
+    except Exception:
+        ai_ironwall_show = ai_has_ironwall_active
+    if ai_ironwall_show:
         draw_text(screen, "敵🛡 鉄壁：次の効果を防御", info_x, info_y, (200, 80, 0), bold=True, scale=layout.get('scale', 1.0))
         info_y += left_line_step - 6
     
-    if ai_has_ironwall_protection:
-        draw_text(screen, "敵🛡 鉄壁：1ターン保護", info_x, info_y, (220, 140, 20), bold=True, scale=layout.get('scale', 1.0))
-        info_y += left_line_step - 6
+    # ※AIの「1ターン保護」表示は不要のため省略
     
     if ai_has_ironwall_active or ai_has_ironwall_protection:
         info_y += 10  # 区切り用の余白
@@ -5771,9 +5773,15 @@ def draw_panel():
     
     # 鉄壁エフェクトの視覚化（キングの周りにバリアを表示）
     try:
-        # プレイヤーの鉄壁チェック
-        player_has_ironwall = getattr(game.player, 'iron_wall_active', False) or getattr(game, 'player_ironwall_protection_turns', 0) > 0
-        ai_has_ironwall = getattr(game, 'ai_iron_wall_active', False) or getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+        # プレイヤーの鉄壁チェック（UIフラグを優先して即時表示/非表示する）
+        try:
+            player_has_ironwall = getattr(game, 'ironwall_showing', {}).get('white', False) or getattr(game.player, 'iron_wall_active', False) or getattr(game, 'player_ironwall_protection_turns', 0) > 0
+        except Exception:
+            player_has_ironwall = getattr(game.player, 'iron_wall_active', False) or getattr(game, 'player_ironwall_protection_turns', 0) > 0
+        try:
+            ai_has_ironwall = getattr(game, 'ironwall_showing', {}).get('black', False) or getattr(game, 'ai_iron_wall_active', False) or getattr(game, 'ai_ironwall_protection_turns', 0) > 0
+        except Exception:
+            ai_has_ironwall = getattr(game, 'ai_iron_wall_active', False) or getattr(game, 'ai_ironwall_protection_turns', 0) > 0
         
         if player_has_ironwall or ai_has_ironwall:
             for p in chess.pieces:

@@ -224,12 +224,22 @@ class Game:
                     pass
         # If protection turns have expired, ensure any transient iron_wall_active
         # flags are cleared so the effect does not persist beyond the intended
-        # single turn.
+        # single turn. Also clear UI-visible showing flags so visuals/telops
+        # disappear immediately when the effect ends.
         try:
             if getattr(self, 'player_ironwall_protection_turns', 0) <= 0:
                 try:
                     if getattr(self.player, 'iron_wall_active', False):
                         self.player.iron_wall_active = False
+                except Exception:
+                    pass
+                # hide UI visuals when protection ends
+                try:
+                    if hasattr(self, 'ironwall_showing'):
+                        try:
+                            self.ironwall_showing['white'] = False
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         except Exception:
@@ -246,6 +256,15 @@ class Game:
                 try:
                     if getattr(getattr(self, 'ai_player', None), 'iron_wall_active', False):
                         getattr(self, 'ai_player').iron_wall_active = False
+                except Exception:
+                    pass
+                # hide AI UI visuals when protection ends
+                try:
+                    if hasattr(self, 'ironwall_showing'):
+                        try:
+                            self.ironwall_showing['black'] = False
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         except Exception:
@@ -399,26 +418,68 @@ class Game:
             target_color = None
 
         try:
+            # human target: check human PlayerState iron_wall or game-level protection turns
             if target_color == 'white':
-                human = self.player
-                if getattr(human, 'iron_wall_active', False) and source_color is not None and source_color != 'white':
-                    human.iron_wall_active = False
-                    try:
-                        self.log.append(f"鉄壁: 敵の効果 {source_card_name or ''} を防ぎました。")
-                    except Exception:
-                        pass
-                    return False
+                human = getattr(self, 'player', None)
+                human_flag = getattr(human, 'iron_wall_active', False) if human is not None else False
+                human_prot = getattr(self, 'player_ironwall_protection_turns', 0)
+                if source_color is not None and source_color != 'white':
+                    if human_flag:
+                        try:
+                            human.iron_wall_active = False
+                        except Exception:
+                            pass
+                        try:
+                            self.log.append(f"鉄壁: 敵の効果 {source_card_name or ''} を防ぎました。")
+                        except Exception:
+                            pass
+                        return False
+                    if human_prot > 0:
+                        try:
+                            self.log.append(f"鉄壁(保護): 敵の効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
+                        except Exception:
+                            pass
+                        return False
+
+            # black target: check AI PlayerState flag, game-level flag, or protection turns
             elif target_color == 'black':
-                if getattr(self, 'ai_iron_wall_active', False) and source_color is not None and source_color != 'black':
-                    try:
-                        self.ai_iron_wall_active = False
-                    except Exception:
-                        setattr(self, 'ai_iron_wall_active', False)
-                    try:
-                        self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
-                    except Exception:
-                        pass
-                    return False
+                ai_player = getattr(self, 'ai_player', None)
+                ai_flag = getattr(ai_player, 'iron_wall_active', False) if ai_player is not None else False
+                game_ai_flag = getattr(self, 'ai_iron_wall_active', False)
+                ai_prot = getattr(self, 'ai_ironwall_protection_turns', 0)
+                if source_color is not None and source_color != 'black':
+                    if ai_flag:
+                        try:
+                            ai_player.iron_wall_active = False
+                        except Exception:
+                            pass
+                        try:
+                            # keep game-level flag in sync if present
+                            if getattr(self, 'ai_iron_wall_active', False):
+                                setattr(self, 'ai_iron_wall_active', False)
+                        except Exception:
+                            pass
+                        try:
+                            self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
+                        except Exception:
+                            pass
+                        return False
+                    if game_ai_flag:
+                        try:
+                            setattr(self, 'ai_iron_wall_active', False)
+                        except Exception:
+                            pass
+                        try:
+                            self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
+                        except Exception:
+                            pass
+                        return False
+                    if ai_prot > 0:
+                        try:
+                            self.log.append(f"鉄壁(敵,保護): プレイヤーの効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
+                        except Exception:
+                            pass
+                        return False
         except Exception:
             pass
 
@@ -1490,6 +1551,18 @@ def eff_iron_wall(game: Game, player: PlayerState) -> str:
     if not hasattr(player, 'iron_wall_active'):
         player.iron_wall_active = False
     player.iron_wall_active = True
+    # Ensure UI will show the effect immediately
+    try:
+        s = getattr(game, 'ironwall_showing', None)
+        if s is None:
+            setattr(game, 'ironwall_showing', {'white': False, 'black': False})
+            s = game.ironwall_showing
+        if player is game.player:
+            s['white'] = True
+        else:
+            s['black'] = True
+    except Exception:
+        pass
     
     # Set 1-turn protection from harmful gimmick cards
     # Use 2 turns here so that decay at the end of the current turn

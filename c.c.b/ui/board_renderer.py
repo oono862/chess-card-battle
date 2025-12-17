@@ -425,12 +425,45 @@ def draw_turn_telop(screen, layout, turn_telop_msg, turn_telop_until):
             board_size = layout['board_size']
             telop_font_size = max(28, board_size // 8)
             telop_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", telop_font_size, bold=True)
+            # 強めの白文字
             telop_surf = telop_font.render(turn_telop_msg, True, (255, 255, 255))
             shadow = telop_font.render(turn_telop_msg, True, (0, 0, 0))
             tx = board_left + (board_size - telop_surf.get_width()) // 2
             ty = board_top + (board_size - telop_surf.get_height()) // 2
-            screen.blit(shadow, (tx + 2, ty + 2))
-            screen.blit(telop_surf, (tx, ty))
+
+            # 'YOUR TURN' の場合は背景を描かず、テキストのみ表示する
+            draw_bg = True
+            try:
+                if isinstance(turn_telop_msg, str) and turn_telop_msg.strip().upper() == 'YOUR TURN':
+                    draw_bg = False
+            except Exception:
+                draw_bg = True
+
+            if draw_bg:
+                try:
+                    pad_x = max(10, telop_font_size // 5)
+                    pad_y = max(6, telop_font_size // 8)
+                    bx = tx - pad_x
+                    by = ty - pad_y
+                    bw = telop_surf.get_width() + pad_x * 2
+                    bh = telop_surf.get_height() + pad_y * 2
+                    bg = pygame.Surface((bw, bh))
+                    bg.fill((28, 28, 28))
+                    screen.blit(bg, (bx, by))
+                    # 境界線で強調
+                    pygame.draw.rect(screen, (220, 180, 60), (bx, by, bw, bh), 2)
+                except Exception:
+                    pass
+
+            # 影と文字を描画
+            try:
+                screen.blit(shadow, (tx + 3, ty + 3))
+            except Exception:
+                pass
+            try:
+                screen.blit(telop_surf, (tx, ty))
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -456,21 +489,22 @@ def draw_notice_message(screen, layout, notice_msg, notice_until):
             shadow = notice_font.render(notice_msg, True, (0,0,0))
             bx = board_left + (board_size - notice_surf.get_width()) // 2
             by = board_top + 8
-            if get_ui_effects_enabled():
-                try:
-                    tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
-                    tmp.fill((0,0,0,160))
-                    screen.blit(tmp, (bx-10, by-6))
-                except Exception:
-                    pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+            # 常に不透明な背景で表示（半透明にしない）
+            try:
+                bw = notice_surf.get_width() + 20
+                bh = notice_surf.get_height() + 12
+                tmp = pygame.Surface((bw, bh))
+                tmp.fill((28, 28, 28))
+                screen.blit(tmp, (bx-10, by-6))
+                pygame.draw.rect(screen, (220, 180, 60), (bx-10, by-6, bw, bh), 2)
                 screen.blit(shadow, (bx+2, by+2))
-            else:
+            except Exception:
                 try:
-                    tmp = pygame.Surface((notice_surf.get_width()+20, notice_surf.get_height()+12), pygame.SRCALPHA)
-                    tmp.fill((0,0,0,40))
-                    screen.blit(tmp, (bx-10, by-6))
+                    pygame.draw.rect(screen, (28,28,28), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+                    pygame.draw.rect(screen, (220,180,60), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12), 2)
+                    screen.blit(shadow, (bx+2, by+2))
                 except Exception:
-                    pygame.draw.rect(screen, (0,0,0), (bx-10, by-6, notice_surf.get_width()+20, notice_surf.get_height()+12))
+                    pass
             screen.blit(notice_surf, (bx, by))
     except Exception:
         pass

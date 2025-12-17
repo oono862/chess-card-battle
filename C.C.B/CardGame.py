@@ -2376,14 +2376,14 @@ def show_deck_battle_confirm(screen, deck, slot_idx):
         overlay.fill((0,0,0,190))
         screen.blit(overlay, (0,0))
         box = pygame.Surface((w, h))
-        box.fill((240,235,230))
+        box.fill((210,215,220))
         try:
             logger.debug("show_deck_contents_overlay: C.C.B/CardGame.py bg=(240,235,230), size=(%d,%d)", w, h)
         except Exception:
             pass
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render("このデッキでバトルしますか？", True, (30,30,30))
-        box.blit(title, (20, 18))
+        box.blit(title, (20, 24))
 
         # buttons: デッキ確認, バトルスタート
         btn_w = 160

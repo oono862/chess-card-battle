@@ -253,28 +253,9 @@ except Exception:
     def set_gimmick_click_submode(submode): pass
     def get_last_click_info(): return (0.0, (0, 0), None)
     def set_last_click_info(time, pos, card_index): pass
-    FONT_CACHE = {}
-
-    def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
-        key = (family, int(size), bool(bold))
-        f = FONT_CACHE.get(key)
-        if f:
-            return f
-        try:
-            f = pygame.font.SysFont(family, int(size), bold=bold)
-        except Exception:
-            try:
-                f = pygame.font.Font(None, int(size))
-            except Exception:
-                f = FONT
-        FONT_CACHE[key] = f
-        return f
-
-    def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0):
-        pass
-
-    def wrap_text(text: str, max_width: int):
-        return [text]
+    # フォント関連の関数はui.configとui.layoutから使用
+    # FONT_CACHE = {}  # ui.configに存在
+    # get_font, draw_text, wrap_text はui.config/ui.layoutから使用
 
     def compute_layout(win_w: int, win_h: int):
         return {}

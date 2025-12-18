@@ -431,6 +431,40 @@ def show_deck_modal(screen, *args, **kwargs):
                                 # グローバルエイリアスを同期
                                 __main__.game = __main__.state.game
                                 __main__.ai_player = __main__.state.ai_player
+                                # Ensure AI receives starting hand: prefer CardGame._init_ai_start_hand if available
+                                try:
+                                    if hasattr(__main__, '_init_ai_start_hand'):
+                                        try:
+                                            __main__._init_ai_start_hand(__main__.state.ai_player, 4, __main__.state.game)
+                                        except Exception:
+                                            pass
+                                    else:
+                                        # fallback: if hand is empty, draw up to 4 cards from deck
+                                        try:
+                                            ai = getattr(__main__.state, 'ai_player', None)
+                                            g = getattr(__main__.state, 'game', None)
+                                            got = 0
+                                            try:
+                                                got = len(getattr(ai, 'hand').cards or [])
+                                            except Exception:
+                                                got = 0
+                                            if got == 0 and ai is not None and hasattr(ai, 'deck') and getattr(ai, 'deck') is not None:
+                                                for _ in range(4):
+                                                    try:
+                                                        c = ai.deck.draw()
+                                                        if c is not None:
+                                                            ai.hand.add(c)
+                                                    except Exception:
+                                                        pass
+                                                try:
+                                                    if g and hasattr(g, 'log'):
+                                                        g.log.append('[注意] AIの初期手札が0枚だったため、デッキから4枚を強制的に配布しました。')
+                                                except Exception:
+                                                    pass
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                                 # debug: print resulting deck composition if possible
                                 try:
                                     g = __main__.state.game

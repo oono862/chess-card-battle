@@ -9301,19 +9301,25 @@ def main_loop():
                         # マウスベースの増分は無効化してジャンプ防止
                         enlarged_card_mouse_y = None
                     else:
-                        # 従来のログスクロール処理
+                        # ログスクロール: 上スクロール=過去（オフセット+1）、下スクロール=最新側（オフセット-1）
                         if show_log:
-                            if event.y > 0:  # 上スクロール
+                            if event.y > 0:  # 上スクロール -> 古いログへ
+                                try:
+                                    log_scroll_offset = min(_max_scroll, log_scroll_offset + 1)
+                                except Exception:
+                                    log_scroll_offset = log_scroll_offset + 1
+                            elif event.y < 0:  # 下スクロール -> 新しいログへ
                                 log_scroll_offset = max(0, log_scroll_offset - 1)
-                            elif event.y < 0:  # 下スクロール
-                                log_scroll_offset += 1
                 except Exception:
-                    # フォールバック: 元のログスクロールのみ行う
+                    # フォールバック: 元のログスクロールのみ行う（同じ方向定義を維持）
                     if show_log:
                         if event.y > 0:
-                            log_scroll_offset = max(0, log_scroll_offset - 1)
+                            try:
+                                log_scroll_offset = min(_max_scroll, log_scroll_offset + 1)
+                            except Exception:
+                                log_scroll_offset = log_scroll_offset + 1
                         elif event.y < 0:
-                            log_scroll_offset += 1
+                            log_scroll_offset = max(0, log_scroll_offset - 1)
 
         # --- 自動処理: AI の保留昇格を即時解決 ---
         # どこかの効果でAI（黒）のポーンがプロモーション待ちになった場合、

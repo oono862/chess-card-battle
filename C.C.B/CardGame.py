@@ -1057,8 +1057,8 @@ def show_deck_choice_modal(screen):
         t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
         # 固定デッキ枚数表示
         t2 = SMALL.render(f"カード数: 24 / 24", True, (80,80,80))
-        surf.blit(t1, (fixed_rect.x + (btn_w - t1.get_width())//2, fixed_rect.y + 12))
-        surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
+        surf.blit(t1, (fixed_rect.x + 12, fixed_rect.y + 12))
+        surf.blit(t2, (fixed_rect.x + 12, fixed_rect.y + 40))
 
         # custom deck button
         custom_rect = pygame.Rect(right_x - x, by - y, btn_w, btn_h)

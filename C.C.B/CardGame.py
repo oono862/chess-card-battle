@@ -1303,10 +1303,6 @@ def restart_game():
             # game / ai_player をそのまま再利用して UI/盤面だけ初期化する
             try:
                 _prepare_new_battle_after_deck_already_selected()
-                try:
-                    _init_ai_start_hand(ai_player, 4, game)
-                except Exception:
-                    pass
                 # reset log scroll
                 log_scroll_offset = 0
                 return
@@ -1343,6 +1339,30 @@ def restart_game():
                     _init_ai_start_hand(ai_player, 4, game)
                 except Exception:
                     pass
+                # フォールバック: AIの手札が0枚の場合は直接デッキから4枚引かせる
+                try:
+                    got = 0
+                    if ai_player is not None and hasattr(ai_player, 'hand') and hasattr(ai_player, 'deck'):
+                        try:
+                            got = len(getattr(ai_player, 'hand').cards or [])
+                        except Exception:
+                            got = 0
+                        if got == 0:
+                            # Attempt to draw up to 4 cards safely
+                            for _ in range(4):
+                                try:
+                                    c = ai_player.deck.draw()
+                                    if c is not None:
+                                        ai_player.hand.add(c)
+                                except Exception:
+                                    pass
+                            try:
+                                if game and hasattr(game, 'log'):
+                                    game.log.append("[注意] AIの初期手札が0枚だったため、デッキから4枚を強制的に配布しました。")
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             except Exception:
                 ai_player = None
         except Exception:
@@ -1367,7 +1387,34 @@ def restart_game():
         game.player_moved_this_turn = False
     except Exception:
         pass
-    
+    # 再戦時/再開時のフォールバック: AIの手札が0枚の場合はデッキから4枚を配布
+    try:
+        if globals().get('ai_player', None) is not None:
+            try:
+                ai = globals().get('ai_player')
+                got = 0
+                try:
+                    got = len(getattr(ai, 'hand').cards or [])
+                except Exception:
+                    got = 0
+                if got == 0 and hasattr(ai, 'deck') and getattr(ai, 'deck') is not None:
+                    for _ in range(4):
+                        try:
+                            c = ai.deck.draw()
+                            if c is not None:
+                                ai.hand.add(c)
+                        except Exception:
+                            pass
+                    try:
+                        if game and hasattr(game, 'log'):
+                            game.log.append("[注意] 再戦時: AIの手札が0枚だったため、デッキから4枚を強制的に配布しました。")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     game.log.append("=== ゲームを再開しました ===")
     game.log.append("白のターンです。[T]キーまたはゲーム開始ボタンを押してターンを開始してください。")
 
@@ -1612,6 +1659,28 @@ def _prepare_new_battle_after_deck_already_selected():
     except Exception as e:
         logger.debug("Failed to draw initial player hand during rematch init: %s", e)
 
+    # AIの初期手札をデッキからドローする（再戦時の初期化）
+    try:
+        if ai_player is not None:
+            draw_count = 4
+            # 手札を確実にクリアしてからドロー（既にクリア済みだが念のため）
+            if hasattr(ai_player, 'hand') and hasattr(ai_player.hand, 'cards'):
+                ai_player.hand.cards.clear()
+            drawn_count = 0
+            for _ in range(draw_count):
+                try:
+                    c = ai_player.deck.draw() if hasattr(ai_player, 'deck') else None
+                    if c is not None:
+                        ai_player.hand.add(c)
+                        drawn_count += 1
+                except Exception:
+                    pass
+            if drawn_count > 0 and hasattr(game, 'log'):
+                game.log.append(f"AI: バトル開始時にデッキから{drawn_count}枚ドローしました。")
+            logger.debug("_prepare_new_battle: AI drew %d cards, hand size=%d", drawn_count, len(ai_player.hand.cards) if hasattr(ai_player, 'hand') and hasattr(ai_player.hand, 'cards') else 0)
+    except Exception as e:
+        logger.debug("Failed to draw initial AI hand during rematch init: %s", e)
+
     # Ensure game/ai_player exist; do not recreate them here
     try:
         if game is not None:
@@ -1632,7 +1701,7 @@ def _prepare_new_battle_after_deck_already_selected():
         pass
 
 def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) -> None:
-    """AIに開始時の初期手札としてデッキから数枚ドローさせる。
+    """AIに開始時の初期手札としてデッキから4枚ドローさせる。
 
     PlayerState互換オブジェクト（deck.draw, hand.add, hand_limit, graveyard, reset_pp）を想定。
     ゲームログがあれば記録する。
@@ -1640,28 +1709,60 @@ def _init_ai_start_hand(ai: object, n: int = 4, game_obj: object | None = None) 
     """
     try:
         if ai is None:
+            logger.debug("_init_ai_start_hand: ai is None")
             return
+        
+        # デバッグ: AIのデッキ情報を確認
+        try:
+            deck_count = len(ai.deck.cards) if hasattr(ai, 'deck') and hasattr(ai.deck, 'cards') else 0
+            logger.debug("_init_ai_start_hand: AI deck has %d cards", deck_count)
+        except Exception as e:
+            logger.debug("_init_ai_start_hand: Failed to get deck count: %s", e)
+        
         # PPを最大へ
         try:
             if hasattr(ai, 'reset_pp'):
                 ai.reset_pp()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_init_ai_start_hand: Failed to reset PP: %s", e)
         
-        # ギミック配布を行わず、デッキから初期手札を引く
+        # デッキから初期手札を4枚引く
         try:
             draw_count = 4
-            for _ in range(draw_count):
-                card = ai.deck.draw() if hasattr(ai, 'deck') else None
+            drawn_count = 0
+            for i in range(draw_count):
+                card = None
+                try:
+                    card = ai.deck.draw() if hasattr(ai, 'deck') else None
+                except Exception as e:
+                    logger.debug("_init_ai_start_hand: Failed to draw card %d: %s", i, e)
+                
                 if card:
-                    ai.hand.add(card)
-            if draw_count and game_obj and hasattr(game_obj, 'log'):
-                game_obj.log.append(f"AI: バトル開始時にデッキから{draw_count}枚ドローしました。")
-        except Exception:
-            pass
-    except Exception:
-        # 失敗してもゲーム進行を止めない
-        pass
+                    try:
+                        if hasattr(ai, 'hand'):
+                            ai.hand.add(card)
+                            drawn_count += 1
+                            logger.debug("_init_ai_start_hand: Drew card %d: %s", i+1, card.name if hasattr(card, 'name') else str(card))
+                        else:
+                            logger.debug("_init_ai_start_hand: AI has no hand attribute")
+                    except Exception as e:
+                        logger.debug("_init_ai_start_hand: Failed to add card to hand: %s", e)
+                else:
+                    logger.debug("_init_ai_start_hand: Card %d is None (deck empty?)", i+1)
+            
+            # 最終的な手札枚数を確認
+            try:
+                final_hand_count = len(ai.hand.cards) if hasattr(ai, 'hand') and hasattr(ai.hand, 'cards') else 0
+                logger.debug("_init_ai_start_hand: AI final hand count: %d (drew %d)", final_hand_count, drawn_count)
+            except Exception:
+                pass
+            
+            if drawn_count > 0 and game_obj and hasattr(game_obj, 'log'):
+                game_obj.log.append(f"AI: バトル開始時にデッキから{drawn_count}枚ドローしました。")
+        except Exception as e:
+            logger.exception("_init_ai_start_hand: Error during card draw: %s", e)
+    except Exception as e:
+        logger.exception("_init_ai_start_hand: Unexpected error: %s", e)
 
 def create_pieces():
     # 互換のためのエイリアス（将来的に削除予定）
@@ -3246,9 +3347,15 @@ def show_card_detail(screen, card_name, get_card_image):
     """カード詳細表示（拡大表示）"""
     clk = pygame.time.Clock()
     
-    # 拡大カードサイズ
-    detail_w = 360
-    detail_h = 480
+    # 拡大カードの基準サイズ（スケールを掛けて表示）
+    base_detail_w = 360
+    base_detail_h = 480
+    # グローバルの拡大率を使ってモーダル中もスクロールで拡大縮小できるようにする
+    global enlarged_card_scale, enlarged_card_mouse_y
+    try:
+        enlarged_card_scale = 1.0
+    except Exception:
+        enlarged_card_scale = 1.0
     
     # 元の画面を保存（背景が徐々に濃くなるのを防ぐ）
     base_screen = screen.copy()
@@ -3263,6 +3370,13 @@ def show_card_detail(screen, card_name, get_card_image):
                 pygame.quit(); sys.exit(0)
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 return
+            if ev.type == pygame.MOUSEWHEEL:
+                # モーダル表示中のホイールで拡大縮小
+                try:
+                    enlarged_card_scale = max(0.5, min(2.5, enlarged_card_scale + (ev.y * 0.1)))
+                    enlarged_card_mouse_y = None
+                except Exception:
+                    pass
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
         
@@ -3270,10 +3384,12 @@ def show_card_detail(screen, card_name, get_card_image):
         screen.blit(base_screen, (0, 0))
         screen.blit(overlay, (0, 0))
         
-        # カード画像を中央に表示
+        # カード画像を中央に表示（グローバル拡大率を反映）
+        detail_w = int(base_detail_w * enlarged_card_scale)
+        detail_h = int(base_detail_h * enlarged_card_scale)
         cx = (W - detail_w) // 2
         cy = (H - detail_h) // 2
-        
+
         if get_card_image:
             try:
                 card_img = get_card_image(card_name, size=(detail_w, detail_h))

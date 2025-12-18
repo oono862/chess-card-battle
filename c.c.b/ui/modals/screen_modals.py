@@ -174,6 +174,34 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
                             else:
                                 game = new_game_with_mode_func(DECK_MODE)
                                 ai_player = build_ai_player_func(DECK_MODE)
+                                # Ensure AI gets starting hand when created from start screen
+                                try:
+                                    import __main__ as _m
+                                    if hasattr(_m, '_init_ai_start_hand'):
+                                        try:
+                                            _m._init_ai_start_hand(ai_player, 4, game)
+                                        except Exception:
+                                            pass
+                                    else:
+                                        try:
+                                            got = len(getattr(ai_player, 'hand').cards or []) if ai_player is not None else 0
+                                        except Exception:
+                                            got = 0
+                                        if got == 0 and ai_player is not None and hasattr(ai_player, 'deck') and getattr(ai_player, 'deck') is not None:
+                                            for _ in range(4):
+                                                try:
+                                                    c = ai_player.deck.draw()
+                                                    if c is not None:
+                                                        ai_player.hand.add(c)
+                                                except Exception:
+                                                    pass
+                                            try:
+                                                if game and hasattr(game, 'log'):
+                                                    game.log.append('[注意] AIの初期手札が0枚だったため、デッキから4枚を強制的に配布しました。')
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
                                 try:
                                     logger.debug("game created (start_screen) id=%s deck_count=%s", id(game), len(getattr(game.player.deck,'cards',[])) if game and hasattr(game,'player') else 'NA')
                                 except Exception:

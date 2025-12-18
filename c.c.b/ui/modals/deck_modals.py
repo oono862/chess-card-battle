@@ -162,7 +162,7 @@ def show_deck_choice_modal(screen, *args, **kwargs):
     # Button geometry
     btn_w = 220
     btn_h = 80
-    left_x = x + 32
+    left_x = x + 50
     right_x = x + w - btn_w - 32
     by = y + 80
 
@@ -236,8 +236,8 @@ def show_deck_choice_modal(screen, *args, **kwargs):
         pygame.draw.rect(surf, (70,70,70), fixed_rect, 2)
         t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
         t2 = SMALL.render("カード数: 24 / 24", True, (80,80,80))
-        surf.blit(t1, (fixed_rect.x + 12, fixed_rect.y + 12))
-        surf.blit(t2, (fixed_rect.x + 12, fixed_rect.y + 40))
+        surf.blit(t1, (fixed_rect.x + 6, fixed_rect.y + 12))
+        surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
 
         # custom deck button
         custom_rect = pygame.Rect(right_x - x, by - y, btn_w, btn_h)
@@ -1641,7 +1641,7 @@ def show_custom_deck_selection(screen, W, H, FONT, SMALL, load_saved_decks, show
                     # choices が空ならメッセージ領域のボタン（作る/戻る）を処理
                     if not choices:
                         # ボタン領域を計算
-                        btn_w = 120
+                        btn_w = 260
                         make_rect = pygame.Rect(x + 80, y + h - 90, btn_w, 50)
                         back_rect = pygame.Rect(x + w - 200, y + h - 90, btn_w, 50)
                         if make_rect.collidepoint(mx, my):

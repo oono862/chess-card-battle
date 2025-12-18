@@ -8,6 +8,17 @@
 """
 import pygame
 
+# get_font関数はui.configから使用（重複を避けるため）
+try:
+    from ui.config import get_font
+except ImportError:
+    # フォールバック: ui.configが利用できない場合は自前で定義
+    def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
+        try:
+            return pygame.font.SysFont(family, int(size), bold=bold)
+        except Exception:
+            return pygame.font.Font(None, int(size))
+
 # ==================== 画面設定 ====================
 # デフォルト画面サイズ
 DEFAULT_WIDTH = 1200
@@ -117,32 +128,4 @@ def set_last_click_info(time, pos, card_index):
     last_clicked_card_index = card_index
 
 
-def get_font(size: int, bold: bool = False, family: str = "Noto Sans JP, Meiryo, MS Gothic"):
-    """
-    フォントを取得（キャッシュ機能付き）
-    
-    Args:
-        size: フォントサイズ
-        bold: 太字かどうか
-        family: フォントファミリー名
-    
-    Returns:
-        pygame.font.Font: 要求されたフォントオブジェクト
-    """
-    # フォントが未初期化の場合は初期化
-    _initialize_fonts()
-    
-    key = (family, int(size), bool(bold))
-    f = FONT_CACHE.get(key)
-    if f is not None:
-        return f
-    try:
-        f = pygame.font.SysFont(family, int(size), bold=bold)
-    except Exception:
-        # fallback to default font object
-        try:
-            f = pygame.font.Font(None, int(size))
-        except Exception:
-            f = FONT if FONT is not None else pygame.font.Font(None, 20)
-    FONT_CACHE[key] = f
-    return f
+

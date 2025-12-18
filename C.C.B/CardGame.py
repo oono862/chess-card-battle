@@ -1786,29 +1786,9 @@ def show_start_screen():
                     # if the user canceled (Esc/×), don't start the game; keep showing menu
                     if not selected:
                         continue
-                    # if custom decks were selected, show deck list to pick which deck to use
+                    # if custom decks were selected, always show deck list to pick a deck
                     try:
                         if DECK_MODE == 'custom':
-                            # Check if user previously selected a deck by viewing its details
-                            if _selected_deck_card_names:
-                                # Use the previously selected deck
-                                logger.debug("Using previously selected deck with cards=%s", _selected_deck_card_names[:3])
-                                if 'build_game_from_card_names' in globals():
-                                    g = build_game_from_card_names(_selected_deck_card_names)
-                                    if g is not None:
-                                        globals()['game'] = g
-                                        globals()['ai_player'] = build_ai_player('custom')
-                                        try:
-                                            _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
-                                        except Exception:
-                                            pass
-                                        return
-                                    else:
-                                        # Fallback: show deck list for user to pick manually
-                                        logger.debug("build_game_from_card_names failed, showing deck list")
-                                        _selected_deck_card_names = None
-                                        _selected_deck_slot_idx = None
-                            # Show deck list for user to pick manually
                             started = show_deck_modal(screen, battle_select_mode=True)
                             if started:
                                 return
@@ -1852,26 +1832,7 @@ def show_start_screen():
                             continue
                         try:
                             if DECK_MODE == 'custom':
-                                # Check if user previously selected a deck by viewing its details
-                                if _selected_deck_card_names:
-                                    # Use the previously selected deck
-                                    logger.debug("Using previously selected deck with cards=%s", _selected_deck_card_names[:3])
-                                    if 'build_game_from_card_names' in globals():
-                                        g = build_game_from_card_names(_selected_deck_card_names)
-                                        if g is not None:
-                                            globals()['game'] = g
-                                            globals()['ai_player'] = build_ai_player('custom')
-                                            try:
-                                                _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
-                                            except Exception:
-                                                pass
-                                            return
-                                        else:
-                                            # Fallback: show deck list for user to pick manually
-                                            logger.debug("build_game_from_card_names failed, showing deck list")
-                                            _selected_deck_card_names = None
-                                            _selected_deck_slot_idx = None
-                                # Show deck list for user to pick manually
+                                # Always show deck list for user to pick manually
                                 started = show_deck_modal(screen, battle_select_mode=True)
                                 if started:
                                     return
@@ -3129,20 +3090,11 @@ def show_deck_action_modal(screen, deck, slot_idx):
                     return None
 
                 if view_rect.collidepoint(mx, my):
-                    # After viewing deck details, save the deck info so it can be used for battle
-                    # even if the user exits to start screen and selects difficulty again
-                    global _selected_deck_slot_idx, _selected_deck_card_names
-                    show_deck_contents_overlay(screen, deck)
-                    _selected_deck_slot_idx = slot_idx
-                    card_names = []
-                    for c in deck.get('cards', []):
-                        if isinstance(c, dict):
-                            card_names.append(str(c.get('name', '')))
-                        else:
-                            card_names.append(str(c))
-                    _selected_deck_card_names = card_names
-                    logger.debug("Saved deck info: slot=%d, cards=%s", slot_idx, card_names[:3])
-                    # Close the action modal and return to show_deck_modal so user can go back to start screen
+                    # 単にデッキ詳細を表示するだけとし、バトル用の事前選択は保存しない
+                    try:
+                        show_deck_contents_overlay(screen, deck)
+                    finally:
+                        pass
                     return None
 
                 if delete_rect.collidepoint(mx, my):

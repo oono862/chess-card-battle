@@ -860,9 +860,36 @@ def _generate_random_gimmick_cards(count: int = 4) -> List[Card]:
             Card("墓地ルーレット", 1, eff_graveyard_roulette),
             Card("摂取", 1, eff_leech_pp2),
         ]
-        # ランダムに count 枚選択（重複あり）
+        # ランダムに count 枚選択するが、同一ギミックは最大3枚までとする
         import random
-        selected = random.choices(gimmick_pool, k=count)
+        max_per_card = 3
+        selected: List[Card] = []
+        counts = {c.name: 0 for c in gimmick_pool}
+        # シャッフルしてから選ぶことで偏りを抑える
+        pool_indices = list(range(len(gimmick_pool)))
+        # スタート時のギミックは同一カードが4枚になるべきではないため、
+        # 重複が上限に達するまでリトライして選ぶ実装にする
+        while len(selected) < count:
+            if not pool_indices:
+                pool_indices = list(range(len(gimmick_pool)))
+            idx = random.choice(pool_indices)
+            card = gimmick_pool[idx]
+            if counts[card.name] < max_per_card:
+                selected.append(card)
+                counts[card.name] += 1
+            else:
+                # そのカードは上限に達したため候補から一時的に除外
+                try:
+                    pool_indices.remove(idx)
+                except Exception:
+                    pass
+            # Safety: 無限ループ回避（理論上起きないが保険）
+            if not pool_indices and len(selected) < count:
+                # すべてのカードが上限に達した場合は残りをランダムで埋める
+                remaining = count - len(selected)
+                for _ in range(remaining):
+                    selected.append(random.choice(gimmick_pool))
+                break
         return selected
     except Exception:
         # エラー時は空リストを返す（ゲーム進行を止めない）
@@ -909,16 +936,12 @@ def new_game_with_mode(mode: str):
         except Exception:
             pass
         
-        # 固定デッキ(24枚)の場合のみ、ギミック配布分としてデッキから4枚取り除く
-        if mode == 'fixed':
-            try:
-                if hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
-                    for _ in range(4):
-                        if player.deck.cards:
-                            # 先頭から取り除く（従来のドロー相当）
-                            player.deck.cards.pop(0)
-            except Exception:
-                pass
+        # 固定デッキ(24枚)の場合について:
+        # 以前は先頭から無差別に4枚を取り除いていましたが、
+        # ギミック配布時に同名カードを追加すると種類ごとの上限(3枚)を
+        # 超えてしまう可能性がありました。
+        # ここでは先にデッキをそのままにしておき、後で配布するギミックと
+        # 同名のカードがデッキに存在すれば1枚ずつ取り除く実装に変更します。
 
         # ゲーム開始時にプレイヤーにギミックカード4枚のみを配布（固定デッキのみ）
         try:
@@ -927,6 +950,23 @@ def new_game_with_mode(mode: str):
                 for gc in gimmick_cards:
                     if gc is not None:
                         player.hand.add(gc)
+                # 配布したギミックと同名のカードがデッキに残っていれば
+                # 同数だけデッキから取り除くことで、種類ごとの最大枚数が
+                # 守られるようにする。
+                try:
+                    if hasattr(player, 'deck') and hasattr(player.deck, 'cards'):
+                        for gc in gimmick_cards:
+                            if gc is None:
+                                continue
+                            for i, dcard in enumerate(list(player.deck.cards)):
+                                if getattr(dcard, 'name', None) == getattr(gc, 'name', None):
+                                    try:
+                                        player.deck.cards.pop(i)
+                                    except Exception:
+                                        pass
+                                    break
+                except Exception:
+                    pass
                 if gimmick_cards and hasattr(game, 'log'):
                     game.log.append("バトル開始: ギミックカード4枚を受け取りました。")
         except Exception:
@@ -8596,38 +8636,34 @@ def handle_mouse_click(pos):
                         engine_piece = chess.get_piece_at(int(tr), int(tc)) if (tr is not None and tc is not None) else None
                     except Exception:
                         engine_piece = None
-                    if engine_piece is not None:
-                        # record on canonical engine piece
-                        try:
-                            game.frozen_pieces[id(engine_piece)] = turns
-                        except Exception:
-                            game.frozen_pieces[id(engine_piece)] = turns
-                        try:
-                            setattr(engine_piece, 'frozen_turns', turns)
-                        except Exception:
-                            pass
-                        target_for_log = engine_piece
-                    else:
-                        # fallback: record on clicked object (dict or other)
-                        try:
-                            game.frozen_pieces[id(clicked)] = turns
-                        except Exception:
-                            game.frozen_pieces[id(clicked)] = turns
-                        try:
-                            setattr(clicked, 'frozen_turns', turns)
-                        except Exception:
-                            pass
-                        target_for_log = clicked
-                    # try to get a readable name
+                    # Use game.apply_freeze_piece so iron-wall checks run consistently
                     try:
-                        name = getattr(target_for_log, 'name', None)
-                        if name is None and isinstance(target_for_log, dict):
-                            name = target_for_log.get('name')
-                        if name is None:
-                            name = str(target_for_log)
+                        src_color = game.pending.info.get('source_color') if game.pending and isinstance(game.pending.info, dict) else None
                     except Exception:
-                        name = '駒'
-                    game.log.append(f"凍結: {name} を {turns} ターン凍結")
+                        src_color = None
+                    try:
+                        src_name = game.pending.info.get('source_card_name') if game.pending and isinstance(game.pending.info, dict) else None
+                    except Exception:
+                        src_name = None
+                    target_obj = engine_piece if engine_piece is not None else clicked
+                    try:
+                        applied = game.apply_freeze_piece(target_obj, turns, target_color=('black' if player_color == 'white' else 'white'), source_color=src_color, source_card_name=src_name)
+                    except Exception:
+                        applied = False
+                    if not applied:
+                        # apply_freeze_piece already logs iron-wall messages; clear pending
+                        game.pending = None
+                    else:
+                        target_for_log = engine_piece if engine_piece is not None else clicked
+                        try:
+                            name = getattr(target_for_log, 'name', None)
+                            if name is None and isinstance(target_for_log, dict):
+                                name = target_for_log.get('name')
+                            if name is None:
+                                name = str(target_for_log)
+                        except Exception:
+                            name = '駒'
+                        game.log.append(f"凍結: {name} を {turns} ターン凍結")
                     # play ice GIF on the target square
                     try:
                         # clicked may be object or dict
@@ -9580,6 +9616,7 @@ def main_loop():
                     # timing of turn switches — prefer actual king existence.
                     try:
                         if winner == 'draw':
+                            # Prefer actual king existence as a primary correction
                             wk = any(p.name == 'K' and p.color == 'white' for p in chess.pieces)
                             bk = any(p.name == 'K' and p.color == 'black' for p in chess.pieces)
                             if wk and not bk:
@@ -9587,7 +9624,20 @@ def main_loop():
                             elif bk and not wk:
                                 corrected = 'black'
                             else:
-                                corrected = 'draw'
+                                # If both kings exist, double-check for an actual
+                                # checkmate situation that might have been misreported
+                                # as a draw due to timing of turn switches.
+                                try:
+                                    white_mate = (not has_legal_moves_with_cards('white')) and is_in_check_for_display(chess.pieces, 'white')
+                                    black_mate = (not has_legal_moves_with_cards('black')) and is_in_check_for_display(chess.pieces, 'black')
+                                    if white_mate and not black_mate:
+                                        corrected = 'black'
+                                    elif black_mate and not white_mate:
+                                        corrected = 'white'
+                                    else:
+                                        corrected = 'draw'
+                                except Exception:
+                                    corrected = 'draw'
                         else:
                             corrected = winner
                     except Exception:

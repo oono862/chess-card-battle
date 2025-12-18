@@ -992,7 +992,7 @@ def show_deck_choice_modal(screen):
     # Button geometry
     btn_w = 220
     btn_h = 80
-    left_x = x + 32
+    left_x = x + 50
     right_x = x + w - btn_w - 32
     by = y + 80
 
@@ -1055,9 +1055,9 @@ def show_deck_choice_modal(screen):
         pygame.draw.rect(surf, (220,220,220), fixed_rect)
         pygame.draw.rect(surf, (70,70,70), fixed_rect, 2)
         t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
-        # 固定デッキ枚数表示
+        # 固定デッキ枚数表示（中央揃え）
         t2 = SMALL.render(f"カード数: 24 / 24", True, (80,80,80))
-        surf.blit(t1, (fixed_rect.x + (btn_w - t1.get_width())//2, fixed_rect.y + 12))
+        surf.blit(t1, (fixed_rect.x + 6, fixed_rect.y + 12))
         surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
 
         # custom deck button
@@ -1708,7 +1708,7 @@ def show_start_screen():
         btn_font = get_font(max(20, int(H * 0.03)), bold=True)
         options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
         # ボタン幅を広げてテキストが見切れないようにする
-        btn_w = 240
+        btn_w = 260
         btn_h = 80
         # use larger horizontal spacing between buttons to match screenshot
         spacing = 20

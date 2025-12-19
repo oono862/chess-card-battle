@@ -159,6 +159,13 @@ def build_game_from_card_names(names):
     names are skipped. On failure, fall back to new_game_with_mode('custom').
     """
     try:
+        # Reject decks that exceed the maximum allowed custom deck size (20)
+        try:
+            if names is not None and len(names) > 20:
+                logger.warning("build_game_from_card_names: rejected deck with %d cards (>20)", len(names))
+                return None
+        except Exception:
+            pass
         # Import dependencies
         try:
             from card_core import Card, Deck, PlayerState, Game, make_rule_cards_deck

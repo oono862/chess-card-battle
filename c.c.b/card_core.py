@@ -131,6 +131,9 @@ class Game:
     frozen_pieces: Dict[Any, int] = field(default_factory=dict)  # piece_id -> turns left
     # which color the blocked tile applies to (tile -> 'white'|'black')
     blocked_tiles_owner: Dict[Any, str] = field(default_factory=dict)
+    # Detailed per-tile entries to allow multiple overlapping block effects
+    # coord -> list of {'turns': int, 'owner': str, 'source_card_name': Optional[str]}
+    blocked_tiles_entries: Dict[Any, List[Dict[str, Any]]] = field(default_factory=dict)
     # Whether the player has already moved a chess piece this card-game turn.
     player_moved_this_turn: bool = False
     # Whether the player's card-game turn is currently active (started via start_turn)
@@ -270,9 +273,52 @@ class Game:
         except Exception:
             pass
         
-        # Decay blocked tiles: only decrement tiles that belong to the color
-        # whose turn just ended (if provided).
+        # Decay blocked tiles: support both legacy int-based values and
+        # the new per-tile entries which allow overlapping effects.
         for k in list(self.blocked_tiles.keys()):
+            # If detailed entries exist for this coord, operate on them
+            entries = getattr(self, 'blocked_tiles_entries', {}).get(k)
+            if entries is not None:
+                # Decrement only entries that match the ended_color (when provided),
+                # otherwise decrement all.
+                try:
+                    for e in entries:
+                        if ended_color is not None and e.get('owner') is not None and e.get('owner') != ended_color:
+                            continue
+                        try:
+                            e['turns'] -= 1
+                        except Exception:
+                            e['turns'] = (e.get('turns', 0) - 1)
+                except Exception:
+                    pass
+                # Remove expired entries
+                try:
+                    entries = [e for e in entries if e.get('turns', 0) > 0]
+                except Exception:
+                    entries = []
+                if not entries:
+                    try:
+                        del self.blocked_tiles_entries[k]
+                    except Exception:
+                        pass
+                    try:
+                        del self.blocked_tiles_owner[k]
+                    except Exception:
+                        pass
+                    try:
+                        del self.blocked_tiles[k]
+                    except Exception:
+                        pass
+                else:
+                    # keep entries and update legacy numeric view to max remaining turns
+                    try:
+                        self.blocked_tiles_entries[k] = entries
+                        self.blocked_tiles[k] = max(e.get('turns', 0) for e in entries)
+                    except Exception:
+                        pass
+                continue
+
+            # Legacy single-value handling
             owner = self.blocked_tiles_owner.get(k)
             if ended_color is not None and owner is not None and owner != ended_color:
                 # skip tiles that belong to the other color
@@ -394,16 +440,73 @@ class Game:
         except Exception:
             pass
 
-        # Apply the block
+        # Apply the block as a new entry so multiple effects can coexist.
         try:
-            self.blocked_tiles[coord] = turns
+            entries = getattr(self, 'blocked_tiles_entries', None)
+            if entries is None:
+                # ensure attribute exists
+                try:
+                    self.blocked_tiles_entries = {}
+                except Exception:
+                    pass
+                entries = self.blocked_tiles_entries
+            cur = entries.get(coord)
+            new_entry = {'turns': int(turns), 'owner': applies_to, 'source_card_name': source_card_name}
+            if cur is None:
+                entries[coord] = [new_entry]
+            else:
+                # append new entry, do not remove existing
+                try:
+                    cur.append(new_entry)
+                except Exception:
+                    entries[coord] = list(cur) + [new_entry]
+            # update legacy numeric view to max remaining turns for compatibility
             try:
-                self.blocked_tiles_owner[coord] = applies_to
+                self.blocked_tiles[coord] = max(e.get('turns', 0) for e in entries[coord])
+            except Exception:
+                try:
+                    self.blocked_tiles[coord] = turns
+                except Exception:
+                    pass
+            # set legacy owner only if not present (keep first-owner behavior)
+            try:
+                if coord not in self.blocked_tiles_owner:
+                    self.blocked_tiles_owner[coord] = applies_to
             except Exception:
                 pass
         except Exception:
-            self.blocked_tiles[coord] = turns
+            try:
+                # best-effort fallback
+                self.blocked_tiles[coord] = turns
+                if coord not in getattr(self, 'blocked_tiles_owner', {}):
+                    try:
+                        self.blocked_tiles_owner[coord] = applies_to
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         return True
+
+    def is_tile_blocked_for(self, coord, color: str) -> bool:
+        """Return True if tile `coord` is blocked for `color` taking into
+        account multiple overlapping block entries.
+        """
+        try:
+            entries = getattr(self, 'blocked_tiles_entries', {}).get(coord)
+            if entries:
+                for e in entries:
+                    try:
+                        if e.get('turns', 0) > 0 and e.get('owner') == color:
+                            return True
+                    except Exception:
+                        continue
+            # fallback to legacy owner mapping
+            owner = self.blocked_tiles_owner.get(coord)
+            if owner == color:
+                return True
+        except Exception:
+            pass
+        return False
 
     def apply_freeze_piece(self, piece_obj, turns: int, target_color: Optional[str] = None, source_color: Optional[str] = None, source_card_name: Optional[str] = None) -> bool:
         """Apply freeze to a piece (engine piece or other) respecting iron-wall.
@@ -856,12 +959,21 @@ class Game:
                                         applied.append((nr, nc))
                                 except Exception:
                                     try:
-                                        self.blocked_tiles[(nr, nc)] = turns
-                                        self.blocked_tiles_owner[(nr, nc)] = opp_color
-                                        applied.append((nr, nc))
+                                        ok = self.apply_blocked_tile((nr, nc), turns, applies_to=opp_color, source_color=self.pending.info.get('source_color'), source_card_name=self.pending.info.get('source_card_name'))
+                                        if ok:
+                                            applied.append((nr, nc))
                                     except Exception:
-                                        self.blocked_tiles[(nr, nc)] = turns
-                                        applied.append((nr, nc))
+                                        try:
+                                            # best-effort fallback
+                                            self.blocked_tiles[(nr, nc)] = turns
+                                            self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                            applied.append((nr, nc))
+                                        except Exception:
+                                            try:
+                                                self.blocked_tiles[(nr, nc)] = turns
+                                                applied.append((nr, nc))
+                                            except Exception:
+                                                pass
                             placed = len(applied)
                             if placed:
                                 try:

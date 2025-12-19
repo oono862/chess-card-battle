@@ -700,7 +700,7 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
     """
     clk = pygame.time.Clock()
     # increase modal and button sizes for touch / readability
-    w, h = 540, 260
+    w, h = 700, 320
     x = (W - w) // 2
     y = (H - h) // 2
     # Use Japanese-capable fonts to avoid tofu (□) when rendering deck names
@@ -742,9 +742,9 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
                     return None
 
                 # buttons: left=edit, mid=view, right=delete (increased size + padding)
-                btn_w = 200
-                btn_h = 64
-                gap = 28
+                btn_w = 180
+                btn_h = 70
+                gap = 35
                 bx = x + (w - (btn_w*3 + gap*2)) // 2
                 by = y + h - (20 + btn_h)
                 edit_rect = pygame.Rect(bx, by, btn_w, btn_h)
@@ -790,11 +790,11 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
                         box.blit(info, (20,56))
 
                         # buttons under modal — ensure they fit inside the box and center text
-                        btn_h = 40
-                        padding = 20
-                        gap2 = 20
+                        btn_h = 70
+                        padding = 35
+                        gap2 = 35
                         max_btn_w = (w - padding*2 - gap2*2) // 3
-                        btn_w2 = min(140, max_btn_w)
+                        btn_w2 = min(180, max_btn_w)
                         bx2 = (w - (btn_w2*3 + gap2*2)) // 2
                         by2 = h - padding - btn_h
                         edit_rect_local = pygame.Rect(bx2, by2, btn_w2, btn_h)
@@ -898,12 +898,12 @@ def show_deck_action_modal(screen, W, H, get_font, FONT, SMALL, TINY, deck, slot
 
         # ボタン: 左=デッキ編集, 中=デッキ詳細, 右=デッキ削除
         # 視認性向上のためボタンを大型化し、余白を増やす
-        btn_h = 64
-        padding = 28
-        gap = 28
+        btn_h = 70
+        padding = 35
+        gap = 35
         # 最大幅を計算し、過度に大きくならないよう上限を設定
         max_btn_w = (w - padding*2 - gap*2) // 3
-        btn_w = min(200, max_btn_w)
+        btn_w = min(180, max_btn_w)
         bx = (w - (btn_w*3 + gap*2)) // 2
         by = h - padding - btn_h
         edit_rect_local = pygame.Rect(bx, by, btn_w, btn_h)

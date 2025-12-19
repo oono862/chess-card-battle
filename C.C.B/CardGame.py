@@ -2193,10 +2193,32 @@ def show_deck_modal(screen, battle_select_mode=False):
                                 if cards_field is not None and len(cards_field) > 20:
                                     # Show a blocking warning modal to the user
                                     try:
-                                        msg = f"選択したデッキは{len(cards_field)}枚です。\n最大20枚までです。\n\n20枚を超えているためゲームで使用できません！"
+                                        msg = f"選択されたデッキは{len(cards_field)}枚です。\n作成デッキのカード枚数は最大20枚までです。\n\n20枚を超えているためゲームで使用できません！"
+                                        # Capture current screen so modal can composite over it
+                                        snapshot = None
+                                        try:
+                                            snapshot = screen.copy()
+                                        except Exception:
+                                            try:
+                                                # fallback: create blank snapshot and attempt to blit existing screen
+                                                snapshot = pygame.Surface((W, H))
+                                                snapshot.blit(screen, (0, 0))
+                                            except Exception:
+                                                snapshot = None
+
                                         # modal loop
                                         overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-                                        overlay.fill((0, 0, 0, 150))
+                                        try:
+                                            overlay = overlay.convert_alpha()
+                                        except Exception:
+                                            pass
+                                        # Softer semi-transparent black so background is faintly visible
+                                        alpha_val = 120
+                                        overlay.fill((0, 0, 0, alpha_val))
+                                        try:
+                                            overlay.set_alpha(alpha_val)
+                                        except Exception:
+                                            pass
                                         font = get_font(max(18, int(H * 0.025)))
                                         ok_font = get_font(max(16, int(H * 0.02)), bold=True)
                                         # prepare message lines
@@ -2217,8 +2239,13 @@ def show_deck_modal(screen, battle_select_mode=False):
                                                     mx, my = mev.pos
                                                     if ok_rect.collidepoint(mx, my):
                                                         showing = False
-                                            # draw overlay + modal
+                                            # draw snapshot (underlying UI) + overlay + modal
                                             try:
+                                                if snapshot is not None:
+                                                    screen.blit(snapshot, (0, 0))
+                                                else:
+                                                    # fallback: clear to dark background then overlay
+                                                    screen.fill((0,0,0))
                                                 screen.blit(overlay, (0,0))
                                                 pygame.draw.rect(screen, (240,240,240), (modal_x, modal_y, modal_w, modal_h))
                                                 pygame.draw.rect(screen, (100,100,100), (modal_x, modal_y, modal_w, modal_h), 2)

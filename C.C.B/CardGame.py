@@ -3194,12 +3194,13 @@ def show_deck_action_modal(screen, deck, slot_idx):
         logger.debug("Error logging deck info in action modal: %s", e)
     
     clk = pygame.time.Clock()
-    w, h = 420, 200
+    w, h = 700, 280
     x = (W - w) // 2
     y = (H - h) // 2
     # Use Japanese-capable fonts to avoid tofu (□) when rendering deck names
     title_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 28)
     btn_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 22)
+    info_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 26)
     deck_name = deck.get('name', f'デッキ{slot_idx+1}')
 
     # snapshot background to keep previous screen visible under overlay
@@ -3235,13 +3236,15 @@ def show_deck_action_modal(screen, deck, slot_idx):
                     return None
 
                 # buttons: left=edit, mid=view, right=delete
-                btn_w = 110
-                gap = 20
+                btn_w = 180
+                btn_h = 70
+                gap = 35
+                padding = 35
                 bx = x + (w - (btn_w*3 + gap*2)) // 2
-                by = y + h - 70
-                edit_rect = pygame.Rect(bx, by, btn_w, 40)
-                view_rect = pygame.Rect(bx + btn_w + gap, by, btn_w, 40)
-                delete_rect = pygame.Rect(bx + (btn_w + gap)*2, by, btn_w, 40)
+                by = y + h - padding - btn_h
+                edit_rect = pygame.Rect(bx, by, btn_w, btn_h)
+                view_rect = pygame.Rect(bx + btn_w + gap, by, btn_w, btn_h)
+                delete_rect = pygame.Rect(bx + (btn_w + gap)*2, by, btn_w, btn_h)
 
                 if edit_rect.collidepoint(mx, my):
                     # open deck editor and save if edited
@@ -3287,17 +3290,17 @@ def show_deck_action_modal(screen, deck, slot_idx):
                         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
                         title = title_font.render(deck_name, True, (30,30,30))
                         box.blit(title, (20, 18))
-                        info = SMALL.render("このデッキをどうしますか？", True, (60,60,60))
+                        info = info_font.render("このデッキをどうしますか？", True, (60,60,60))
                         box.blit(info, (20,56))
 
                         # プレビューはこの画面では表示しない（要望により削除）
 
                         # buttons under modal — ensure they fit inside the box and center text
-                        btn_h = 40
-                        padding = 20
-                        gap2 = 20
+                        btn_h = 70
+                        padding = 35
+                        gap2 = 35
                         max_btn_w = (w - padding*2 - gap2*2) // 3
-                        btn_w2 = min(140, max_btn_w)
+                        btn_w2 = min(180, max_btn_w)
                         bx2 = (w - (btn_w2*3 + gap2*2)) // 2
                         by2 = h - padding - btn_h
                         edit_rect_local = pygame.Rect(bx2, by2, btn_w2, btn_h)
@@ -3388,7 +3391,7 @@ def show_deck_action_modal(screen, deck, slot_idx):
         pygame.draw.rect(box, (80,80,80), (0,0,w,h), 3)
         title = title_font.render(deck_name, True, (30,30,30))
         box.blit(title, (20, 18))
-        info = SMALL.render("このデッキをどうしますか？", True, (60,60,60))
+        info = info_font.render("このデッキをどうしますか？", True, (60,60,60))
         box.blit(info, (20, 56))
 
         # close icon
@@ -3399,11 +3402,11 @@ def show_deck_action_modal(screen, deck, slot_idx):
         # プレビューはこの画面では表示しない（要望により削除）
 
         # ボタン: 左=デッキ編集, 中=デッキ詳細, 右=デッキ削除（ボタンが箱からはみ出さないように調整）
-        btn_h = 40
-        padding = 20
-        gap = 20
+        btn_h = 70
+        padding = 35
+        gap = 35
         max_btn_w = (w - padding*2 - gap*2) // 3
-        btn_w = min(140, max_btn_w)
+        btn_w = min(180, max_btn_w)
         bx = (w - (btn_w*3 + gap*2)) // 2
         by = h - padding - btn_h
         edit_rect_local = pygame.Rect(bx, by, btn_w, btn_h)

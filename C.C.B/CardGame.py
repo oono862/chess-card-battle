@@ -2247,7 +2247,7 @@ def show_deck_modal(screen, battle_select_mode=False):
                                                     # fallback: clear to dark background then overlay
                                                     screen.fill((0,0,0))
                                                 screen.blit(overlay, (0,0))
-                                                pygame.draw.rect(screen, (240,240,240), (modal_x, modal_y, modal_w, modal_h))
+                                                pygame.draw.rect(screen, (210,210,210), (modal_x, modal_y, modal_w, modal_h))
                                                 pygame.draw.rect(screen, (100,100,100), (modal_x, modal_y, modal_w, modal_h), 2)
                                                 # draw text
                                                 ty = modal_y + 20

@@ -2188,12 +2188,70 @@ def show_deck_modal(screen, battle_select_mode=False):
                             names = []
                             if decks[slot_idx]:
                                 cards_field = decks[slot_idx].get('cards', [])
-                                # saved format may be list of card-name strings or list of dicts
-                                if isinstance(cards_field, list):
-                                    if cards_field and isinstance(cards_field[0], dict):
-                                        names = [str(c.get('name')) for c in cards_field if c and 'name' in c]
-                                    else:
-                                        names = [str(x) for x in cards_field]
+                            # Validate custom deck size: disallow decks larger than 20 cards
+                            try:
+                                if cards_field is not None and len(cards_field) > 20:
+                                    # Show a blocking warning modal to the user
+                                    try:
+                                        msg = f"選択したデッキは{len(cards_field)}枚です。\n最大20枚までです。\n\n20枚を超えているためゲームで使用できません！"
+                                        # modal loop
+                                        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+                                        overlay.fill((0, 0, 0, 150))
+                                        font = get_font(max(18, int(H * 0.025)))
+                                        ok_font = get_font(max(16, int(H * 0.02)), bold=True)
+                                        # prepare message lines
+                                        lines = msg.split('\n')
+                                        modal_w = min(800, int(W * 0.6))
+                                        modal_h = max(160, 40 * len(lines) + 80)
+                                        modal_x = (W - modal_w) // 2
+                                        modal_y = (H - modal_h) // 2
+                                        ok_rect = pygame.Rect(modal_x + modal_w//2 - 60, modal_y + modal_h - 60, 120, 40)
+                                        showing = True
+                                        while showing:
+                                            for mev in pygame.event.get():
+                                                if mev.type == pygame.QUIT:
+                                                    pygame.quit(); sys.exit(0)
+                                                if (mev.type == pygame.KEYDOWN and mev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)):
+                                                    showing = False
+                                                if mev.type == pygame.MOUSEBUTTONDOWN and mev.button == 1:
+                                                    mx, my = mev.pos
+                                                    if ok_rect.collidepoint(mx, my):
+                                                        showing = False
+                                            # draw overlay + modal
+                                            try:
+                                                screen.blit(overlay, (0,0))
+                                                pygame.draw.rect(screen, (240,240,240), (modal_x, modal_y, modal_w, modal_h))
+                                                pygame.draw.rect(screen, (100,100,100), (modal_x, modal_y, modal_w, modal_h), 2)
+                                                # draw text
+                                                ty = modal_y + 20
+                                                for ln in lines:
+                                                    surf = font.render(ln, True, (20,20,20))
+                                                    screen.blit(surf, (modal_x + 20, ty))
+                                                    ty += surf.get_height() + 6
+                                                # OK button
+                                                pygame.draw.rect(screen, (50,120,200), ok_rect)
+                                                ok_s = ok_font.render("OK", True, (255,255,255))
+                                                screen.blit(ok_s, (ok_rect.x + (ok_rect.w - ok_s.get_width())//2, ok_rect.y + (ok_rect.h - ok_s.get_height())//2))
+                                                pygame.display.flip()
+                                                clk.tick(30)
+                                            except Exception:
+                                                # if drawing fails, just sleep briefly and continue the modal loop
+                                                try:
+                                                    pygame.time.wait(100)
+                                                except Exception:
+                                                    pass
+                                    except Exception:
+                                        logger.warning("Selected custom deck invalid size (%d) - user notified", len(cards_field))
+                                    # keep modal open (do not start battle)
+                                    continue
+                            except Exception:
+                                pass
+                            # saved format may be list of card-name strings or list of dicts
+                            if isinstance(cards_field, list):
+                                if cards_field and isinstance(cards_field[0], dict):
+                                    names = [str(c.get('name')) for c in cards_field if c and 'name' in c]
+                                else:
+                                    names = [str(x) for x in cards_field]
                             try:
                                 logger.debug("show_deck_modal starting battle, names=%s", names)
                                 # Remember that user explicitly chose a custom deck so future
@@ -5192,12 +5250,83 @@ def ai_make_move():
                         score = base
                         # Enhanced heuristics per card
                         if name == '暴風':
-                            added = estimate_jump_added()
-                            # reward if jump actually increases mobility
-                            score += max(0, added) * 10
-                            # bonus if AI is under pressure (low mobility)
+                            
+                            benefit = 0
+                            try:
+                                # collect before-move sets per AI piece
+                                before_map = {}
+                                for p in chess.pieces:
+                                    try:
+                                        if getattr(p, 'color', None) == 'black':
+                                            before_map[p] = set(tuple(m) for m in get_valid_moves(p, ignore_check=True))
+                                    except Exception:
+                                        before_map[p] = set()
+
+                                prev_game_flag = getattr(game, 'ai_next_move_can_jump', None)
+                                prev_global_flag = globals().get('ai_next_move_can_jump', None)
+                                try:
+                                    try:
+                                        setattr(game, 'ai_next_move_can_jump', True)
+                                    except Exception:
+                                        globals()['ai_next_move_can_jump'] = True
+
+                                    # find opponent king for distance heuristics
+                                    opp_king = next((pp for pp in chess.pieces if getattr(pp, 'color', None) == 'white' and getattr(pp, 'name', '') == 'K'), None)
+
+                                    for p, prev_moves in list(before_map.items()):
+                                        try:
+                                            with_moves = set(tuple(m) for m in get_valid_moves(p, ignore_check=True))
+                                            new_moves = with_moves - prev_moves
+                                            for mv in new_moves:
+                                                # capture opportunity
+                                                try:
+                                                    tgt = chess.get_piece_at(mv[0], mv[1])
+                                                except Exception:
+                                                    tgt = None
+                                                if tgt is not None and getattr(tgt, 'color', None) == 'white':
+                                                    benefit += 30
+                                                else:
+                                                    # small bonus for any additional reachable square
+                                                    benefit += 4
+                                                    # bonus if the new move gets closer to opponent king
+                                                    try:
+                                                        if opp_king is not None:
+                                                            pr, pc = getattr(p, 'row', 0), getattr(p, 'col', 0)
+                                                            kr, kc = getattr(opp_king, 'row', 0), getattr(opp_king, 'col', 0)
+                                                            before_dist = abs(pr - kr) + abs(pc - kc)
+                                                            new_dist = abs(mv[0] - kr) + abs(mv[1] - kc)
+                                                            if new_dist < before_dist:
+                                                                benefit += 8
+                                                    except Exception:
+                                                        pass
+                                        except Exception:
+                                            pass
+                                finally:
+                                    # restore flags
+                                    try:
+                                        if prev_game_flag is None:
+                                            try:
+                                                delattr(game, 'ai_next_move_can_jump')
+                                            except Exception:
+                                                globals().pop('ai_next_move_can_jump', None)
+                                        else:
+                                            setattr(game, 'ai_next_move_can_jump', prev_game_flag)
+                                    except Exception:
+                                        try:
+                                            if prev_global_flag is None:
+                                                globals().pop('ai_next_move_can_jump', None)
+                                            else:
+                                                globals()['ai_next_move_can_jump'] = prev_global_flag
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                benefit = 0
+
+                            # reward based on computed benefit
+                            score += benefit
+                            # small fallback bonus if AI is under pressure
                             if my_move_count < opp_move_count:
-                                score += 15
+                                score += 10
                         elif name == '氷結':
                             # prefer freezing non-king high-value pieces
                             try:

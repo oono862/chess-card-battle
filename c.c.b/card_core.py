@@ -391,54 +391,63 @@ class Game:
                     pass
 
     # ---- helpers to apply status effects with iron-wall checks ----
-    def apply_blocked_tile(self, coord, turns: int, applies_to: str = 'black', source_color: Optional[str] = None, source_card_name: Optional[str] = None) -> bool:
+    def apply_blocked_tile(self, coord, turns: int, applies_to: str = 'black', source_color: Optional[str] = None, source_card_name: Optional[str] = None, check_iron_wall: bool = True) -> bool:
         """Apply a blocked tile to the board taking iron-wall into account.
 
         Returns True if the block was applied, False if it was prevented by iron-wall.
+        
+        Args:
+            coord: The (row, col) coordinate to block
+            turns: Number of turns the block lasts
+            applies_to: Which color the block affects ('white' or 'black')
+            source_color: Which color is applying the block
+            source_card_name: Name of the card applying the block
+            check_iron_wall: If True, check iron wall protection. Set to False if already checked at caller level.
         """
         # If the target side is the human player
-        try:
-            if applies_to == 'white':
-                # human side
-                human = self.player
-                # 1) single-use immediate iron wall blocks the next incoming effect
-                if getattr(human, 'iron_wall_active', False) and source_color is not None and source_color != 'white':
-                    # consume iron wall instead of applying
-                    human.iron_wall_active = False
-                    try:
-                        self.log.append(f"鉄壁: 敵の効果 {source_card_name or ''} を防ぎました。")
-                    except Exception:
-                        pass
-                    return False
-                # 2) 1-turn protection blocks any incoming harmful gimmick effects for the duration
-                if getattr(self, 'player_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'white':
-                    try:
-                        self.log.append(f"鉄壁(保護): 敵の効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
-                    except Exception:
-                        pass
-                    return False
-            else:
-                # applies_to == 'black' -> AI side
-                # AI single-use immediate iron wall
-                if getattr(self, 'ai_iron_wall_active', False) and source_color is not None and source_color != 'black':
-                    try:
-                        self.ai_iron_wall_active = False
-                    except Exception:
-                        setattr(self, 'ai_iron_wall_active', False)
-                    try:
-                        self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
-                    except Exception:
-                        pass
-                    return False
-                # AI 1-turn protection
-                if getattr(self, 'ai_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'black':
-                    try:
-                        self.log.append(f"鉄壁(敵,保護): プレイヤーの効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
-                    except Exception:
-                        pass
-                    return False
-        except Exception:
-            pass
+        if check_iron_wall:
+            try:
+                if applies_to == 'white':
+                    # human side
+                    human = self.player
+                    # 1) single-use immediate iron wall blocks the next incoming effect
+                    if getattr(human, 'iron_wall_active', False) and source_color is not None and source_color != 'white':
+                        # consume iron wall instead of applying
+                        human.iron_wall_active = False
+                        try:
+                            self.log.append(f"鉄壁: 敵の効果 {source_card_name or ''} を防ぎました。")
+                        except Exception:
+                            pass
+                        return False
+                    # 2) 1-turn protection blocks any incoming harmful gimmick effects for the duration
+                    if getattr(self, 'player_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'white':
+                        try:
+                            self.log.append(f"鉄壁(保護): 敵の効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
+                        except Exception:
+                            pass
+                        return False
+                else:
+                    # applies_to == 'black' -> AI side
+                    # AI single-use immediate iron wall
+                    if getattr(self, 'ai_iron_wall_active', False) and source_color is not None and source_color != 'black':
+                        try:
+                            self.ai_iron_wall_active = False
+                        except Exception:
+                            setattr(self, 'ai_iron_wall_active', False)
+                        try:
+                            self.log.append(f"鉄壁(敵): プレイヤーの効果 {source_card_name or ''} を防ぎました。")
+                        except Exception:
+                            pass
+                        return False
+                    # AI 1-turn protection
+                    if getattr(self, 'ai_ironwall_protection_turns', 0) > 0 and source_color is not None and source_color != 'black':
+                        try:
+                            self.log.append(f"鉄壁(敵,保護): プレイヤーの効果 {source_card_name or ''} を防ぎました（保護ターン中）。")
+                        except Exception:
+                            pass
+                        return False
+            except Exception:
+                pass
 
         # Apply the block as a new entry so multiple effects can coexist.
         try:
@@ -1433,6 +1442,29 @@ def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
     Demo: declare a pending target. Real board integration should apply
     'blocked_tiles[tile] = turns'.
     """
+    # Check if opponent has ironwall protection (灼熱 benefits the user, so opponent is affected)
+    try:
+        if player is game.player:
+            # Player using card, AI is affected
+            # Check AI's single-use iron wall
+            if getattr(game, 'ai_iron_wall_active', False):
+                game.ai_iron_wall_active = False
+                return "相手の鉄壁により効果が無効化されました。"
+            # Check AI's protection turns
+            if getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                return "相手の鉄壁（保護）により効果が無効化されました。"
+        else:
+            # AI using card, player is affected
+            # Check player's single-use iron wall
+            if getattr(game.player, 'iron_wall_active', False):
+                game.player.iron_wall_active = False
+                return "鉄壁の保護により効果が無効化されました。"
+            # Check player's protection turns
+            if getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                return "鉄壁の保護により効果が無効化されました。"
+    except Exception:
+        pass
+    
     # If the player has any frozen own pieces, offer the choice to unfreeze
     # one of them instead of blocking tiles. The UI will present the choice.
     game.pending = PendingAction(

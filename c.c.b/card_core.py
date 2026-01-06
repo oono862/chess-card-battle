@@ -881,7 +881,7 @@ class Game:
                         if tr is not None and tc is not None:
                             # Enhanced blocking strategy: prioritize escape routes and key squares
                             candidates = []
-                            max_radius = 3
+                            max_radius = 4  # Increased radius to ensure we have enough candidates
                             
                             # Calculate scores for each potential blocking square
                             for radius in range(1, max_radius + 1):
@@ -942,38 +942,52 @@ class Game:
                                             pass
                                         
                                         candidates.append(((nr, nc), square_score))
-                                
-                                if len(candidates) >= max_tiles * 2:  # Collect enough candidates
-                                    break
                             
-                            # Sort by strategic value and pick best squares
+                            # Sort by strategic value
                             candidates.sort(key=lambda x: x[1], reverse=True)
-                            to_place = [pos for pos, score in candidates[:max_tiles]]
                             
-                            # Apply blocking
+                            # Apply blocking: try candidates until we get max_tiles successful placements
                             applied = []
-                            for (nr, nc) in to_place:
+                            candidate_idx = 0
+                            while len(applied) < max_tiles and candidate_idx < len(candidates):
+                                nr, nc = candidates[candidate_idx][0]
+                                candidate_idx += 1
+                                
                                 try:
                                     ok = self.apply_blocked_tile((nr, nc), turns, applies_to=opp_color, source_color=self.pending.info.get('source_color'), source_card_name=self.pending.info.get('source_card_name'))
                                     if ok:
                                         applied.append((nr, nc))
+                                        continue
                                 except Exception:
+                                    pass
+                                
+                                # First fallback: try again
+                                try:
+                                    ok = self.apply_blocked_tile((nr, nc), turns, applies_to=opp_color, source_color=self.pending.info.get('source_color'), source_card_name=self.pending.info.get('source_card_name'))
+                                    if ok:
+                                        applied.append((nr, nc))
+                                        continue
+                                except Exception:
+                                    pass
+                                
+                                # Second fallback: direct tile manipulation
+                                try:
+                                    self.blocked_tiles[(nr, nc)] = turns
+                                    self.blocked_tiles_owner[(nr, nc)] = opp_color
+                                    # Also update blocked_tiles_entries for consistency
                                     try:
-                                        ok = self.apply_blocked_tile((nr, nc), turns, applies_to=opp_color, source_color=self.pending.info.get('source_color'), source_card_name=self.pending.info.get('source_card_name'))
-                                        if ok:
-                                            applied.append((nr, nc))
+                                        entries = getattr(self, 'blocked_tiles_entries', None)
+                                        if entries is None:
+                                            self.blocked_tiles_entries = {}
+                                            entries = self.blocked_tiles_entries
+                                        new_entry = {'turns': int(turns), 'owner': opp_color, 'source_card_name': self.pending.info.get('source_card_name')}
+                                        entries[(nr, nc)] = [new_entry]
                                     except Exception:
-                                        try:
-                                            # best-effort fallback
-                                            self.blocked_tiles[(nr, nc)] = turns
-                                            self.blocked_tiles_owner[(nr, nc)] = opp_color
-                                            applied.append((nr, nc))
-                                        except Exception:
-                                            try:
-                                                self.blocked_tiles[(nr, nc)] = turns
-                                                applied.append((nr, nc))
-                                            except Exception:
-                                                pass
+                                        pass
+                                    applied.append((nr, nc))
+                                except Exception:
+                                    pass
+                            
                             placed = len(applied)
                             if placed:
                                 try:

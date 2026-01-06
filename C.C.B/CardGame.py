@@ -1487,7 +1487,7 @@ def _prepare_new_battle_after_deck_already_selected():
     """
     global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
     global log_scroll_offset, game, ai_player
-    global _selected_deck_card_names
+    global _selected_deck_card_names, ai_next_move_can_jump
 
     # Reset chess board state
     try:
@@ -1514,6 +1514,9 @@ def _prepare_new_battle_after_deck_already_selected():
     selected_piece = None
     highlight_squares = []
     cpu_wait = False
+    
+    # Reset global card effect flags
+    ai_next_move_can_jump = False
 
     # Also ensure logs are reset for the new battle
     try:
@@ -1553,19 +1556,24 @@ def _prepare_new_battle_after_deck_already_selected():
             game.blocked_tiles = {}
             game.frozen_pieces = {}
             game.blocked_tiles_owner = {}
+            game.blocked_tiles_entries = {}
             game.player_moved_this_turn = False
             game.turn_active = False
             game.player_consecutive_turns = 0
             game.ai_consecutive_turns = 0
             game.ai_next_move_can_jump = False
+            game.ai_iron_wall_active = False
             game.player_ironwall_protection_turns = 0
             game.ai_ironwall_protection_turns = 0
+            game.ironwall_showing = {'white': False, 'black': False}
             try:
                 # also reset any per-turn movement flags
                 if hasattr(game.player, 'extra_moves_this_turn'):
                     game.player.extra_moves_this_turn = 0
                 if hasattr(game.player, 'next_move_can_jump'):
                     game.player.next_move_can_jump = False
+                if hasattr(game.player, 'iron_wall_active'):
+                    game.player.iron_wall_active = False
             except Exception:
                 pass
     except Exception:
@@ -1611,6 +1619,13 @@ def _prepare_new_battle_after_deck_already_selected():
             # PPを最大に回復
             if hasattr(ai_player, 'reset_pp'):
                 ai_player.reset_pp()
+            # AIのギミックカード効果状態をリセット
+            if hasattr(ai_player, 'next_move_can_jump'):
+                ai_player.next_move_can_jump = False
+            if hasattr(ai_player, 'iron_wall_active'):
+                ai_player.iron_wall_active = False
+            if hasattr(ai_player, 'extra_moves_this_turn'):
+                ai_player.extra_moves_this_turn = 0
     except Exception as e:
         logger.debug("Failed to reset AI card state: %s", e)
 
@@ -8725,14 +8740,41 @@ def handle_mouse_click(pos):
                             turns = game.pending.info.get('turns', 2)
                             applies_to = game.pending.info.get('for_color', 'black')
                             source_color = 'white' if applies_to == 'black' else 'black'
-                            blocked_count = 0
-                            for (r, c) in sel:
-                                if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱'):
-                                    blocked_count += 1
-                            if blocked_count > 0:
-                                game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
-                            game.pending = None
-                            game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            
+                            # Check iron wall ONCE before applying any tiles
+                            iron_wall_blocked = False
+                            try:
+                                if applies_to == 'white':
+                                    # Check player's iron wall
+                                    if getattr(game.player, 'iron_wall_active', False):
+                                        game.player.iron_wall_active = False
+                                        game.log.append("鉄壁: 敵の灼熱効果を防ぎました。")
+                                        iron_wall_blocked = True
+                                    elif getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                                        game.log.append("鉄壁(保護): 敵の灼熱効果を防ぎました（保護ターン中）。")
+                                        iron_wall_blocked = True
+                                else:
+                                    # Check AI's iron wall
+                                    if getattr(game, 'ai_iron_wall_active', False):
+                                        game.ai_iron_wall_active = False
+                                        game.log.append("鉄壁(敵): プレイヤーの灼熱効果を防ぎました。")
+                                        iron_wall_blocked = True
+                                    elif getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                                        game.log.append("鉄壁(敵,保護): プレイヤーの灼熱効果を防ぎました（保護ターン中）。")
+                                        iron_wall_blocked = True
+                            except Exception:
+                                pass
+                            
+                            if not iron_wall_blocked:
+                                blocked_count = 0
+                                for (r, c) in sel:
+                                    # check_iron_wall=False because we already checked above
+                                    if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱', check_iron_wall=False):
+                                        blocked_count += 1
+                                if blocked_count > 0:
+                                    game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
+                                game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            
                             game.pending = None
                         return
                 else:

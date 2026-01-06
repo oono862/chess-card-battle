@@ -4908,12 +4908,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
-                        # attempt to land on the next square beyond this occupied square
+                        # Jump over this piece and land on the next square only
                         step2 = step + 1
                         nr2, nc2 = r+dr*step2, c+dc*step2
                         if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, color) and not is_blocked_tile(nr2, nc2, color):
                             moves.append((nr2, nc2))
-                        # only allow a single jump; stop after
+                        # Only allow a single jump; stop after attempting the jump
                     break
 
                 # empty and not blocked -> can move here

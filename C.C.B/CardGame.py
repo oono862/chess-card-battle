@@ -705,8 +705,8 @@ gimmick_click_submode = 'click_enlarged'  # クリックモード時のサブモ
 last_click_time = 0.0
 last_click_pos = (0, 0)
 last_clicked_card_index = None
-DOUBLE_CLICK_INTERVAL = 0.60
-DOUBLE_CLICK_DIST = 36
+DOUBLE_CLICK_INTERVAL = 1.0
+DOUBLE_CLICK_DIST = 50
 DOUBLE_CLICK_DIST_SQ = DOUBLE_CLICK_DIST * DOUBLE_CLICK_DIST
 
 # ゲーム状態（難易度・デッキモード選択後に初期化）

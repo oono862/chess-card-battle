@@ -1075,17 +1075,17 @@ def show_deck_choice_modal(screen):
         fixed_rect = pygame.Rect(left_x - x, by - y, btn_w, btn_h)
         pygame.draw.rect(surf, (220,220,220), fixed_rect)
         pygame.draw.rect(surf, (70,70,70), fixed_rect, 2)
-        t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
+        t1 = SMALL.render(" 固定デッキ ", True, (30,30,30))
         # 固定デッキ枚数表示（中央揃え）
-        t2 = SMALL.render(f"カード数: 24 / 24", True, (80,80,80))
-        surf.blit(t1, (fixed_rect.x + 6, fixed_rect.y + 12))
+        t2 = SMALL.render(f"カード数: 24 ", True, (80,80,80))
+        surf.blit(t1, (fixed_rect.x + (btn_w - t1.get_width())//2, fixed_rect.y + 12))
         surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
 
         # custom deck button
         custom_rect = pygame.Rect(right_x - x, by - y, btn_w, btn_h)
         pygame.draw.rect(surf, (220,220,220), custom_rect)
         pygame.draw.rect(surf, (70,70,70), custom_rect, 2)
-        c1 = SMALL.render("作成したデッキ（暫定）", True, (30,30,30))
+        c1 = SMALL.render(" 作成したデッキ ", True, (30,30,30))
         # 作成デッキ枚数表示（実際の枚数を取得）
         try:
             from game.deck_manager import load_saved_decks
@@ -1099,7 +1099,7 @@ def show_deck_choice_modal(screen):
                 deck_len = 0
         except Exception:
             deck_len = 0
-        c2 = SMALL.render(f"カード数: {deck_len} / 20", True, (80,80,80))
+        c2 = SMALL.render(f"カード数: 20", True, (80,80,80))
         surf.blit(c1, (custom_rect.x + (btn_w - c1.get_width())//2, custom_rect.y + 12))
         surf.blit(c2, (custom_rect.x + (btn_w - c2.get_width())//2, custom_rect.y + 40))
 

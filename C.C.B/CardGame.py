@@ -10,6 +10,73 @@ from typing import List, TYPE_CHECKING
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# Import path resolver for PyInstaller compatibility
+# Try to import via normal package imports first, but also support
+# loading the file directly (so editors/Pylance and PyInstaller builds
+# won't fail if package names/paths differ). This avoids relying on
+# package names like `c.c.b` which are problematic for static analysis.
+def _load_path_resolver_module():
+    try:
+        import importlib
+        import importlib.util
+    except Exception:
+        importlib = None
+        importlib_util = None
+    # 1) Try standard imports that work at runtime
+    try:
+        from utils import path_resolver as _mod
+        return _mod
+    except Exception:
+        pass
+    # 2) Try explicit package import (may fail for editors)
+    try:
+        import importlib
+        _mod = importlib.import_module('c.c.b.utils.path_resolver')
+        return _mod
+    except Exception:
+        pass
+    # 3) Try to load from likely filesystem locations relative to this file
+    try:
+        import importlib.util as _util
+        candidates = [
+            os.path.join(os.path.dirname(__file__), 'utils', 'path_resolver.py'),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'utils', 'path_resolver.py'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'utils', 'path_resolver.py'),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                spec = _util.spec_from_file_location('c_c_b_path_resolver', p)
+                if spec and spec.loader:
+                    mod = _util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+    except Exception:
+        pass
+    return None
+
+_path_res_mod = _load_path_resolver_module()
+if _path_res_mod:
+    try:
+        get_resource_path = _path_res_mod.get_resource_path
+        get_writable_path = _path_res_mod.get_writable_path
+        IMAGES_DIR = getattr(_path_res_mod, 'IMAGES_DIR', get_resource_path('images'))
+    except Exception:
+        _path_res_mod = None
+
+if not _path_res_mod:
+    # Fallback: define locally if path_resolver is not available
+    def get_resource_path(rel_path):
+        if getattr(sys, 'frozen', False):
+            return os.path.join(sys._MEIPASS, rel_path)
+        else:
+            return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
+    def get_writable_path(rel_path):
+        if getattr(sys, 'frozen', False):
+            return os.path.join(os.path.dirname(sys.executable), rel_path)
+        else:
+            return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
+    IMAGES_DIR = get_resource_path('images')
+
 # 駒の名前マッピング（ツールチップ表示用）
 PIECE_NAMES = {
     'K': 'キング',
@@ -128,12 +195,12 @@ _this_dir = os.path.dirname(os.path.abspath(__file__))
 if _this_dir not in sys.path:
     sys.path.insert(0, _this_dir)
 
-# User settings persistence (simple JSON in module directory)
+# User settings persistence - use writable path for PyInstaller compatibility
 def _get_settings_path():
     try:
-        return os.path.join(_this_dir, 'user_settings.json')
+        return get_writable_path('c.c.b/user_settings.json')
     except Exception:
-        return 'user_settings.json'
+        return os.path.join(_this_dir, 'user_settings.json')
 
 def load_user_anim_scale():
     try:
@@ -207,7 +274,7 @@ try:
 except Exception:
     logger.exception("Failed to import ui.window module")
     pygame.init()
-    def initialize_window(w=1200, h=800, caption="Chess-Card-Battle β", resizable=True):
+    def initialize_window(w=1200, h=800, caption="Chess-Card-Battle", resizable=True):
         screen = pygame.display.set_mode((w, h), pygame.RESIZABLE if resizable else 0)
         pygame.display.set_caption(caption)
         return screen, pygame.time.Clock()
@@ -705,8 +772,8 @@ gimmick_click_submode = 'click_enlarged'  # クリックモード時のサブモ
 last_click_time = 0.0
 last_click_pos = (0, 0)
 last_clicked_card_index = None
-DOUBLE_CLICK_INTERVAL = 0.60
-DOUBLE_CLICK_DIST = 36
+DOUBLE_CLICK_INTERVAL = 1.0
+DOUBLE_CLICK_DIST = 50
 DOUBLE_CLICK_DIST_SQ = DOUBLE_CLICK_DIST * DOUBLE_CLICK_DIST
 
 # ゲーム状態（難易度・デッキモード選択後に初期化）
@@ -1075,17 +1142,17 @@ def show_deck_choice_modal(screen):
         fixed_rect = pygame.Rect(left_x - x, by - y, btn_w, btn_h)
         pygame.draw.rect(surf, (220,220,220), fixed_rect)
         pygame.draw.rect(surf, (70,70,70), fixed_rect, 2)
-        t1 = SMALL.render("固定デッキ （デフォルト）", True, (30,30,30))
+        t1 = SMALL.render(" 固定デッキ ", True, (30,30,30))
         # 固定デッキ枚数表示（中央揃え）
-        t2 = SMALL.render(f"カード数: 24 / 24", True, (80,80,80))
-        surf.blit(t1, (fixed_rect.x + 6, fixed_rect.y + 12))
+        t2 = SMALL.render(f"カード数: 24 ", True, (80,80,80))
+        surf.blit(t1, (fixed_rect.x + (btn_w - t1.get_width())//2, fixed_rect.y + 12))
         surf.blit(t2, (fixed_rect.x + (btn_w - t2.get_width())//2, fixed_rect.y + 40))
 
         # custom deck button
         custom_rect = pygame.Rect(right_x - x, by - y, btn_w, btn_h)
         pygame.draw.rect(surf, (220,220,220), custom_rect)
         pygame.draw.rect(surf, (70,70,70), custom_rect, 2)
-        c1 = SMALL.render("作成したデッキ（暫定）", True, (30,30,30))
+        c1 = SMALL.render(" 作成したデッキ ", True, (30,30,30))
         # 作成デッキ枚数表示（実際の枚数を取得）
         try:
             from game.deck_manager import load_saved_decks
@@ -1099,7 +1166,7 @@ def show_deck_choice_modal(screen):
                 deck_len = 0
         except Exception:
             deck_len = 0
-        c2 = SMALL.render(f"カード数: {deck_len} / 20", True, (80,80,80))
+        c2 = SMALL.render(f"カード数: 20", True, (80,80,80))
         surf.blit(c1, (custom_rect.x + (btn_w - c1.get_width())//2, custom_rect.y + 12))
         surf.blit(c2, (custom_rect.x + (btn_w - c2.get_width())//2, custom_rect.y + 40))
 
@@ -1487,7 +1554,7 @@ def _prepare_new_battle_after_deck_already_selected():
     """
     global game_over, game_over_winner, chess_current_turn, selected_piece, highlight_squares, cpu_wait
     global log_scroll_offset, game, ai_player
-    global _selected_deck_card_names
+    global _selected_deck_card_names, ai_next_move_can_jump
 
     # Reset chess board state
     try:
@@ -1514,6 +1581,9 @@ def _prepare_new_battle_after_deck_already_selected():
     selected_piece = None
     highlight_squares = []
     cpu_wait = False
+    
+    # Reset global card effect flags
+    ai_next_move_can_jump = False
 
     # Also ensure logs are reset for the new battle
     try:
@@ -1553,19 +1623,24 @@ def _prepare_new_battle_after_deck_already_selected():
             game.blocked_tiles = {}
             game.frozen_pieces = {}
             game.blocked_tiles_owner = {}
+            game.blocked_tiles_entries = {}
             game.player_moved_this_turn = False
             game.turn_active = False
             game.player_consecutive_turns = 0
             game.ai_consecutive_turns = 0
             game.ai_next_move_can_jump = False
+            game.ai_iron_wall_active = False
             game.player_ironwall_protection_turns = 0
             game.ai_ironwall_protection_turns = 0
+            game.ironwall_showing = {'white': False, 'black': False}
             try:
                 # also reset any per-turn movement flags
                 if hasattr(game.player, 'extra_moves_this_turn'):
                     game.player.extra_moves_this_turn = 0
                 if hasattr(game.player, 'next_move_can_jump'):
                     game.player.next_move_can_jump = False
+                if hasattr(game.player, 'iron_wall_active'):
+                    game.player.iron_wall_active = False
             except Exception:
                 pass
     except Exception:
@@ -1611,6 +1686,13 @@ def _prepare_new_battle_after_deck_already_selected():
             # PPを最大に回復
             if hasattr(ai_player, 'reset_pp'):
                 ai_player.reset_pp()
+            # AIのギミックカード効果状態をリセット
+            if hasattr(ai_player, 'next_move_can_jump'):
+                ai_player.next_move_can_jump = False
+            if hasattr(ai_player, 'iron_wall_active'):
+                ai_player.iron_wall_active = False
+            if hasattr(ai_player, 'extra_moves_this_turn'):
+                ai_player.extra_moves_this_turn = 0
     except Exception as e:
         logger.debug("Failed to reset AI card state: %s", e)
 
@@ -1789,9 +1871,8 @@ def show_start_screen():
         _selected_deck_slot_idx = None
     except Exception:
         pass
-    # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
+    # Use repo-local background image only (PyInstaller compatible)
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
-    user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"
     bg_surf = None
     repo_bg_used = False
     try:
@@ -1799,9 +1880,6 @@ def show_start_screen():
             img = pygame.image.load(repo_bg_path)
             bg_surf = pygame.transform.smoothscale(img, (W, H)).convert()
             repo_bg_used = True
-        elif os.path.exists(user_bg_path):
-            img = pygame.image.load(user_bg_path)
-            bg_surf = pygame.transform.smoothscale(img, (W, H)).convert()
     except Exception:
         bg_surf = None
 
@@ -2865,26 +2943,16 @@ def show_deck_editor(screen, existing_deck, slot_idx):
         name_rect = pygame.Rect(300, 20, 400, 40)
         pygame.draw.rect(screen, (255, 255, 255) if input_active else (240, 240, 240), name_rect)
         pygame.draw.rect(screen, (100, 150, 255) if input_active else (100, 100, 100), name_rect, 2)
-        # 日本語対応フォントを直接ファイル指定で取得
+        # 日本語対応フォントを取得（font_loaderを使用、PyInstaller対応）
         try:
-            # Windowsの標準日本語フォントを直接読み込み
-            import os
-            font_paths = [
-                "C:\\Windows\\Fonts\\msgothic.ttc",  # MSゴシック
-                "C:\\Windows\\Fonts\\meiryo.ttc",    # メイリオ
-                "C:\\Windows\\Fonts\\yugothic.ttf",  # 遊ゴシック
-            ]
-            name_font = None
-            for font_path in font_paths:
-                if os.path.exists(font_path):
-                    name_font = pygame.font.Font(font_path, 24)
-                    break
-            if name_font is None:
-                # フォールバック: システムフォント
-                name_font = pygame.font.SysFont("msgothic,meiryo", 24)
-        except:
-            # 最終フォールバック
-            name_font = pygame.font.Font(None, 24)
+            from utils.font_loader import get_font as get_japanese_font
+            name_font = get_japanese_font(24)
+        except Exception:
+            # フォールバック: システムフォント
+            try:
+                name_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic, msgothic", 24)
+            except Exception:
+                name_font = pygame.font.Font(None, 24)
         
         name_text = name_font.render(input_text if input_text else "", True, (30, 30, 30))
         screen.blit(name_text, (name_rect.x + 10, name_rect.y + 8))
@@ -4908,12 +4976,12 @@ def get_valid_moves(piece, pcs=None, ignore_check=False):
                     except Exception:
                         can_jump = False
                     if can_jump and not jumped:
-                        # attempt to land on the next square beyond this occupied square
+                        # Jump over this piece and land on the next square only
                         step2 = step + 1
                         nr2, nc2 = r+dr*step2, c+dc*step2
                         if on_board(nr2, nc2) and not occupied_by_color(nr2, nc2, color) and not is_blocked_tile(nr2, nc2, color):
                             moves.append((nr2, nc2))
-                        # only allow a single jump; stop after
+                        # Only allow a single jump; stop after attempting the jump
                     break
 
                 # empty and not blocked -> can move here
@@ -8725,14 +8793,41 @@ def handle_mouse_click(pos):
                             turns = game.pending.info.get('turns', 2)
                             applies_to = game.pending.info.get('for_color', 'black')
                             source_color = 'white' if applies_to == 'black' else 'black'
-                            blocked_count = 0
-                            for (r, c) in sel:
-                                if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱'):
-                                    blocked_count += 1
-                            if blocked_count > 0:
-                                game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
-                            game.pending = None
-                            game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            
+                            # Check iron wall ONCE before applying any tiles
+                            iron_wall_blocked = False
+                            try:
+                                if applies_to == 'white':
+                                    # Check player's iron wall
+                                    if getattr(game.player, 'iron_wall_active', False):
+                                        game.player.iron_wall_active = False
+                                        game.log.append("鉄壁: 敵の灼熱効果を防ぎました。")
+                                        iron_wall_blocked = True
+                                    elif getattr(game, 'player_ironwall_protection_turns', 0) > 0:
+                                        game.log.append("鉄壁(保護): 敵の灼熱効果を防ぎました（保護ターン中）。")
+                                        iron_wall_blocked = True
+                                else:
+                                    # Check AI's iron wall
+                                    if getattr(game, 'ai_iron_wall_active', False):
+                                        game.ai_iron_wall_active = False
+                                        game.log.append("鉄壁(敵): プレイヤーの灼熱効果を防ぎました。")
+                                        iron_wall_blocked = True
+                                    elif getattr(game, 'ai_ironwall_protection_turns', 0) > 0:
+                                        game.log.append("鉄壁(敵,保護): プレイヤーの灼熱効果を防ぎました（保護ターン中）。")
+                                        iron_wall_blocked = True
+                            except Exception:
+                                pass
+                            
+                            if not iron_wall_blocked:
+                                blocked_count = 0
+                                for (r, c) in sel:
+                                    # check_iron_wall=False because we already checked above
+                                    if game.apply_blocked_tile((r, c), turns, applies_to, source_color, '灼熱', check_iron_wall=False):
+                                        blocked_count += 1
+                                if blocked_count > 0:
+                                    game.log.append(f"『灼熱』を使用しました: {blocked_count}マスを {turns} ターン封鎖")
+                                game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
+                            
                             game.pending = None
                         return
                 else:

@@ -7,6 +7,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import path resolver for PyInstaller compatibility
+try:
+    from ..utils.path_resolver import get_writable_path, get_resource_path
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_writable_path, get_resource_path
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_writable_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(os.path.dirname(sys.executable), rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
+
 
 def get_main_module():
     """Get the main B.B.C module."""
@@ -18,15 +37,8 @@ def get_main_module():
     return None
 
 
-# Deck save file location
-try:
-    # BBC/game/deck_manager.py -> go up to BBC -> go up to project root -> saved_decks.json
-    _current_dir = os.path.dirname(__file__)  # BBC/game
-    _bbc_dir = os.path.dirname(_current_dir)  # BBC
-    _project_root = os.path.dirname(_bbc_dir)  # project root
-    DECK_SAVE_FILE = os.path.join(_project_root, 'saved_decks.json')
-except Exception:
-    DECK_SAVE_FILE = 'saved_decks.json'
+# Deck save file location - use writable path for PyInstaller compatibility
+DECK_SAVE_FILE = get_writable_path('saved_decks.json')
 
 
 def _custom_decks_dir():

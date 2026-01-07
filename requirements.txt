@@ -1,0 +1,12 @@
+# Chess-Card-Battle Dependencies
+# ================================
+# Install with: pip install -r requirements.txt
+
+# Core game engine
+pygame>=2.0.0
+
+# GIF animation support
+Pillow>=9.0.0
+
+# For building executable (optional, install when packaging)
+# pyinstaller>=5.0.0

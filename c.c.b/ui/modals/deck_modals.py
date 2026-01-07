@@ -7,8 +7,26 @@
 import pygame
 from ui.config import get_ui_effects_enabled
 import sys
+import os
 import time as _ct_time
 import logging
+
+# Import path resolver and font loader for PyInstaller compatibility
+try:
+    from ...utils.path_resolver import get_resource_path
+    from ...utils.font_loader import get_font as get_japanese_font
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_resource_path
+        from c.c.b.utils.font_loader import get_font as get_japanese_font
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), rel_path)
+        get_japanese_font = None
 
 logger = logging.getLogger(__name__)
 
@@ -1328,26 +1346,17 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
         name_rect = pygame.Rect(550, 20, 400, 40)
         pygame.draw.rect(screen, (255, 255, 255) if input_active else (240, 240, 240), name_rect)
         pygame.draw.rect(screen, (100, 150, 255) if input_active else (100, 100, 100), name_rect, 2)
-        # 日本語対応フォントを直接ファイル指定で取得
+        # 日本語対応フォントを取得（font_loaderを使用、PyInstaller対応）
         try:
-            # Windowsの標準日本語フォントを直接読み込み
-            import os
-            font_paths = [
-                "C:\\Windows\\Fonts\\msgothic.ttc",  # MSゴシック
-                "C:\\Windows\\Fonts\\meiryo.ttc",    # メイリオ
-                "C:\\Windows\\Fonts\\yugothic.ttf",  # 遊ゴシック
-            ]
-            name_font = None
-            for font_path in font_paths:
-                if os.path.exists(font_path):
-                    name_font = pygame.font.Font(font_path, 24)
-                    break
-            if name_font is None:
-                # フォールバック: システムフォント
-                name_font = pygame.font.SysFont("msgothic,meiryo", 24)
-        except:
-            # 最終フォールバック
-            name_font = pygame.font.Font(None, 24)
+            if get_japanese_font is not None:
+                name_font = get_japanese_font(24)
+            else:
+                name_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic, msgothic", 24)
+        except Exception:
+            try:
+                name_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic, msgothic", 24)
+            except Exception:
+                name_font = pygame.font.Font(None, 24)
         
         name_text = name_font.render(input_text if input_text else "", True, (30, 30, 30))
         screen.blit(name_text, (name_rect.x + 10, name_rect.y + 8))

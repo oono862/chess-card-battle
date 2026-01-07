@@ -3,7 +3,23 @@ can_draw_card = False  # ギミック（カードドロー）機能は削除済�
 
 import pygame
 import sys
+import os
 import logging
+
+# Import path resolver for PyInstaller compatibility
+try:
+    from utils.path_resolver import get_resource_path, IMAGES_DIR
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
+        IMAGES_DIR = get_resource_path('images')
 
 logger = logging.getLogger(__name__)
 # Gimmick system removed for new game; provide empty stubs so code depending on names won't fail
@@ -196,8 +212,8 @@ def show_start_screen(screen):
                         return
             editor_clock.tick(30)
 
-    # 背景画像をロード（1回のみ）
-    bg_img_path = r"c:\Users\Student\Desktop\chess-card-battle\strategic_chess\images\m9(^Д^)\ChatGPT Image 2025年10月21日 14_06_32.png"
+    # 背景画像をロード（PyInstaller対応）
+    bg_img_path = os.path.join(IMAGES_DIR, "m9(^Д^)", "ChatGPT Image 2025年10月21日 14_06_32.png")
     try:
         bg_img = pygame.image.load(bg_img_path)
     except Exception:

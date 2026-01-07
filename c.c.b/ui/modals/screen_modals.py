@@ -11,6 +11,21 @@ import sys
 import logging
 from ui.config import get_ui_effects_enabled
 
+# Import path resolver for PyInstaller compatibility
+try:
+    from ...utils.path_resolver import get_resource_path, IMAGES_DIR as _IMAGES_DIR
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR as _IMAGES_DIR
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), rel_path)
+        _IMAGES_DIR = get_resource_path('images')
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,9 +55,8 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
     # 初期ウィンドウサイズを取得
     W, H = screen.get_size()
     
-    # Prefer a repo-local background image (if present), otherwise fall back to user's Downloads
+    # Use repo-local background image only (PyInstaller compatible)
     repo_bg_path = os.path.join(IMG_DIR, "ChatGPT Image 2025年10月21日 14_06_32.png")
-    user_bg_path = r"c:\Users\Student\Downloads\ChatGPT Image 2025年10月21日 14_06_32.png"
     bg_surf = None
     repo_bg_used = False
     try:
@@ -50,9 +64,6 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
             img = pygame.image.load(repo_bg_path)
             bg_surf = pygame.transform.smoothscale(img, (W, H)).convert()
             repo_bg_used = True
-        elif os.path.exists(user_bg_path):
-            img = pygame.image.load(user_bg_path)
-            bg_surf = pygame.transform.smoothscale(img, (W, H)).convert()
     except Exception:
         bg_surf = None
 

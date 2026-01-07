@@ -4,6 +4,22 @@ import os
 import sys
 import pygame
 import time
+
+# Import path resolver for PyInstaller compatibility
+try:
+    from ..utils.path_resolver import get_resource_path, IMAGES_DIR
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
+        IMAGES_DIR = get_resource_path('images')
+
 # Import animation module safely: try package-relative, then absolute, then fallback to None
 try:
     from . import animation as animation_mod
@@ -16,17 +32,8 @@ except Exception:
         except Exception:
             animation_mod = None
 
-# Determine image directory
-try:
-    # When imported as module from c.c.b folder structure
-    # c.c.b/assets/image_loader.py -> go up to c.c.b -> go up to project root -> images
-    _current_dir = os.path.dirname(__file__)  # c.c.b/assets
-    _ccb_dir = os.path.dirname(_current_dir)  # c.c.b
-    _project_root = os.path.dirname(_ccb_dir)  # project root
-    IMG_DIR = os.path.join(_project_root, "images")
-except Exception as e:
-    # Fallback
-    IMG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images")
+# Determine image directory using path resolver (PyInstaller compatible)
+IMG_DIR = IMAGES_DIR
 
 # Image caches
 _image_cache = {}

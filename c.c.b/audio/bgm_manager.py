@@ -69,9 +69,18 @@ def get_current_bgm_mode():
     return current_bgm_mode
 
 
-def get_current_bgm_mode():
-    """現在のBGMモードを取得"""
-    return current_bgm_mode
+def _ensure_mixer_initialized() -> bool:
+    """Ensure pygame mixer is initialized. Returns True if ready."""
+    try:
+        if pygame.mixer.get_init():
+            return True
+        try:
+            pygame.mixer.init()
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
 
 
 def set_bgm_mode(mode: str | None) -> None:
@@ -86,16 +95,8 @@ def set_bgm_mode(mode: str | None) -> None:
     """
     global current_bgm_mode
     
-    try:
-        # module-level import to avoid side effects on load
-        if not pygame.mixer.get_init():
-            try:
-                pygame.mixer.init()
-            except Exception:
-                # audio system not available; skip bgm silently
-                return
-    except Exception:
-        # mixer not available; skip bgm silently
+    # ensure mixer is available
+    if not _ensure_mixer_initialized():
         return
 
     current_bgm_mode = mode

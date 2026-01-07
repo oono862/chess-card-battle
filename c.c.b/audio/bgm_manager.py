@@ -40,12 +40,20 @@ def get_bgm_enabled():
 def set_bgm_enabled(enabled):
     """BGM有効状態を設定"""
     global bgm_enabled
+    old_enabled = bgm_enabled
     bgm_enabled = enabled
+    
+    if not _ensure_mixer_initialized():
+        return
+        
     if not enabled:
         try:
             pygame.mixer.music.stop()
         except Exception:
             pass
+    elif old_enabled != enabled and current_bgm_mode:
+        # BGM was just enabled, restart current mode
+        set_bgm_mode(current_bgm_mode)
 
 
 def get_bgm_volume():
@@ -57,8 +65,12 @@ def set_bgm_volume(volume):
     """BGMボリュームを設定 (0.0 - 1.0)"""
     global bgm_volume
     bgm_volume = max(0.0, min(1.0, volume))
+    
+    if not _ensure_mixer_initialized():
+        return
+        
     try:
-        if pygame.mixer.get_init() and bgm_enabled:
+        if bgm_enabled:
             pygame.mixer.music.set_volume(bgm_volume)
     except Exception:
         pass
@@ -67,6 +79,16 @@ def set_bgm_volume(volume):
 def get_current_bgm_mode():
     """現在のBGMモードを取得"""
     return current_bgm_mode
+
+
+def is_bgm_playing():
+    """BGMが現在再生中かどうかをチェック"""
+    if not bgm_enabled or not _ensure_mixer_initialized():
+        return False
+    try:
+        return pygame.mixer.music.get_busy()
+    except Exception:
+        return False
 
 
 def _ensure_mixer_initialized() -> bool:

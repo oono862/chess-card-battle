@@ -146,5 +146,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # アイコンがあれば指定: icon='icon.ico'
+    icon=os.path.join(project_root, 'images', 'icon.ico'),  # アプリアイコン
 )

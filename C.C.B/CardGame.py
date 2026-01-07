@@ -666,7 +666,7 @@ if existing_surf:
     screen = existing_surf
 else:
     screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-    pygame.display.set_caption("Chess-Card-Battle β")
+    pygame.display.set_caption("Chess-Card-Battle")
 clock = pygame.time.Clock()
 
 # 基準UI解像度（スケーリング用）
@@ -5830,7 +5830,13 @@ def draw_panel():
     # Scale the button label so it follows the UI scale used on the right-side rendering
     ui_scale = layout.get('scale', 1.0)
     try:
-        lab_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", max(12, int(FONT.get_height() * ui_scale)), bold=True)
+        # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+        font_size = max(12, int(FONT.get_height() * ui_scale))
+        if not hasattr(draw_panel, '_btn_font_cache'):
+            draw_panel._btn_font_cache = {}
+        if font_size not in draw_panel._btn_font_cache:
+            draw_panel._btn_font_cache[font_size] = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", font_size, bold=True)
+        lab_font = draw_panel._btn_font_cache[font_size]
         lab = lab_font.render("バトル開始 (T)", True, (255,255,255))
         screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
     except Exception:
@@ -6404,7 +6410,12 @@ def draw_panel():
             bx = board_left
             by = board_top
             telop_font_size = max(28, bs // 8)
-            telop_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", telop_font_size, bold=True)
+            # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+            if not hasattr(draw_panel, '_telop_font_cache'):
+                draw_panel._telop_font_cache = {}
+            if telop_font_size not in draw_panel._telop_font_cache:
+                draw_panel._telop_font_cache[telop_font_size] = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", telop_font_size, bold=True)
+            telop_font = draw_panel._telop_font_cache[telop_font_size]
             telop_surf = telop_font.render(turn_telop_msg, True, (255, 255, 255))
             # drop shadow
             shadow = telop_font.render(turn_telop_msg, True, (0, 0, 0))
@@ -6452,7 +6463,12 @@ def draw_panel():
             # small semi-transparent box near top-center of board
             box_w = min(500, board_size - 40)
             notice_font_size = max(16, board_size // 24)
-            notice_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", notice_font_size, bold=True)
+            # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+            if not hasattr(draw_panel, '_notice_font_cache'):
+                draw_panel._notice_font_cache = {}
+            if notice_font_size not in draw_panel._notice_font_cache:
+                draw_panel._notice_font_cache[notice_font_size] = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", notice_font_size, bold=True)
+            notice_font = draw_panel._notice_font_cache[notice_font_size]
             notice_surf = notice_font.render(notice_msg, True, (255, 230, 180))
             shadow = notice_font.render(notice_msg, True, (0,0,0))
             bx = board_left + (board_size - notice_surf.get_width()) // 2
@@ -6669,9 +6685,13 @@ def draw_panel():
             check_x = left_margin + 10
             check_y = H // 2 - 50
 
+            # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+            if not hasattr(draw_panel, '_check_font'):
+                draw_panel._check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
+            check_font = draw_panel._check_font
+
             for idx, color in enumerate(draw_panel.last_check_colors):
                 msg = f"{'白' if color == 'white' else '黒'}チェック中"
-                check_font = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20, bold=True)
                 check_text = check_font.render(msg, True, (255, 165, 0))
 
                 text_w = check_text.get_width()
@@ -7100,6 +7120,11 @@ def draw_panel():
         if current_group:
             line_groups.append(current_group)
         
+        # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+        if not hasattr(draw_panel, '_log_fallback_font'):
+            draw_panel._log_fallback_font = pygame.font.SysFont(None, 18)
+        log_fallback_font = draw_panel._log_fallback_font
+        
         for group in line_groups:
             if log_y >= log_panel_top + log_panel_height - bottom_padding_px:
                 break
@@ -7115,7 +7140,7 @@ def draw_panel():
                 try:
                     ts = FONT.render(wline, True, (30, 30, 30))
                 except Exception:
-                    ts = pygame.font.SysFont(None, 18).render(wline, True, (30, 30, 30))
+                    ts = log_fallback_font.render(wline, True, (30, 30, 30))
                 text_surfs.append(ts)
                 max_tw = max(max_tw, ts.get_width())
                 total_th += ts.get_height()

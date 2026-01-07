@@ -4,7 +4,23 @@
 設定の保持、BGMの切り替え、ボリューム調整などの機能を提供します。
 """
 import os
+import sys
 import pygame
+
+# Import path resolver for PyInstaller compatibility
+try:
+    from ..utils.path_resolver import get_resource_path, MUSIC_DIR
+except Exception:
+    try:
+        from c.c.b.utils.path_resolver import get_resource_path, MUSIC_DIR
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
+        MUSIC_DIR = get_resource_path('mugic')
 
 # ---- BGM 設定 (UI から変更可能) ----
 # BGM を再生するかどうか (設定画面で切替)
@@ -106,14 +122,9 @@ def set_bgm_mode(mode: str | None) -> None:
             pass
         return
 
-    # Build the absolute path to the music file
+    # Build the absolute path to the music file using path_resolver (PyInstaller compatible)
     try:
-        # BBC/audio/bgm_manager.py -> go up to BBC -> go up to project root -> mugic
-        _current_dir = os.path.dirname(os.path.abspath(__file__))  # BBC/audio
-        _bbc_dir = os.path.dirname(_current_dir)  # BBC
-        _project_root = os.path.dirname(_bbc_dir)  # project root
-        mugic_dir = os.path.join(_project_root, 'mugic')
-        music_path = os.path.join(mugic_dir, music_file)
+        music_path = os.path.join(MUSIC_DIR, music_file)
     except Exception:
         # If path resolution fails, skip BGM
         return

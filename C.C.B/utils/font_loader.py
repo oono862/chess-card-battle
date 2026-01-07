@@ -6,10 +6,53 @@ Noto Sans JP font for Japanese text support across all platforms.
 
 import os
 import pygame
-from .path_resolver import get_resource_path
+from .path_resolver import get_resource_path, path_exists_cached
 
 # フォントキャッシュ
 _font_cache = {}
+
+# フォントパス探索結果のキャッシュ（起動時に一度だけ計算）
+_bundled_font_path = None
+_bundled_font_path_searched = False
+
+
+def _find_bundled_font_path():
+    """同梱フォントのパスを探索してキャッシュする。
+    
+    起動時に一度だけ実行され、結果をキャッシュする。
+    """
+    global _bundled_font_path, _bundled_font_path_searched
+    
+    if _bundled_font_path_searched:
+        return _bundled_font_path
+    
+    _bundled_font_path_searched = True
+    
+    # 同梱フォントのパス候補（優先順）
+    font_candidates = [
+        get_resource_path('Noto_Sans_JP/NotoSansJP-VariableFont_wght.ttf'),
+        get_resource_path('Noto_Sans_JP/static/NotoSansJP-Regular.ttf'),
+        get_resource_path('Noto_Sans_JP/static/NotoSansJP-Bold.ttf'),
+    ]
+    
+    for font_path in font_candidates:
+        if path_exists_cached(font_path):
+            _bundled_font_path = font_path
+            return _bundled_font_path
+    
+    # Windowsシステムフォントのフォールバック
+    windows_font_paths = [
+        "C:\\Windows\\Fonts\\msgothic.ttc",
+        "C:\\Windows\\Fonts\\meiryo.ttc",
+        "C:\\Windows\\Fonts\\yugothic.ttf",
+    ]
+    
+    for font_path in windows_font_paths:
+        if path_exists_cached(font_path):
+            _bundled_font_path = font_path
+            return _bundled_font_path
+    
+    return None
 
 
 def get_font(size, bold=False):
@@ -29,37 +72,16 @@ def get_font(size, bold=False):
     if key in _font_cache:
         return _font_cache[key]
     
-    # 同梱フォントを優先して試す
-    bundled_font_paths = [
-        get_resource_path('Noto_Sans_JP/NotoSansJP-VariableFont_wght.ttf'),
-        get_resource_path('Noto_Sans_JP/static/NotoSansJP-Regular.ttf'),
-        get_resource_path('Noto_Sans_JP/static/NotoSansJP-Bold.ttf') if bold else None,
-    ]
+    # キャッシュ済みのフォントパスを使用（毎回パス検索を避ける）
+    font_path = _find_bundled_font_path()
     
-    for font_path in bundled_font_paths:
-        if font_path and os.path.exists(font_path):
-            try:
-                font = pygame.font.Font(font_path, size)
-                _font_cache[key] = font
-                return font
-            except Exception:
-                continue
-    
-    # Windows システムフォント（存在確認付き）
-    windows_font_paths = [
-        "C:\\Windows\\Fonts\\msgothic.ttc",   # MSゴシック
-        "C:\\Windows\\Fonts\\meiryo.ttc",     # メイリオ
-        "C:\\Windows\\Fonts\\yugothic.ttf",   # 遊ゴシック
-    ]
-    
-    for font_path in windows_font_paths:
-        if os.path.exists(font_path):
-            try:
-                font = pygame.font.Font(font_path, size)
-                _font_cache[key] = font
-                return font
-            except Exception:
-                continue
+    if font_path:
+        try:
+            font = pygame.font.Font(font_path, size)
+            _font_cache[key] = font
+            return font
+        except Exception:
+            pass
     
     # フォールバック: pygame のシステムフォント機能
     try:

@@ -7,10 +7,10 @@ import time
 
 # Import path resolver for PyInstaller compatibility
 try:
-    from ..utils.path_resolver import get_resource_path, IMAGES_DIR
+    from ..utils.path_resolver import get_resource_path, IMAGES_DIR, path_exists_cached
 except Exception:
     try:
-        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR
+        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR, path_exists_cached
     except Exception:
         # Fallback: define locally if path_resolver is not available
         def get_resource_path(rel_path):
@@ -19,6 +19,9 @@ except Exception:
             else:
                 return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
         IMAGES_DIR = get_resource_path('images')
+        # フォールバック時はキャッシュなしで通常のos.path.existsを使用
+        def path_exists_cached(path):
+            return os.path.exists(path)
 
 # Import animation module safely: try package-relative, then absolute, then fallback to None
 try:
@@ -40,6 +43,76 @@ _image_cache = {}
 _piece_image_cache = {}
 # GIF animation cache: {(name, size): {'frames': [Surface], 'durations': [ms], 'current_frame': int, 'last_update': time}}
 _gif_animation_cache = {}
+
+# 画像ファイル名インデックス（再帰検索の高速化）
+# { normalized_filename_lower: full_path }
+_image_file_index = None
+_image_file_index_built = False
+
+
+def _build_image_index():
+    """画像ディレクトリ内の全ファイルをインデックス化する。
+    
+    PyInstaller環境での毎回のos.walk()を避けるため、
+    最初の1回だけ実行してキャッシュする。
+    """
+    global _image_file_index, _image_file_index_built
+    if _image_file_index_built:
+        return _image_file_index
+    
+    _image_file_index = {}
+    
+    if not os.path.isdir(IMG_DIR):
+        _image_file_index_built = True
+        return _image_file_index
+    
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'}
+    
+    try:
+        for root, _dirs, files in os.walk(IMG_DIR):
+            for f in files:
+                fn, ext = os.path.splitext(f)
+                if ext.lower() in valid_extensions:
+                    full_path = os.path.join(root, f)
+                    # 正規化したファイル名をキーとして保存
+                    fn_lower = fn.lower()
+                    fn_lower_nospace = fn_lower.replace(' ', '').replace('\u3000', '')
+                    
+                    # 両方のキーで保存（スペースあり/なし）
+                    if fn_lower not in _image_file_index:
+                        _image_file_index[fn_lower] = full_path
+                    if fn_lower_nospace not in _image_file_index:
+                        _image_file_index[fn_lower_nospace] = full_path
+    except Exception:
+        pass
+    
+    _image_file_index_built = True
+    return _image_file_index
+
+
+def _find_image_in_index(name):
+    """インデックスから画像パスを検索する。
+    
+    Args:
+        name: 画像名（拡張子なし）
+        
+    Returns:
+        str or None: 見つかったパス、またはNone
+    """
+    index = _build_image_index()
+    if not index:
+        return None
+    
+    name_lower = name.lower()
+    name_lower_nospace = name_lower.replace(' ', '').replace('\u3000', '')
+    
+    # 完全一致を優先
+    if name_lower in index:
+        return index[name_lower]
+    if name_lower_nospace in index:
+        return index[name_lower_nospace]
+    
+    return None
 
 
 def get_main_module():
@@ -101,7 +174,7 @@ def get_card_image(name: str, size=(72, 96)):
             break
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
-        if os.path.exists(path):
+        if path_exists_cached(path):
             def _try_load(p):
                 # Try pygame.image.load + convert_alpha
                 try:
@@ -134,7 +207,7 @@ def get_card_image(name: str, size=(72, 96)):
     if surf is None:
         for cand in candidates:
             path = os.path.join(IMG_DIR, cand)
-            if os.path.exists(path):
+            if path_exists_cached(path):
                 try:
                     img = pygame.image.load(path).convert_alpha()
                     surf = pygame.transform.smoothscale(img, size)
@@ -151,7 +224,7 @@ def get_card_image(name: str, size=(72, 96)):
     if surf is None and norm_name != name:
         for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
             path = os.path.join(IMG_DIR, cand)
-            if os.path.exists(path):
+            if path_exists_cached(path):
                 try:
                     img = pygame.image.load(path).convert_alpha()
                     surf = pygame.transform.smoothscale(img, size)
@@ -159,25 +232,15 @@ def get_card_image(name: str, size=(72, 96)):
                 except Exception:
                     pass
 
-    # 3) recursive search
-    if surf is None and os.path.isdir(IMG_DIR):
-        base_l = name.lower()
-        base_l_nospace = base_l.replace(' ', '').replace('\u3000', '')
-        for root, _dirs, files in os.walk(IMG_DIR):
-            for f in files:
-                fn, ext = os.path.splitext(f)
-                fn_l = fn.lower()
-                fn_l_nospace = fn_l.replace(' ', '').replace('\u3000', '')
-                if ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"] and (fn_l == base_l or fn_l_nospace == base_l_nospace):
-                    try:
-                        path = os.path.join(root, f)
-                        img = pygame.image.load(path).convert_alpha()
-                        surf = pygame.transform.smoothscale(img, size)
-                        break
-                    except Exception:
-                        continue
-            if surf is not None:
-                break
+    # 3) インデックスベースの検索（os.walk()の代わり）
+    if surf is None:
+        indexed_path = _find_image_in_index(name)
+        if indexed_path:
+            try:
+                img = pygame.image.load(indexed_path).convert_alpha()
+                surf = pygame.transform.smoothscale(img, size)
+            except Exception:
+                pass
 
     # placeholder
     if surf is None:

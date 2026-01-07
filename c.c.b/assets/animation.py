@@ -5,16 +5,23 @@ import sys
 import pygame
 import time as _ct_time
 
-# Determine image directory
+# Import path resolver for PyInstaller compatibility
 try:
-    # When imported as module from BBC folder structure
-    # BBC/assets/animation.py -> go up to BBC -> go up to project root -> images
-    _current_dir = os.path.dirname(__file__)  # BBC/assets
-    _bbc_dir = os.path.dirname(_current_dir)  # BBC
-    _project_root = os.path.dirname(_bbc_dir)  # project root
-    IMG_DIR = os.path.join(_project_root, "images")
+    from ..utils.path_resolver import get_resource_path, IMAGES_DIR
 except Exception:
-    IMG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images")
+    try:
+        from utils.path_resolver import get_resource_path, IMAGES_DIR
+    except Exception:
+        # Fallback: define locally if path_resolver is not available
+        def get_resource_path(rel_path):
+            if getattr(sys, 'frozen', False):
+                return os.path.join(sys._MEIPASS, rel_path)
+            else:
+                return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
+        IMAGES_DIR = get_resource_path('images')
+
+# Use path resolver for image directory (PyInstaller compatible)
+IMG_DIR = IMAGES_DIR
 
 # GIF animation state and caches
 heat_gif_frames_cache = None

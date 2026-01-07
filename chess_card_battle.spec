@@ -1,14 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller spec file for Chess-Card-Battle.
-
-Build command:
-    cd c:\Users\Student\Desktop\chess-card-battle\chess-card-battle-1
-    pyinstaller chess_card_battle.spec
-
-Output:
-    dist/ChessCardBattle.exe
-"""
+# PyInstaller spec file for Chess-Card-Battle.
+# Build command:
+#     cd <project_root>
+#     pyinstaller chess_card_battle.spec
+# Output: dist/ChessCardBattle.exe
 
 import os
 
@@ -39,6 +34,8 @@ a = Analysis(
     ],
     
     # PyInstallerが自動検出できないインポート
+    # Note: c.c.bディレクトリ内のモジュールは pathex に含まれているので
+    # ドットなしの名前で指定
     hiddenimports=[
         # pygame関連
         'pygame',
@@ -47,67 +44,74 @@ a = Analysis(
         'pygame.image',
         'pygame.transform',
         
-        # プロジェクトモジュール - c.c.bパッケージ
-        'c.c.b',
-        'c.c.b.card_core',
-        'c.c.b.chess_engine',
-        'c.c.b.gimmick',
-        'c.c.b.piece',
+        # Pillow (GIFアニメーション用)
+        'PIL',
+        'PIL.Image',
+        'PIL.GifImagePlugin',
+        
+        # プロジェクトモジュール（c.c.bディレクトリ内）
+        'card_core',
+        'chess_engine',
+        'gimmick',
+        'piece',
+        'mode_select',
+        'connection',
+        'AI',
         
         # assets
-        'c.c.b.assets',
-        'c.c.b.assets.image_loader',
-        'c.c.b.assets.animation',
+        'assets',
+        'assets.image_loader',
+        'assets.animation',
         
         # audio
-        'c.c.b.audio',
-        'c.c.b.audio.bgm_manager',
+        'audio',
+        'audio.bgm_manager',
         
         # game
-        'c.c.b.game',
-        'c.c.b.game.deck_manager',
-        'c.c.b.game.state',
-        'c.c.b.game.turn_manager',
-        'c.c.b.game.loop_manager',
+        'game',
+        'game.deck_manager',
+        'game.state',
+        'game.turn_manager',
+        'game.loop_manager',
         
         # ui
-        'c.c.b.ui',
-        'c.c.b.ui.board_renderer',
-        'c.c.b.ui.card_renderer',
-        'c.c.b.ui.overlay',
-        'c.c.b.ui.panel_renderer',
-        'c.c.b.ui.renderer',
-        'c.c.b.ui.config',
-        'c.c.b.ui.layout',
-        'c.c.b.ui.window',
-        'c.c.b.ui.modals',
-        'c.c.b.ui.modals.deck_modals',
-        'c.c.b.ui.modals.screen_modals',
+        'ui',
+        'ui.board_renderer',
+        'ui.card_renderer',
+        'ui.overlay',
+        'ui.panel_renderer',
+        'ui.renderer',
+        'ui.config',
+        'ui.layout',
+        'ui.window',
+        'ui.modals',
+        'ui.modals.deck_modals',
+        'ui.modals.screen_modals',
         
         # ai
-        'c.c.b.ai',
-        'c.c.b.ai.ai_logic',
-        'c.c.b.ai.config',
+        'ai',
+        'ai.ai_logic',
+        'ai.config',
         
         # utils
-        'c.c.b.utils',
-        'c.c.b.utils.path_resolver',
-        'c.c.b.utils.font_loader',
-        'c.c.b.utils.helpers',
-        'c.c.b.utils.drawing',
+        'utils',
+        'utils.path_resolver',
+        'utils.font_loader',
+        'utils.helpers',
+        'utils.drawing',
         
         # debug
-        'c.c.b.debug',
-        'c.c.b.debug.debug_tools',
+        'debug',
+        'debug.debug_tools',
         
         # input
-        'c.c.b.input',
-        'c.c.b.input.keyboard_handler',
-        'c.c.b.input.mouse_handler',
+        'input',
+        'input.keyboard_handler',
+        'input.mouse_handler',
         
         # chess
-        'c.c.b.chess',
-        'c.c.b.chess.rules',
+        'chess',
+        'chess.rules',
     ],
     
     hookspath=[],

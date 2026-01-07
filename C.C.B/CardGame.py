@@ -11,24 +11,71 @@ logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Import path resolver for PyInstaller compatibility
-try:
-    from utils.path_resolver import get_resource_path, get_writable_path, IMAGES_DIR
-except Exception:
+# Try to import via normal package imports first, but also support
+# loading the file directly (so editors/Pylance and PyInstaller builds
+# won't fail if package names/paths differ). This avoids relying on
+# package names like `c.c.b` which are problematic for static analysis.
+def _load_path_resolver_module():
     try:
-        from c.c.b.utils.path_resolver import get_resource_path, get_writable_path, IMAGES_DIR
+        import importlib
+        import importlib.util
     except Exception:
-        # Fallback: define locally if path_resolver is not available
-        def get_resource_path(rel_path):
-            if getattr(sys, 'frozen', False):
-                return os.path.join(sys._MEIPASS, rel_path)
-            else:
-                return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
-        def get_writable_path(rel_path):
-            if getattr(sys, 'frozen', False):
-                return os.path.join(os.path.dirname(sys.executable), rel_path)
-            else:
-                return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
-        IMAGES_DIR = get_resource_path('images')
+        importlib = None
+        importlib_util = None
+    # 1) Try standard imports that work at runtime
+    try:
+        from utils import path_resolver as _mod
+        return _mod
+    except Exception:
+        pass
+    # 2) Try explicit package import (may fail for editors)
+    try:
+        import importlib
+        _mod = importlib.import_module('c.c.b.utils.path_resolver')
+        return _mod
+    except Exception:
+        pass
+    # 3) Try to load from likely filesystem locations relative to this file
+    try:
+        import importlib.util as _util
+        candidates = [
+            os.path.join(os.path.dirname(__file__), 'utils', 'path_resolver.py'),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'utils', 'path_resolver.py'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'utils', 'path_resolver.py'),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                spec = _util.spec_from_file_location('c_c_b_path_resolver', p)
+                if spec and spec.loader:
+                    mod = _util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+    except Exception:
+        pass
+    return None
+
+_path_res_mod = _load_path_resolver_module()
+if _path_res_mod:
+    try:
+        get_resource_path = _path_res_mod.get_resource_path
+        get_writable_path = _path_res_mod.get_writable_path
+        IMAGES_DIR = getattr(_path_res_mod, 'IMAGES_DIR', get_resource_path('images'))
+    except Exception:
+        _path_res_mod = None
+
+if not _path_res_mod:
+    # Fallback: define locally if path_resolver is not available
+    def get_resource_path(rel_path):
+        if getattr(sys, 'frozen', False):
+            return os.path.join(sys._MEIPASS, rel_path)
+        else:
+            return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
+    def get_writable_path(rel_path):
+        if getattr(sys, 'frozen', False):
+            return os.path.join(os.path.dirname(sys.executable), rel_path)
+        else:
+            return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel_path)
+    IMAGES_DIR = get_resource_path('images')
 
 # 駒の名前マッピング（ツールチップ表示用）
 PIECE_NAMES = {
@@ -227,7 +274,7 @@ try:
 except Exception:
     logger.exception("Failed to import ui.window module")
     pygame.init()
-    def initialize_window(w=1200, h=800, caption="Chess-Card-Battle β", resizable=True):
+    def initialize_window(w=1200, h=800, caption="Chess-Card-Battle", resizable=True):
         screen = pygame.display.set_mode((w, h), pygame.RESIZABLE if resizable else 0)
         pygame.display.set_caption(caption)
         return screen, pygame.time.Clock()

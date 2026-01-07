@@ -666,7 +666,7 @@ if existing_surf:
     screen = existing_surf
 else:
     screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-    pygame.display.set_caption("Chess-Card-Battle β")
+    pygame.display.set_caption("Chess-Card-Battle")
 clock = pygame.time.Clock()
 
 # 基準UI解像度（スケーリング用）

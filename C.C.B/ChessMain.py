@@ -38,15 +38,7 @@ import json        # 追加
 import time  # 追加
 import random
 
-try:
-    # use lazy init helper if available to reduce startup cost
-    from c.c.b.utils.startup_optimizer import lazy_init_pygame
-except Exception:
-    def lazy_init_pygame():
-        import pygame as _pygame
-        _pygame.init()
-
-lazy_init_pygame()
+pygame.init()
 
 # --- AI thinking display settings ---
 # 表示を有効にする/無効にする
@@ -303,50 +295,28 @@ def show_start_screen(screen):
         clock.tick(30)
 
 
-_cached_piece_images = None
-_cached_promotion_images = None
-
-def _load_piece_images():
-    """Load piece images on first demand and cache them."""
-    global _cached_piece_images, _cached_promotion_images
-    if _cached_piece_images is not None:
-        return _cached_piece_images, _cached_promotion_images
-
-    # import here to keep module import fast
-    import pygame as _pygame
-
-    base = 'images'
-    white = {
-        'K': _pygame.image.load(f"{base}/Chess_k_white.png"),
-        'Q': _pygame.image.load(f"{base}/Chess_q_white.png"),
-        'R': _pygame.image.load(f"{base}/Chess_r_white.png"),
-        'B': _pygame.image.load(f"{base}/Chess_b_white.png"),
-        'N': _pygame.image.load(f"{base}/Chess_n_white.png"),
-        'P': _pygame.image.load(f"{base}/Chess_p_white.png"),
+piece_images = {
+    'white': {
+        'K': pygame.image.load("images/Chess_k_white.png"),
+        'Q': pygame.image.load("images/Chess_q_white.png"),
+        'R': pygame.image.load("images/Chess_r_white.png"),
+        'B': pygame.image.load("images/Chess_b_white.png"),
+        'N': pygame.image.load("images/Chess_n_white.png"),
+        'P': pygame.image.load("images/Chess_p_white.png"),
+    },
+    'black': {
+        'K': pygame.image.load("images/Chess_k_black.png"),
+        'Q': pygame.image.load("images/Chess_q_black.png"),
+        'R': pygame.image.load("images/Chess_r_black.png"),
+        'B': pygame.image.load("images/Chess_b_black.png"),
+        'N': pygame.image.load("images/Chess_n_black.png"),
+        'P': pygame.image.load("images/Chess_p_black.png"),
     }
-    black = {
-        'K': _pygame.image.load(f"{base}/Chess_k_black.png"),
-        'Q': _pygame.image.load(f"{base}/Chess_q_black.png"),
-        'R': _pygame.image.load(f"{base}/Chess_r_black.png"),
-        'B': _pygame.image.load(f"{base}/Chess_b_black.png"),
-        'N': _pygame.image.load(f"{base}/Chess_n_black.png"),
-        'P': _pygame.image.load(f"{base}/Chess_p_black.png"),
-    }
-    _cached_piece_images = {'white': white, 'black': black}
-    _cached_promotion_images = {
-        'white': {k: white[k] for k in ['Q', 'R', 'B', 'N']},
-        'black': {k: black[k] for k in ['Q', 'R', 'B', 'N']},
-    }
-    return _cached_piece_images, _cached_promotion_images
-
-def get_piece_images():
-    """Public accessor for piece images. Loads images on first call."""
-    imgs, promos = _load_piece_images()
-    return imgs
-
-def get_promotion_images():
-    imgs, promos = _load_piece_images()
-    return promos
+}
+promotion_images = {
+    'white': {k: piece_images['white'][k] for k in ['Q', 'R', 'B', 'N']},
+    'black': {k: piece_images['black'][k] for k in ['Q', 'R', 'B', 'N']},
+}
 
 
 current_turn = 'white' # 今どちらのプレイヤーの番か
@@ -379,7 +349,7 @@ def show_promotion_menu_with_images(screen, piece_color):
         for i, opt in enumerate(promotion_options):
             x = start_x + i * (img_size + spacing)
             y = center_y - img_size // 2
-            img = pygame.transform.scale(get_promotion_images()[piece_color][opt], (img_size, img_size))
+            img = pygame.transform.scale(promotion_images[piece_color][opt], (img_size, img_size))
             screen.blit(img, (x, y))
             positions.append((x, x + img_size, y, y + img_size, opt))
 
@@ -413,7 +383,7 @@ class Piece:
         # オフセットを考慮して描画
         x = BOARD_OFFSET_X + self.col * SQUARE_SIZE
         y = BOARD_OFFSET_Y + self.row * SQUARE_SIZE
-        img = get_piece_images()[self.color][self.name]
+        img = piece_images[self.color][self.name]
         img = pygame.transform.scale(img, (SQUARE_SIZE, SQUARE_SIZE))
         surface.blit(img, (x, y))
 

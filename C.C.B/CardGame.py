@@ -273,13 +273,7 @@ try:
     from ui.window import initialize_window, get_screen, get_clock, get_window_size, update_window_size
 except Exception:
     logger.exception("Failed to import ui.window module")
-    try:
-        from c.c.b.utils.startup_optimizer import lazy_init_pygame
-    except Exception:
-        def lazy_init_pygame():
-            import pygame as _pygame
-            _pygame.init()
-    lazy_init_pygame()
+    pygame.init()
     def initialize_window(w=1200, h=800, caption="Chess-Card-Battle", resizable=True):
         screen = pygame.display.set_mode((w, h), pygame.RESIZABLE if resizable else 0)
         pygame.display.set_caption(caption)
@@ -314,13 +308,7 @@ try:
 except Exception:
     logger.exception("Failed to import ui modules")
     BASE_UI_W, BASE_UI_H = 1200, 800
-    try:
-        from c.c.b.utils.startup_optimizer import lazy_init_pygame
-    except Exception:
-        def lazy_init_pygame():
-            import pygame as _pygame
-            _pygame.init()
-    lazy_init_pygame()
+    pygame.init()
     FONT = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 20)
     SMALL = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 18)
     TINY = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", 16)

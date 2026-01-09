@@ -3,11 +3,15 @@
 このモジュールは、AIの駒選択とカードプレイの判断を担当します。
 戦略的なカード使用のためにcard_strategyモジュールを使用します。
 
-改良版v2:
+改良版v3 (ベリーハード強化):
 - チェック優先回避
 - 迅雷・暴風警戒時の駒配置
 - 鉄壁・氷結の温存
 - コンボ対処
+- ★NEW: プレイヤーパターン学習
+- ★NEW: コンボ検出と連携使用
+- ★NEW: 2手先読み評価
+- ★NEW: 攻撃的/防御的戦略の動的切り替え
 """
 
 import random
@@ -16,13 +20,17 @@ import random
 try:
     from .card_strategy import (
         AICardStrategy, BoardAnalysis, CardEvaluator, 
-        create_ai_card_strategy, GamePhase, OpponentAnalysis
+        create_ai_card_strategy, GamePhase, OpponentAnalysis,
+        CheckmateComboDetector, LookaheadEvaluator,
+        get_player_learner, PlayerPatternLearner
     )
 except ImportError:
     try:
         from ai.card_strategy import (
             AICardStrategy, BoardAnalysis, CardEvaluator, 
-            create_ai_card_strategy, GamePhase, OpponentAnalysis
+            create_ai_card_strategy, GamePhase, OpponentAnalysis,
+            CheckmateComboDetector, LookaheadEvaluator,
+            get_player_learner, PlayerPatternLearner
         )
     except ImportError:
         AICardStrategy = None
@@ -31,6 +39,10 @@ except ImportError:
         create_ai_card_strategy = None
         GamePhase = None
         OpponentAnalysis = None
+        CheckmateComboDetector = None
+        LookaheadEvaluator = None
+        get_player_learner = None
+        PlayerPatternLearner = None
 
 
 def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY, 
@@ -104,8 +116,19 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         return _ai_play_card_legacy()
     
     def _ai_play_card_with_strategy():
-        """戦略モジュールを使用したカード選択"""
-        strategy = create_ai_card_strategy(CPU_DIFFICULTY)
+        """戦略モジュールを使用したカード選択
+        
+        改良版v3 (ベリーハード強化):
+        - コンボ検出と連携使用
+        - プレイヤーパターン学習の活用
+        - 2手先読み評価
+        """
+        # シミュレート関数と判定関数を取得
+        strategy = create_ai_card_strategy(
+            CPU_DIFFICULTY,
+            simulate_move_func=simulate_move,
+            is_in_check_func=is_in_check
+        )
         max_attempts = strategy.max_attempts.get(CPU_DIFFICULTY, 2)
         attempts = 0
         made_any = False
@@ -159,7 +182,19 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
                     if card_name:
                         played_names.add(card_name)
                     # ログに難易度に応じた情報を追加
-                    if CPU_DIFFICULTY >= 3:
+                    if CPU_DIFFICULTY >= 4:
+                        try:
+                            # ベリーハード: コンボ情報を追加
+                            if hasattr(strategy, '_last_played_card') and strategy._last_played_card:
+                                if strategy._combo_cards_to_play:
+                                    game.log.append(f"AI[VH]: 『{card_name}』をコンボの一部として使用")
+                                else:
+                                    game.log.append(f"AI[VH]: 『{card_name}』を戦略的に使用")
+                            else:
+                                game.log.append(f"AI[VH]: 『{card_name}』を使用")
+                        except Exception:
+                            game.log.append(f"AI: 『{card_name}』を戦略的に使用しました。")
+                    elif CPU_DIFFICULTY >= 3:
                         try:
                             game.log.append(f"AI: 『{card_name}』を戦略的に使用しました。")
                         except Exception:
@@ -571,18 +606,63 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         sel = random.choice(best) if best else random.choice(candidates)
 
     # Difficulty 4: prefer captures, avoid self-check, and favor higher-value captures
-    # 改良: キング周りの防御、駒配置戦略
+    # 改良v3 (ベリーハード強化): キング周りの防御、駒配置戦略、コンボ活用
     else:
         best = []
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
         
-        # AIキングの位置を取得
+        # AIキングとプレイヤーキングの位置を取得
         ai_king_pos = None
+        player_king_pos = None
+        ai_queen = None
+        
         for p in chess.pieces:
-            if getattr(p, 'color', None) == 'black' and getattr(p, 'name', '') == 'K':
-                ai_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
-                break
+            color = getattr(p, 'color', None)
+            name = getattr(p, 'name', '')
+            if color == 'black':
+                if name == 'K':
+                    ai_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                elif name == 'Q':
+                    ai_queen = p
+            elif color == 'white' and name == 'K':
+                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+        
+        # ベリーハード: 暴風・迅雷の効果がある場合の特別処理
+        has_storm = getattr(game, 'ai_next_move_can_jump', False)
+        has_lightning = getattr(game, 'ai_consecutive_turns', 0) >= 1
+        
+        # コンボ検出器を使用してチェック機会を探す
+        combo_move = None
+        if CheckmateComboDetector is not None and (has_storm or has_lightning):
+            try:
+                combo_detector = CheckmateComboDetector(chess, game, get_valid_moves, simulate_move, is_in_check)
+                
+                # 暴風有効時: クイーンでチェックを狙う
+                if has_storm and ai_queen:
+                    combo_info = combo_detector.find_queen_storm_checkmate()
+                    if combo_info and player_king_pos:
+                        # クイーンをキングに向かって移動
+                        queen_moves = get_valid_moves(ai_queen, ignore_check=True)
+                        for mv in queen_moves:
+                            newp = simulate_move(ai_queen, mv[0], mv[1])
+                            if not is_in_check(newp, 'black'):
+                                # キングに近づく移動を優先
+                                dist_to_king = abs(mv[0] - player_king_pos[0]) + abs(mv[1] - player_king_pos[1])
+                                if dist_to_king <= 2:
+                                    combo_move = (ai_queen, mv, 200)  # 非常に高いスコア
+                                    break
+                
+                # 迅雷有効時: 2手でチェックメイトを狙う
+                if has_lightning and not combo_move:
+                    combo_info = combo_detector.find_queen_lightning_checkmate()
+                    if combo_info:
+                        first_move = combo_info.get('first_move')
+                        attacker = combo_info.get('attacker')
+                        if first_move and attacker:
+                            combo_move = (attacker, first_move, 150)
+            except Exception:
+                pass
         
         for p, mv in candidates:
             newp = simulate_move(p, mv[0], mv[1])
@@ -591,6 +671,10 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
             
             tgt = chess.get_piece_at(mv[0], mv[1])
             score = values.get(tgt.name,0) if tgt else 0
+            
+            # コンボ移動は最優先
+            if combo_move and p is combo_move[0] and mv == combo_move[1]:
+                score = combo_move[2]
             
             # 駒配置分散ボーナス
             if should_spread_pieces and not tgt:
@@ -604,6 +688,19 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
                 # キングに近づく動きにボーナス（過度に近づかないように）
                 if 2 <= king_dist_after <= 3 and king_dist_after < king_dist_before:
                     score += 0.5
+            
+            # ベリーハード: プレイヤーキングへの圧力ボーナス
+            if player_king_pos:
+                dist_to_player_king = abs(mv[0] - player_king_pos[0]) + abs(mv[1] - player_king_pos[1])
+                piece_name = getattr(p, 'name', '')
+                
+                # 強力な駒がキングに近づく移動にボーナス
+                if piece_name in ['Q', 'R'] and dist_to_player_king <= 3:
+                    score += (4 - dist_to_player_king) * 2
+                
+                # チェック状態になる移動は大ボーナス
+                if is_in_check(newp, 'white'):
+                    score += 30
             
             if score > best_score:
                 best_score = score

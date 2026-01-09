@@ -567,6 +567,7 @@ except ImportError:
                 return None
 
         def build_ai_player(mode: str):
+            
             try:
                 deck = build_deck_for_mode(mode)
                 return PlayerState(deck=deck, pp_max=10)
@@ -5788,6 +5789,25 @@ def draw_panel():
     opponent_hand_text = f"相手の手札: {get_opponent_hand_count()}枚"
     global opponent_hand_rect
     opponent_hand_rect = draw_text(screen, opponent_hand_text, info_x, info_y, (100,50,100), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
+    info_y += left_line_step
+
+    # 相手の山札表示（存在しない場合は0と表示）
+    opp_deck_count = 0
+    try:
+        if hasattr(game, 'ai_player') and getattr(game.ai_player, 'deck', None) is not None:
+            opp_deck_count = len(game.ai_player.deck.cards)
+        else:
+            import sys
+            main_mod = sys.modules.get('__main__')
+            ai_player = getattr(main_mod, 'ai_player', None) if main_mod is not None else None
+            if ai_player is not None and getattr(ai_player, 'deck', None) is not None:
+                opp_deck_count = len(ai_player.deck.cards)
+    except Exception:
+        opp_deck_count = 0
+
+    global opponent_deck_rect
+    opponent_deck_text = f"相手の山札: {opp_deck_count}枚"
+    opponent_deck_rect = draw_text(screen, opponent_deck_text, info_x, info_y, (40,40,90), bold=True, letter_spacing=1, scale=layout.get('scale', 1.0))
     info_y += left_line_step
     
     # 相手（AI）の鉄壁効果の表示

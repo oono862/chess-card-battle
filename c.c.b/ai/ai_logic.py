@@ -606,7 +606,7 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         sel = random.choice(best) if best else random.choice(candidates)
 
     # Difficulty 4: prefer captures, avoid self-check, and favor higher-value captures
-    # 改良v3 (ベリーハード強化): キング周りの防御、駒配置戦略、コンボ活用
+    # 改良v4 (ベリーハード防御強化): キング周りの防御、駒配置戦略、コンボ活用、クイーン脅威対策
     else:
         best = []
         best_score = -999
@@ -616,6 +616,8 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         ai_king_pos = None
         player_king_pos = None
         ai_queen = None
+        player_queen = None
+        player_queen_pos = None
         
         for p in chess.pieces:
             color = getattr(p, 'color', None)
@@ -625,8 +627,46 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
                     ai_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
                 elif name == 'Q':
                     ai_queen = p
-            elif color == 'white' and name == 'K':
-                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+            elif color == 'white':
+                if name == 'K':
+                    player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                elif name == 'Q':
+                    player_queen = p
+                    player_queen_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+        
+        # ★★★ クイーン脅威の検出 ★★★
+        queen_threat_level = 0
+        queen_attack_line = []  # クイーンからキングへの攻撃ライン上のマス
+        
+        if player_queen_pos and ai_king_pos:
+            # プレイヤークイーンがAIキングをどの程度脅かしているか
+            qr, qc = player_queen_pos
+            kr, kc = ai_king_pos
+            dist = max(abs(qr - kr), abs(qc - kc))
+            
+            # 同じ行、列、または対角線上にいる場合は高脅威
+            if qr == kr or qc == kc or abs(qr - kr) == abs(qc - kc):
+                if dist <= 3:
+                    queen_threat_level = 90
+                elif dist <= 5:
+                    queen_threat_level = 70
+                else:
+                    queen_threat_level = 40
+                
+                # クイーンからキングへの攻撃ライン上のマスを計算
+                dr = 0 if qr == kr else (1 if kr > qr else -1)
+                dc = 0 if qc == kc else (1 if kc > qc else -1)
+                r, c = qr + dr, qc + dc
+                while 0 <= r < 8 and 0 <= c < 8 and (r, c) != (kr, kc):
+                    queen_attack_line.append((r, c))
+                    r += dr
+                    c += dc
+            else:
+                # 直線上でなくても近ければ脅威
+                if dist <= 2:
+                    queen_threat_level = 60
+                elif dist <= 4:
+                    queen_threat_level = 30
         
         # ベリーハード: 暴風・迅雷の効果がある場合の特別処理
         has_storm = getattr(game, 'ai_next_move_can_jump', False)
@@ -675,6 +715,53 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
             # コンボ移動は最優先
             if combo_move and p is combo_move[0] and mv == combo_move[1]:
                 score = combo_move[2]
+            
+            # ★★★ クイーン脅威への防御ボーナス ★★★
+            if queen_threat_level > 0:
+                piece_name = getattr(p, 'name', '')
+                
+                # プレイヤーのクイーンを取れる場合は最高優先
+                if tgt and getattr(tgt, 'name', '') == 'Q' and getattr(tgt, 'color', '') == 'white':
+                    score += 100  # クイーンを取る
+                
+                # 攻撃ライン上にブロッカーを配置
+                if queen_attack_line and (mv[0], mv[1]) in queen_attack_line:
+                    if piece_name != 'K':  # キング以外でブロック
+                        block_bonus = queen_threat_level * 0.6
+                        score += block_bonus
+                
+                # クイーンを攻撃できる位置に移動
+                if player_queen_pos:
+                    qr, qc = player_queen_pos
+                    piece_attacks_queen = False
+                    
+                    # 移動後にクイーンを攻撃できるかチェック（簡易版）
+                    if piece_name == 'N':  # ナイト
+                        knight_moves = [(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]
+                        for dr, dc in knight_moves:
+                            if mv[0] + dr == qr and mv[1] + dc == qc:
+                                piece_attacks_queen = True
+                                break
+                    elif piece_name in ['R', 'Q']:  # ルーク・クイーン（直線）
+                        if mv[0] == qr or mv[1] == qc:
+                            piece_attacks_queen = True
+                    elif piece_name in ['B', 'Q']:  # ビショップ・クイーン（対角線）
+                        if abs(mv[0] - qr) == abs(mv[1] - qc):
+                            piece_attacks_queen = True
+                    elif piece_name == 'P':  # ポーン
+                        if mv[0] + 1 == qr and abs(mv[1] - qc) == 1:
+                            piece_attacks_queen = True
+                    
+                    if piece_attacks_queen:
+                        score += queen_threat_level * 0.4
+                
+                # 高脅威時: キングを逃がす動きにボーナス
+                if queen_threat_level >= 70 and piece_name == 'K' and ai_king_pos:
+                    # キングが危険から離れる移動
+                    old_dist = max(abs(ai_king_pos[0] - player_queen_pos[0]), abs(ai_king_pos[1] - player_queen_pos[1])) if player_queen_pos else 99
+                    new_dist = max(abs(mv[0] - player_queen_pos[0]), abs(mv[1] - player_queen_pos[1])) if player_queen_pos else 99
+                    if new_dist > old_dist:
+                        score += (new_dist - old_dist) * 5
             
             # 駒配置分散ボーナス
             if should_spread_pieces and not tgt:

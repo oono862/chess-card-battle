@@ -6,6 +6,44 @@ import pygame
 BASE_UI_W = 1200
 BASE_UI_H = 800
 
+# テキストレンダリングキャッシュ（同じテキストの繰り返しレンダリングを回避）
+# { (text, font_size, bold, color): pygame.Surface }
+_text_render_cache = {}
+_TEXT_CACHE_MAX_SIZE = 500  # キャッシュの最大サイズ
+
+
+def _get_cached_text_surface(font, text, color, cache_key):
+    """キャッシュ付きテキストレンダリング。
+    
+    Args:
+        font: pygame.font.Font オブジェクト
+        text: レンダリングするテキスト
+        color: 色タプル
+        cache_key: キャッシュキー
+        
+    Returns:
+        pygame.Surface
+    """
+    if cache_key in _text_render_cache:
+        return _text_render_cache[cache_key]
+    
+    # キャッシュが大きくなりすぎたら古いエントリをクリア
+    if len(_text_render_cache) > _TEXT_CACHE_MAX_SIZE:
+        # 簡易的に半分をクリア
+        keys_to_remove = list(_text_render_cache.keys())[:_TEXT_CACHE_MAX_SIZE // 2]
+        for k in keys_to_remove:
+            del _text_render_cache[k]
+    
+    surf = font.render(text, True, color)
+    _text_render_cache[cache_key] = surf
+    return surf
+
+
+def clear_text_cache():
+    """テキストレンダリングキャッシュをクリア。"""
+    global _text_render_cache
+    _text_render_cache = {}
+
 
 def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0, scale=1.0):
     """Draw text with optional bold and letter spacing.
@@ -57,9 +95,10 @@ def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0
                 rect = surf.blit(img, (x, y))
                 return rect
         
-        # fast path: no bold and no special spacing -> use global FONT directly
+        # fast path: no bold and no special spacing -> use global FONT directly with cache
         if not bold and (letter_spacing == 0) and float(scale) == 1.0:
-            img = FONT.render(text, True, color)
+            cache_key = (text, FONT.get_height(), False, color)
+            img = _get_cached_text_surface(FONT, text, color, cache_key)
             rect = surf.blit(img, (x, y))
             return rect
 
@@ -70,7 +109,8 @@ def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0
         font = get_font(size, bold=bold)
 
         if letter_spacing <= 0:
-            img = font.render(text, True, color)
+            cache_key = (text, size, bold, color)
+            img = _get_cached_text_surface(font, text, color, cache_key)
             rect = surf.blit(img, (x, y))
             return rect
 
@@ -80,7 +120,8 @@ def draw_text(surf, text, x, y, color=(20, 20, 20), bold=False, letter_spacing=0
         # scale letter spacing as well so spacing is proportional on large screens
         spacing_px = max(0, int(letter_spacing * float(scale)))
         for ch in text:
-            ch_surf = font.render(ch, True, color)
+            ch_cache_key = (ch, size, bold, color)
+            ch_surf = _get_cached_text_surface(font, ch, color, ch_cache_key)
             surf.blit(ch_surf, (cur_x, y))
             cur_x += ch_surf.get_width() + spacing_px
             max_h = max(max_h, ch_surf.get_height())

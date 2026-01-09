@@ -7,10 +7,10 @@ import time
 
 # Import path resolver for PyInstaller compatibility
 try:
-    from ..utils.path_resolver import get_resource_path, IMAGES_DIR
+    from ..utils.path_resolver import get_resource_path, IMAGES_DIR, path_exists_cached
 except Exception:
     try:
-        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR
+        from c.c.b.utils.path_resolver import get_resource_path, IMAGES_DIR, path_exists_cached
     except Exception:
         # Fallback: define locally if path_resolver is not available
         def get_resource_path(rel_path):
@@ -19,6 +19,9 @@ except Exception:
             else:
                 return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), rel_path)
         IMAGES_DIR = get_resource_path('images')
+        # フォールバック時はキャッシュなしで通常のos.path.existsを使用
+        def path_exists_cached(path):
+            return os.path.exists(path)
 
 # Import animation module safely: try package-relative, then absolute, then fallback to None
 try:
@@ -40,6 +43,113 @@ _image_cache = {}
 _piece_image_cache = {}
 # GIF animation cache: {(name, size): {'frames': [Surface], 'durations': [ms], 'current_frame': int, 'last_update': time}}
 _gif_animation_cache = {}
+
+# 元画像キャッシュ（スケーリング前の画像をキャッシュして再利用）
+# { image_path: pygame.Surface }
+_raw_image_cache = {}
+
+# 画像ファイル名インデックス（再帰検索の高速化）
+# { normalized_filename_lower: full_path }
+_image_file_index = None
+_image_file_index_built = False
+
+
+def _load_raw_image(path):
+    """元画像を読み込んでキャッシュする。
+    
+    同じ画像を異なるサイズでスケーリングする際に再利用する。
+    
+    Args:
+        path: 画像ファイルパス
+        
+    Returns:
+        pygame.Surface or None
+    """
+    if path in _raw_image_cache:
+        return _raw_image_cache[path]
+    
+    img = None
+    try:
+        img = pygame.image.load(path).convert_alpha()
+    except Exception:
+        try:
+            img = pygame.image.load(path)
+        except Exception:
+            try:
+                from PIL import Image
+                im = Image.open(path).convert('RGBA')
+                img = pygame.image.fromstring(im.tobytes(), im.size, im.mode).convert_alpha()
+            except Exception:
+                pass
+    
+    if img is not None:
+        _raw_image_cache[path] = img
+    return img
+
+
+def _build_image_index():
+    """画像ディレクトリ内の全ファイルをインデックス化する。
+    
+    PyInstaller環境での毎回のos.walk()を避けるため、
+    最初の1回だけ実行してキャッシュする。
+    """
+    global _image_file_index, _image_file_index_built
+    if _image_file_index_built:
+        return _image_file_index
+    
+    _image_file_index = {}
+    
+    if not os.path.isdir(IMG_DIR):
+        _image_file_index_built = True
+        return _image_file_index
+    
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'}
+    
+    try:
+        for root, _dirs, files in os.walk(IMG_DIR):
+            for f in files:
+                fn, ext = os.path.splitext(f)
+                if ext.lower() in valid_extensions:
+                    full_path = os.path.join(root, f)
+                    # 正規化したファイル名をキーとして保存
+                    fn_lower = fn.lower()
+                    fn_lower_nospace = fn_lower.replace(' ', '').replace('\u3000', '')
+                    
+                    # 両方のキーで保存（スペースあり/なし）
+                    if fn_lower not in _image_file_index:
+                        _image_file_index[fn_lower] = full_path
+                    if fn_lower_nospace not in _image_file_index:
+                        _image_file_index[fn_lower_nospace] = full_path
+    except Exception:
+        pass
+    
+    _image_file_index_built = True
+    return _image_file_index
+
+
+def _find_image_in_index(name):
+    """インデックスから画像パスを検索する。
+    
+    Args:
+        name: 画像名（拡張子なし）
+        
+    Returns:
+        str or None: 見つかったパス、またはNone
+    """
+    index = _build_image_index()
+    if not index:
+        return None
+    
+    name_lower = name.lower()
+    name_lower_nospace = name_lower.replace(' ', '').replace('\u3000', '')
+    
+    # 完全一致を優先
+    if name_lower in index:
+        return index[name_lower]
+    if name_lower_nospace in index:
+        return index[name_lower_nospace]
+    
+    return None
 
 
 def get_main_module():
@@ -101,29 +211,8 @@ def get_card_image(name: str, size=(72, 96)):
             break
     if mapped:
         path = os.path.join(IMG_DIR, mapped)
-        if os.path.exists(path):
-            def _try_load(p):
-                # Try pygame.image.load + convert_alpha
-                try:
-                    img = pygame.image.load(p).convert_alpha()
-                    return img
-                except Exception:
-                    pass
-                # Try pygame.image.load without convert
-                try:
-                    img = pygame.image.load(p)
-                    return img
-                except Exception:
-                    pass
-                # Pillow fallback
-                try:
-                    from PIL import Image
-                    im = Image.open(p).convert('RGBA')
-                    return pygame.image.fromstring(im.tobytes(), im.size, im.mode).convert_alpha()
-                except Exception:
-                    return None
-
-            img = _try_load(path)
+        if path_exists_cached(path):
+            img = _load_raw_image(path)
             if img is not None:
                 try:
                     surf = pygame.transform.smoothscale(img, size)
@@ -134,14 +223,10 @@ def get_card_image(name: str, size=(72, 96)):
     if surf is None:
         for cand in candidates:
             path = os.path.join(IMG_DIR, cand)
-            if os.path.exists(path):
-                try:
-                    img = pygame.image.load(path).convert_alpha()
-                    surf = pygame.transform.smoothscale(img, size)
-                    break
-                except Exception:
+            if path_exists_cached(path):
+                img = _load_raw_image(path)
+                if img is not None:
                     try:
-                        img = pygame.image.load(path)
                         surf = pygame.transform.smoothscale(img, size)
                         break
                     except Exception:
@@ -151,33 +236,25 @@ def get_card_image(name: str, size=(72, 96)):
     if surf is None and norm_name != name:
         for cand in [f"{norm_name}.png", f"{norm_name}.PNG", f"{norm_name}.jpg", f"{norm_name}.jpeg", f"{norm_name}.webp", f"{norm_name}.bmp", f"{norm_name}.gif"]:
             path = os.path.join(IMG_DIR, cand)
-            if os.path.exists(path):
-                try:
-                    img = pygame.image.load(path).convert_alpha()
-                    surf = pygame.transform.smoothscale(img, size)
-                    break
-                except Exception:
-                    pass
-
-    # 3) recursive search
-    if surf is None and os.path.isdir(IMG_DIR):
-        base_l = name.lower()
-        base_l_nospace = base_l.replace(' ', '').replace('\u3000', '')
-        for root, _dirs, files in os.walk(IMG_DIR):
-            for f in files:
-                fn, ext = os.path.splitext(f)
-                fn_l = fn.lower()
-                fn_l_nospace = fn_l.replace(' ', '').replace('\u3000', '')
-                if ext.lower() in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"] and (fn_l == base_l or fn_l_nospace == base_l_nospace):
+            if path_exists_cached(path):
+                img = _load_raw_image(path)
+                if img is not None:
                     try:
-                        path = os.path.join(root, f)
-                        img = pygame.image.load(path).convert_alpha()
                         surf = pygame.transform.smoothscale(img, size)
                         break
                     except Exception:
-                        continue
-            if surf is not None:
-                break
+                        pass
+
+    # 3) インデックスベースの検索（os.walk()の代わり）
+    if surf is None:
+        indexed_path = _find_image_in_index(name)
+        if indexed_path:
+            img = _load_raw_image(indexed_path)
+            if img is not None:
+                try:
+                    surf = pygame.transform.smoothscale(img, size)
+                except Exception:
+                    pass
 
     # placeholder
     if surf is None:
@@ -216,12 +293,13 @@ def get_piece_image_surface(name: str, color: str, size: tuple):
     path = os.path.join(IMG_DIR, fname)
     surf = None
     
-    try:
-        if os.path.exists(path):
-            img = pygame.image.load(path).convert_alpha()
-            surf = pygame.transform.smoothscale(img, size)
-    except Exception:
-        surf = None
+    if path_exists_cached(path):
+        img = _load_raw_image(path)
+        if img is not None:
+            try:
+                surf = pygame.transform.smoothscale(img, size)
+            except Exception:
+                surf = None
     
     _piece_image_cache[key] = surf
     return surf
@@ -388,3 +466,54 @@ def get_current_gif_frame(name: str, size=(72, 96)):
         current_frame = anim_data['current_frame']
     
     return frames[current_frame]
+
+
+def preload_card_images(card_names, size=(72, 96)):
+    """カード画像を事前に読み込んでキャッシュする。
+    
+    ゲーム開始時に呼び出すことで、ゲーム中のラグを軽減する。
+    
+    Args:
+        card_names: カード名のリスト
+        size: カード画像サイズ (width, height)
+    """
+    for name in card_names:
+        try:
+            get_card_image(name, size)
+        except Exception:
+            pass
+
+
+def preload_piece_images(size=(60, 60)):
+    """チェス駒画像を事前に読み込んでキャッシュする。
+    
+    ゲーム開始時に呼び出すことで、ゲーム中のラグを軽減する。
+    
+    Args:
+        size: 駒画像サイズ (width, height)
+    """
+    pieces = ['K', 'Q', 'R', 'B', 'N', 'P']
+    colors = ['white', 'black']
+    
+    for piece in pieces:
+        for color in colors:
+            try:
+                get_piece_image_surface(piece, color, size)
+            except Exception:
+                pass
+
+
+def clear_all_caches():
+    """全てのキャッシュをクリアする。
+    
+    メモリ解放やリソース再読み込み時に使用。
+    """
+    global _image_cache, _piece_image_cache, _gif_animation_cache, _raw_image_cache
+    global _image_file_index, _image_file_index_built
+    
+    _image_cache = {}
+    _piece_image_cache = {}
+    _gif_animation_cache = {}
+    _raw_image_cache = {}
+    _image_file_index = None
+    _image_file_index_built = False

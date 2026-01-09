@@ -7,6 +7,40 @@ running in development mode or as a PyInstaller-packaged executable.
 import os
 import sys
 
+# パス存在キャッシュ（パフォーマンス最適化）
+# PyInstaller環境では一時ディレクトリへのアクセスが遅いため、
+# 一度確認したパスの存在結果をキャッシュする
+_path_exists_cache = {}
+_path_exists_cache_enabled = True  # exe環境では有効化
+
+def path_exists_cached(path):
+    """キャッシュ付きのパス存在チェック。
+    
+    PyInstaller exe環境ではファイルシステムアクセスが遅いため、
+    一度確認したパスの存在結果をキャッシュして再利用する。
+    
+    Args:
+        path: チェックするパス
+        
+    Returns:
+        bool: パスが存在するかどうか
+    """
+    if not _path_exists_cache_enabled:
+        return os.path.exists(path)
+    
+    if path in _path_exists_cache:
+        return _path_exists_cache[path]
+    
+    result = os.path.exists(path)
+    _path_exists_cache[path] = result
+    return result
+
+
+def clear_path_cache():
+    """パス存在キャッシュをクリアする。"""
+    global _path_exists_cache
+    _path_exists_cache = {}
+
 
 def get_base_path():
     """Get the base path for resource files.

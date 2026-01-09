@@ -3,15 +3,553 @@
 このモジュールは、AIが戦略的にカードを使用するためのロジックを提供します。
 難易度に応じて異なる戦略を適用し、盤面状況を分析してカードを選択します。
 
-改良版v2: 
+改良版v3 (ベリーハード強化): 
 - チェック優先回避
 - 迅雷・暴風警戒時の駒配置戦略
 - 鉄壁・氷結の温存
 - コンボ対処
+- ★NEW: プレイヤーカード使用パターン学習
+- ★NEW: クイーン+暴風/迅雷コンボによるチェックメイト狙い
+- ★NEW: 2手先読み評価
+- ★NEW: 攻撃的/防御的戦略の動的切り替え
+- ★NEW: カードコンボの連携使用
 """
 
 import random
+import json
+import os
 from typing import List, Dict, Any, Optional, Tuple
+from collections import defaultdict
+
+
+# =============================================================================
+# プレイヤー行動学習システム
+# =============================================================================
+
+class PlayerPatternLearner:
+    """プレイヤーのカード使用パターンを学習・分析するクラス
+    
+    学習内容:
+    - カードの使用頻度
+    - 特定状況でのカード選択傾向
+    - コンボパターン
+    - 攻撃的/防御的プレイスタイル
+    """
+    
+    # 学習データ保存パス
+    SAVE_PATH = os.path.join(os.path.dirname(__file__), 'player_patterns.json')
+    
+    def __init__(self):
+        self.card_usage_count: Dict[str, int] = defaultdict(int)
+        self.card_usage_in_check: Dict[str, int] = defaultdict(int)  # チェック時の使用
+        self.card_usage_when_ahead: Dict[str, int] = defaultdict(int)  # 優勢時の使用
+        self.card_usage_when_behind: Dict[str, int] = defaultdict(int)  # 劣勢時の使用
+        self.combo_sequences: List[List[str]] = []  # カードの連続使用パターン
+        self.recent_cards: List[str] = []  # 直近の使用カード（コンボ検出用）
+        self.total_games: int = 0
+        self.total_turns: int = 0
+        self.aggressive_score: float = 0.5  # 0=防御的、1=攻撃的
+        self._load_patterns()
+    
+    def _load_patterns(self):
+        """保存された学習データを読み込む"""
+        try:
+            if os.path.exists(self.SAVE_PATH):
+                with open(self.SAVE_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.card_usage_count = defaultdict(int, data.get('card_usage_count', {}))
+                    self.card_usage_in_check = defaultdict(int, data.get('card_usage_in_check', {}))
+                    self.card_usage_when_ahead = defaultdict(int, data.get('card_usage_when_ahead', {}))
+                    self.card_usage_when_behind = defaultdict(int, data.get('card_usage_when_behind', {}))
+                    self.combo_sequences = data.get('combo_sequences', [])[-50:]  # 直近50件
+                    self.total_games = data.get('total_games', 0)
+                    self.total_turns = data.get('total_turns', 0)
+                    self.aggressive_score = data.get('aggressive_score', 0.5)
+        except Exception:
+            pass
+    
+    def save_patterns(self):
+        """学習データを保存する"""
+        try:
+            data = {
+                'card_usage_count': dict(self.card_usage_count),
+                'card_usage_in_check': dict(self.card_usage_in_check),
+                'card_usage_when_ahead': dict(self.card_usage_when_ahead),
+                'card_usage_when_behind': dict(self.card_usage_when_behind),
+                'combo_sequences': self.combo_sequences[-50:],
+                'total_games': self.total_games,
+                'total_turns': self.total_turns,
+                'aggressive_score': self.aggressive_score,
+            }
+            with open(self.SAVE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    
+    def record_card_usage(self, card_name: str, game_state: Dict[str, Any]):
+        """プレイヤーのカード使用を記録"""
+        self.card_usage_count[card_name] += 1
+        
+        # 状況別の使用記録
+        if game_state.get('player_in_check', False):
+            self.card_usage_in_check[card_name] += 1
+        
+        material_diff = game_state.get('material_diff', 0)  # 正=プレイヤー優勢
+        if material_diff > 2:
+            self.card_usage_when_ahead[card_name] += 1
+        elif material_diff < -2:
+            self.card_usage_when_behind[card_name] += 1
+        
+        # コンボ検出
+        self.recent_cards.append(card_name)
+        if len(self.recent_cards) > 3:
+            self.recent_cards.pop(0)
+        
+        # 2枚以上の連続使用はコンボとして記録
+        if len(self.recent_cards) >= 2:
+            self.combo_sequences.append(list(self.recent_cards[-2:]))
+        
+        # 攻撃的スコアの更新
+        aggressive_cards = {'迅雷', '暴風', '氷結', '灼熱', 'ハンです☆'}
+        if card_name in aggressive_cards:
+            self.aggressive_score = min(1.0, self.aggressive_score + 0.02)
+        else:
+            self.aggressive_score = max(0.0, self.aggressive_score - 0.01)
+        
+        self.total_turns += 1
+    
+    def record_turn_end(self):
+        """ターン終了時に呼び出し（コンボ検出のリセット）"""
+        # 同一ターン内でなければコンボリセット
+        self.recent_cards = []
+    
+    def record_game_end(self):
+        """ゲーム終了時に呼び出し"""
+        self.total_games += 1
+        self.recent_cards = []
+        self.save_patterns()
+    
+    def get_most_used_cards(self, top_n: int = 5) -> List[Tuple[str, int]]:
+        """最も使用頻度の高いカードを取得"""
+        sorted_cards = sorted(self.card_usage_count.items(), key=lambda x: x[1], reverse=True)
+        return sorted_cards[:top_n]
+    
+    def get_likely_next_card(self, last_card: str) -> Optional[str]:
+        """直前のカードから次に使われやすいカードを予測"""
+        if not self.combo_sequences:
+            return None
+        
+        # 直前カードに続くカードの出現回数をカウント
+        follow_up_counts: Dict[str, int] = defaultdict(int)
+        for seq in self.combo_sequences:
+            if len(seq) >= 2 and seq[0] == last_card:
+                follow_up_counts[seq[1]] += 1
+        
+        if not follow_up_counts:
+            return None
+        
+        # 最頻出のフォローアップカードを返す
+        return max(follow_up_counts.items(), key=lambda x: x[1])[0]
+    
+    def predict_player_strategy(self, game_state: Dict[str, Any]) -> Dict[str, float]:
+        """プレイヤーの次の行動を予測"""
+        predictions = {}
+        
+        # 基本予測: 使用頻度に基づく
+        total_usage = sum(self.card_usage_count.values()) or 1
+        for card, count in self.card_usage_count.items():
+            predictions[card] = count / total_usage
+        
+        # 状況に応じた補正
+        if game_state.get('player_in_check', False):
+            check_total = sum(self.card_usage_in_check.values()) or 1
+            for card, count in self.card_usage_in_check.items():
+                predictions[card] = predictions.get(card, 0) * 0.5 + (count / check_total) * 0.5
+        
+        return predictions
+    
+    def is_player_aggressive(self) -> bool:
+        """プレイヤーが攻撃的なプレイスタイルかどうか"""
+        return self.aggressive_score > 0.6
+    
+    def is_player_defensive(self) -> bool:
+        """プレイヤーが防御的なプレイスタイルかどうか"""
+        return self.aggressive_score < 0.4
+
+
+# グローバルインスタンス（ゲーム間で学習を維持）
+_player_learner: Optional[PlayerPatternLearner] = None
+
+
+def get_player_learner() -> PlayerPatternLearner:
+    """プレイヤー学習インスタンスを取得"""
+    global _player_learner
+    if _player_learner is None:
+        _player_learner = PlayerPatternLearner()
+    return _player_learner
+
+
+# =============================================================================
+# チェックメイトコンボ検出システム
+# =============================================================================
+
+class CheckmateComboDetector:
+    """チェックメイトに繋がるカードコンボを検出するクラス
+    
+    検出パターン:
+    1. クイーン + 暴風 → 飛び越えてチェック
+    2. クイーン + 迅雷 → 2回移動でチェックメイト
+    3. 氷結 + 迅雷 → 防御駒を凍結して攻撃
+    4. 灼熱 + 迅雷 → 逃げ道を塞いで攻撃
+    """
+    
+    PIECE_VALUES = {'P': 1, 'N': 3, 'B': 3, 'R': 5, 'Q': 9, 'K': 100}
+    
+    def __init__(self, chess, game, get_valid_moves_func, simulate_move_func=None, is_in_check_func=None):
+        self.chess = chess
+        self.game = game
+        self.get_valid_moves = get_valid_moves_func
+        self.simulate_move = simulate_move_func
+        self.is_in_check = is_in_check_func
+        self._cache = {}
+    
+    def find_queen_storm_checkmate(self) -> Optional[Dict[str, Any]]:
+        """クイーン + 暴風によるチェックメイト機会を検出
+        
+        暴風で駒を飛び越えてクイーンがキングを攻撃できるかチェック
+        """
+        # AIのクイーンを探す
+        ai_queen = None
+        player_king_pos = None
+        
+        for p in self.chess.pieces:
+            color = getattr(p, 'color', None)
+            name = getattr(p, 'name', '')
+            if color == 'black' and name == 'Q':
+                ai_queen = p
+            elif color == 'white' and name == 'K':
+                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+        
+        if not ai_queen or not player_king_pos:
+            return None
+        
+        queen_row = getattr(ai_queen, 'row', 0)
+        queen_col = getattr(ai_queen, 'col', 0)
+        king_row, king_col = player_king_pos
+        
+        # 通常の移動ではキングに到達できないが、暴風で飛び越えれば到達できるか
+        normal_moves = self.get_valid_moves(ai_queen, ignore_check=True)
+        can_reach_normally = player_king_pos in normal_moves
+        
+        if can_reach_normally:
+            # 既にチェックできる状態なら暴風不要
+            return None
+        
+        # クイーンとキングの間に駒があり、飛び越えればチェックできるか
+        blocking_pieces = self._get_pieces_between(queen_row, queen_col, king_row, king_col)
+        
+        if blocking_pieces and len(blocking_pieces) == 1:
+            # 1つの駒を飛び越えればチェック可能
+            return {
+                'combo': 'queen_storm_check',
+                'attacker': ai_queen,
+                'target': player_king_pos,
+                'blocking': blocking_pieces[0],
+                'priority': 95,
+                'description': f'クイーンが暴風で駒を飛び越えてチェック可能'
+            }
+        
+        return None
+    
+    def find_queen_lightning_checkmate(self) -> Optional[Dict[str, Any]]:
+        """クイーン + 迅雷による2手チェックメイト機会を検出
+        
+        1手目でチェック、2手目でチェックメイトのパターンを探す
+        """
+        if not self.simulate_move or not self.is_in_check:
+            return None
+        
+        # AIのクイーンと相手キングを探す
+        ai_queen = None
+        player_king = None
+        player_king_pos = None
+        
+        for p in self.chess.pieces:
+            color = getattr(p, 'color', None)
+            name = getattr(p, 'name', '')
+            if color == 'black' and name == 'Q':
+                ai_queen = p
+            elif color == 'white' and name == 'K':
+                player_king = p
+                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+        
+        if not ai_queen or not player_king_pos:
+            return None
+        
+        queen_moves = self.get_valid_moves(ai_queen, ignore_check=True)
+        
+        # 1手目のチェック手を探す
+        for mv1 in queen_moves:
+            try:
+                # 1手目をシミュレート
+                new_pieces = self.simulate_move(ai_queen, mv1[0], mv1[1])
+                if not self.is_in_check(new_pieces, 'white'):
+                    continue  # チェックにならない
+                
+                # この位置からの2手目でチェックメイトできるか
+                # 簡易評価: キングの逃げ道が少ないほど高評価
+                king_escape_count = 0
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if dr == 0 and dc == 0:
+                            continue
+                        nr, nc = player_king_pos[0] + dr, player_king_pos[1] + dc
+                        if 0 <= nr < 8 and 0 <= nc < 8:
+                            # 簡易チェック: その位置に逃げられるか
+                            blocking = self.chess.get_piece_at(nr, nc)
+                            if not blocking or getattr(blocking, 'color', '') == 'black':
+                                king_escape_count += 1
+                
+                if king_escape_count <= 2:
+                    return {
+                        'combo': 'queen_lightning_checkmate',
+                        'attacker': ai_queen,
+                        'first_move': mv1,
+                        'target': player_king_pos,
+                        'priority': 90,
+                        'escape_count': king_escape_count,
+                        'description': f'クイーンが迅雷で2回動いてチェックメイト狙い（逃げ道{king_escape_count}）'
+                    }
+            except Exception:
+                continue
+        
+        return None
+    
+    def find_freeze_attack_combo(self) -> Optional[Dict[str, Any]]:
+        """氷結 + 攻撃カードのコンボを検出
+        
+        防御駒を凍結して、その後で攻撃を仕掛けるパターン
+        """
+        # 相手キングを守っている駒を探す
+        player_king_pos = None
+        defender_pieces = []
+        
+        for p in self.chess.pieces:
+            color = getattr(p, 'color', None)
+            name = getattr(p, 'name', '')
+            row = getattr(p, 'row', 0)
+            col = getattr(p, 'col', 0)
+            
+            if color == 'white' and name == 'K':
+                player_king_pos = (row, col)
+            elif color == 'white' and name != 'K':
+                # キング周辺の駒は防御駒の可能性
+                defender_pieces.append((p, row, col))
+        
+        if not player_king_pos or not defender_pieces:
+            return None
+        
+        # キング周辺の防御駒を探す
+        king_row, king_col = player_king_pos
+        nearby_defenders = []
+        
+        for p, row, col in defender_pieces:
+            dist = abs(row - king_row) + abs(col - king_col)
+            if dist <= 2:
+                value = self.PIECE_VALUES.get(getattr(p, 'name', ''), 0)
+                nearby_defenders.append((p, value, dist))
+        
+        if nearby_defenders:
+            # 最も価値の高い防御駒
+            nearby_defenders.sort(key=lambda x: (x[1], -x[2]), reverse=True)
+            best_target = nearby_defenders[0]
+            
+            return {
+                'combo': 'freeze_attack',
+                'freeze_target': best_target[0],
+                'priority': 70,
+                'description': f'{getattr(best_target[0], "name", "")}を凍結してキングへの攻撃ルートを確保'
+            }
+        
+        return None
+    
+    def find_all_combos(self) -> List[Dict[str, Any]]:
+        """全てのコンボ機会を検出"""
+        combos = []
+        
+        # クイーン + 暴風
+        queen_storm = self.find_queen_storm_checkmate()
+        if queen_storm:
+            combos.append(queen_storm)
+        
+        # クイーン + 迅雷
+        queen_lightning = self.find_queen_lightning_checkmate()
+        if queen_lightning:
+            combos.append(queen_lightning)
+        
+        # 氷結 + 攻撃
+        freeze_attack = self.find_freeze_attack_combo()
+        if freeze_attack:
+            combos.append(freeze_attack)
+        
+        # 優先度でソート
+        combos.sort(key=lambda x: x.get('priority', 0), reverse=True)
+        
+        return combos
+    
+    def _get_pieces_between(self, r1: int, c1: int, r2: int, c2: int) -> List[Any]:
+        """2点間にある駒のリストを取得"""
+        pieces = []
+        
+        dr = 0 if r1 == r2 else (1 if r2 > r1 else -1)
+        dc = 0 if c1 == c2 else (1 if c2 > c1 else -1)
+        
+        # 斜め/直線上にあるかチェック
+        if dr != 0 and dc != 0:
+            if abs(r2 - r1) != abs(c2 - c1):
+                return []  # 斜め直線上にない
+        
+        r, c = r1 + dr, c1 + dc
+        while (r, c) != (r2, c2):
+            if not (0 <= r < 8 and 0 <= c < 8):
+                break
+            piece = self.chess.get_piece_at(r, c)
+            if piece:
+                pieces.append(piece)
+            r += dr
+            c += dc
+        
+        return pieces
+
+
+# =============================================================================
+# 2手先読み評価システム
+# =============================================================================
+
+class LookaheadEvaluator:
+    """2手先を読んでカード使用の効果を評価するクラス"""
+    
+    PIECE_VALUES = {'P': 1, 'N': 3, 'B': 3, 'R': 5, 'Q': 9, 'K': 100}
+    
+    def __init__(self, chess, game, get_valid_moves_func, simulate_move_func=None, is_in_check_func=None):
+        self.chess = chess
+        self.game = game
+        self.get_valid_moves = get_valid_moves_func
+        self.simulate_move = simulate_move_func
+        self.is_in_check = is_in_check_func
+    
+    def evaluate_after_storm(self) -> float:
+        """暴風使用後の盤面評価"""
+        score = 0.0
+        
+        # 暴風でジャンプ可能になった場合の追加移動先を評価
+        for p in self.chess.pieces:
+            if getattr(p, 'color', None) != 'black':
+                continue
+            
+            name = getattr(p, 'name', '')
+            if name in ['N', 'K']:  # ナイトとキングは元々ジャンプ可能
+                continue
+            
+            # 通常の移動先
+            normal_moves = self.get_valid_moves(p, ignore_check=True)
+            
+            # ジャンプ込みの移動先（簡易シミュレーション）
+            row = getattr(p, 'row', 0)
+            col = getattr(p, 'col', 0)
+            
+            # クイーン/ルーク/ビショップの延長線上の位置を評価
+            attack_potential = 0
+            for mv in normal_moves:
+                target = self.chess.get_piece_at(mv[0], mv[1])
+                if target and getattr(target, 'color', '') == 'white':
+                    attack_potential += self.PIECE_VALUES.get(getattr(target, 'name', ''), 0)
+            
+            # 高価値駒への攻撃機会が増える場合はボーナス
+            if name == 'Q':
+                score += attack_potential * 3
+            elif name == 'R':
+                score += attack_potential * 2
+            elif name == 'B':
+                score += attack_potential * 1.5
+        
+        return score
+    
+    def evaluate_after_lightning(self) -> float:
+        """迅雷使用後の盤面評価（2回行動の価値）"""
+        score = 0.0
+        
+        # AI駒の攻撃機会を評価
+        attack_opportunities = []
+        
+        for p in self.chess.pieces:
+            if getattr(p, 'color', None) != 'black':
+                continue
+            
+            moves = self.get_valid_moves(p, ignore_check=True)
+            for mv in moves:
+                target = self.chess.get_piece_at(mv[0], mv[1])
+                if target and getattr(target, 'color', '') == 'white':
+                    value = self.PIECE_VALUES.get(getattr(target, 'name', ''), 0)
+                    attack_opportunities.append((p, mv, value))
+        
+        # 攻撃機会を価値順にソート
+        attack_opportunities.sort(key=lambda x: x[2], reverse=True)
+        
+        # 上位2つの攻撃機会の価値を合算（2回動けるので）
+        if len(attack_opportunities) >= 2:
+            score = attack_opportunities[0][2] * 3 + attack_opportunities[1][2] * 2
+        elif len(attack_opportunities) == 1:
+            score = attack_opportunities[0][2] * 3
+        
+        # プレイヤーキングへの接近を評価
+        player_king_pos = None
+        for p in self.chess.pieces:
+            if getattr(p, 'color', '') == 'white' and getattr(p, 'name', '') == 'K':
+                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                break
+        
+        if player_king_pos:
+            for p in self.chess.pieces:
+                if getattr(p, 'color', None) != 'black':
+                    continue
+                name = getattr(p, 'name', '')
+                if name in ['Q', 'R']:  # 強力な駒
+                    row = getattr(p, 'row', 0)
+                    col = getattr(p, 'col', 0)
+                    dist = abs(row - player_king_pos[0]) + abs(col - player_king_pos[1])
+                    if dist <= 3:
+                        score += 20  # キングに近い強力な駒にボーナス
+        
+        return score
+    
+    def evaluate_after_freeze(self, target_piece) -> float:
+        """氷結使用後の盤面評価"""
+        if not target_piece:
+            return 0.0
+        
+        score = 0.0
+        
+        # 凍結駒の価値
+        value = self.PIECE_VALUES.get(getattr(target_piece, 'name', ''), 0)
+        score += value * 5
+        
+        # 凍結駒がキング周辺の防御駒だった場合のボーナス
+        target_row = getattr(target_piece, 'row', 0)
+        target_col = getattr(target_piece, 'col', 0)
+        
+        player_king_pos = None
+        for p in self.chess.pieces:
+            if getattr(p, 'color', '') == 'white' and getattr(p, 'name', '') == 'K':
+                player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                break
+        
+        if player_king_pos:
+            dist = abs(target_row - player_king_pos[0]) + abs(target_col - player_king_pos[1])
+            if dist <= 2:
+                score += 15  # キング周辺の駒を凍結
+        
+        return score
 
 
 # ゲーム進行フェーズの定義
@@ -567,20 +1105,56 @@ class BoardAnalysis:
 class CardEvaluator:
     """カード評価クラス - 各カードの使用価値を評価
     
-    改良版v2: 
+    改良版v3 (ベリーハード強化): 
     - チェック優先回避
     - 迅雷・暴風警戒時の戦略
     - 鉄壁・氷結の温存
     - コンボ対処
+    - ★NEW: コンボ検出結果の統合
+    - ★NEW: 2手先読み評価
+    - ★NEW: プレイヤーパターン学習の活用
     """
     
     def __init__(self, board_analysis: BoardAnalysis, difficulty: int, ai_player, 
-                 game_phase: str = None, opponent_analysis: 'OpponentAnalysis' = None):
+                 game_phase: str = None, opponent_analysis: 'OpponentAnalysis' = None,
+                 combo_detector: 'CheckmateComboDetector' = None,
+                 lookahead: 'LookaheadEvaluator' = None,
+                 player_learner: 'PlayerPatternLearner' = None):
         self.analysis = board_analysis
         self.difficulty = difficulty
         self.ai_player = ai_player
         self.game_phase = game_phase or GamePhase.MIDGAME
         self.opponent_analysis = opponent_analysis
+        self.combo_detector = combo_detector
+        self.lookahead = lookahead
+        self.player_learner = player_learner
+        self._combo_cache = None
+    
+    def _get_combos(self) -> List[Dict[str, Any]]:
+        """コンボ検出結果をキャッシュ付きで取得"""
+        if self._combo_cache is None:
+            if self.combo_detector:
+                self._combo_cache = self.combo_detector.find_all_combos()
+            else:
+                self._combo_cache = []
+        return self._combo_cache
+    
+    def _has_combo_for_card(self, card_name: str) -> Optional[Dict[str, Any]]:
+        """指定カードに関連するコンボがあるか確認"""
+        combos = self._get_combos()
+        
+        card_combo_mapping = {
+            '暴風': ['queen_storm_check'],
+            '迅雷': ['queen_lightning_checkmate'],
+            '氷結': ['freeze_attack'],
+        }
+        
+        relevant_combos = card_combo_mapping.get(card_name, [])
+        
+        for combo in combos:
+            if combo.get('combo') in relevant_combos:
+                return combo
+        return None
     
     def evaluate_card(self, card) -> float:
         """カードの使用価値を評価（0-100のスコア）
@@ -612,8 +1186,15 @@ class CardEvaluator:
         if base_score < 0:
             return -1
         
+        # ベリーハード専用: プレイヤーパターン学習に基づく補正
+        if self.difficulty >= 4 and self.player_learner:
+            base_score = self._apply_player_pattern_bonus(name, base_score)
+        
         # 難易度による調整
-        if self.difficulty >= 3:
+        if self.difficulty >= 4:
+            # ベリーハード: 状況に応じた評価を完全に重視
+            return base_score
+        elif self.difficulty == 3:
             # 高難易度: 状況に応じた評価を重視
             return base_score
         elif self.difficulty == 2:
@@ -623,6 +1204,35 @@ class CardEvaluator:
             # 低難易度: ランダム性を追加
             return base_score * 0.5 + random.uniform(0, 50)
     
+    def _apply_player_pattern_bonus(self, card_name: str, base_score: float) -> float:
+        """プレイヤーパターン学習に基づくスコア補正（ベリーハード専用）"""
+        if not self.player_learner:
+            return base_score
+        
+        # プレイヤーが攻撃的なら防御カードを優先
+        if self.player_learner.is_player_aggressive():
+            defensive_cards = {'鉄壁', '氷結'}
+            if card_name in defensive_cards:
+                base_score += 15
+        
+        # プレイヤーが防御的なら攻撃カードを優先
+        elif self.player_learner.is_player_defensive():
+            aggressive_cards = {'迅雷', '暴風', '灼熱'}
+            if card_name in aggressive_cards:
+                base_score += 10
+        
+        # プレイヤーがよく使うカードへの対策
+        most_used = self.player_learner.get_most_used_cards(3)
+        for used_card, _ in most_used:
+            # プレイヤーが迅雷をよく使うなら鉄壁の価値UP
+            if used_card == '迅雷' and card_name == '鉄壁':
+                base_score += 10
+            # プレイヤーが氷結をよく使うなら先に氷結を使う
+            elif used_card == '氷結' and card_name == '氷結':
+                base_score += 8
+        
+        return base_score
+    
     def _should_save_card(self, card_name: str) -> bool:
         """カードを温存すべきかどうか判定
         
@@ -630,6 +1240,13 @@ class CardEvaluator:
         """
         if self.difficulty < 2:
             return False  # 低難易度では温存しない
+        
+        # ベリーハードでは温存判定をより緩く（攻撃的に）
+        if self.difficulty >= 4:
+            # チャンスがあれば積極的に使う
+            combos = self._get_combos()
+            if combos:
+                return False  # コンボチャンスがあれば温存しない
         
         # 序盤は温存すべきカード
         save_in_opening = {'鉄壁', '氷結'}
@@ -645,17 +1262,23 @@ class CardEvaluator:
     def _eval_freeze(self) -> float:
         """氷結の評価
         
-        改良v2: 
+        改良v3 (ベリーハード強化): 
         - 有効なターゲットがない場合は-1を返す
         - チェックメイトを防ぐための緊急使用を優先
         - 脅威を与えている駒を優先
-        - 序盤は温存
+        - コンボ検出との連携
+        - プレイヤー学習に基づく対策
         """
         # 有効なターゲットがなければ使用しない
         if not self.analysis.has_valid_freeze_target():
             return -1
         
         score = 40
+        
+        # === コンボ検出 ===
+        combo = self._has_combo_for_card('氷結')
+        if combo and self.difficulty >= 4:
+            score += combo.get('priority', 0) * 0.5
         
         # === チェック優先回避 ===
         # チェックメイトの危機がある場合、AIキングを脅かす駒を凍結する価値が高い
@@ -707,6 +1330,11 @@ class CardEvaluator:
         if self.analysis.is_ai_under_pressure():
             score += 15
         
+        # ベリーハード: 2手先読み評価
+        if self.difficulty >= 4 and self.lookahead and targets:
+            lookahead_score = self.lookahead.evaluate_after_freeze(targets[0][0])
+            score += lookahead_score * 0.3
+        
         return min(score, 95)
     
     def _eval_heat(self) -> float:
@@ -746,16 +1374,25 @@ class CardEvaluator:
     def _eval_storm(self) -> float:
         """暴風の評価
         
-        改良v2:
+        改良v3 (ベリーハード強化):
         - チェック優先回避
         - 駒が密集している場合の防御（迅雷・暴風警戒）
-        - 攻撃的使用も考慮
+        - ★コンボ検出: クイーン+暴風でチェック狙い
+        - ★2手先読み評価
         """
         score = 30
         
         # 既に暴風効果がある場合は低評価
         if getattr(self.analysis.game, 'ai_next_move_can_jump', False):
             return 5
+        
+        # === ベリーハード専用: コンボ検出 ===
+        if self.difficulty >= 4:
+            combo = self._has_combo_for_card('暴風')
+            if combo:
+                # クイーン+暴風でチェック可能なら最優先
+                if combo.get('combo') == 'queen_storm_check':
+                    return 96  # 非常に高い優先度
         
         # === チェック優先回避 ===
         # チェックメイトの危機がある場合、逃げ道を作るために使用
@@ -790,14 +1427,21 @@ class CardEvaluator:
         if len(self.analysis.ai_attack_opportunities) < 2:
             score += 15
         
-        return min(score, 85)
+        # ベリーハード: 2手先読み評価
+        if self.difficulty >= 4 and self.lookahead:
+            lookahead_score = self.lookahead.evaluate_after_storm()
+            score += lookahead_score * 0.4
+        
+        return min(score, 95)
     
     def _eval_lightning(self) -> float:
         """迅雷の評価
         
-        改良v2:
+        改良v3 (ベリーハード強化):
         - チェックメイトを狙える場合は最優先
         - プレイヤーキングを攻撃できる場合は高評価
+        - ★コンボ検出: クイーン+迅雷で2手チェックメイト
+        - ★2手先読み評価
         - 相手の迅雷への対抗策
         """
         score = 45
@@ -805,6 +1449,20 @@ class CardEvaluator:
         # 既に連続ターンがある場合は低評価
         if getattr(self.analysis.game, 'ai_consecutive_turns', 0) >= 1:
             return 5
+        
+        # === ベリーハード専用: コンボ検出 ===
+        if self.difficulty >= 4:
+            combo = self._has_combo_for_card('迅雷')
+            if combo:
+                # クイーン+迅雷でチェックメイト狙い
+                if combo.get('combo') == 'queen_lightning_checkmate':
+                    escape_count = combo.get('escape_count', 5)
+                    if escape_count <= 1:
+                        return 99  # ほぼチェックメイト確定
+                    elif escape_count <= 2:
+                        return 95  # 非常に高い確率
+                    else:
+                        score += 40
         
         # === チェックメイト狙い ===
         # AIがチェックメイトできる状態なら最優先
@@ -842,6 +1500,11 @@ class CardEvaluator:
                 if king_dist <= 2:
                     score += 10
                     break
+        
+        # ベリーハード: 2手先読み評価
+        if self.difficulty >= 4 and self.lookahead:
+            lookahead_score = self.lookahead.evaluate_after_lightning()
+            score += lookahead_score * 0.5
         
         return min(score, 95)
     
@@ -902,10 +1565,11 @@ class CardEvaluator:
     def _eval_ironwall(self) -> float:
         """鉄壁の評価
         
-        改良v2:
+        改良v3 (ベリーハード強化):
         - 序盤は温存
         - 相手のコンボ対処
         - 危機的状況での使用
+        - プレイヤー学習に基づく対策
         """
         score = 35
         
@@ -929,6 +1593,14 @@ class CardEvaluator:
                 score += 15
             if self.opponent_analysis.likely_has_freeze:
                 score += 15
+        
+        # ベリーハード: プレイヤー学習に基づく補正
+        if self.difficulty >= 4 and self.player_learner:
+            most_used = self.player_learner.get_most_used_cards(3)
+            for card, _ in most_used:
+                if card in {'迅雷', '氷結', '暴風'}:
+                    score += 10  # プレイヤーがこれらをよく使うなら鉄壁の価値UP
+                    break
         
         # 相手が脅威的なカードを持っている可能性を考慮
         # （相手の手札数から推測）
@@ -971,32 +1643,48 @@ class CardEvaluator:
 class AICardStrategy:
     """AI カード戦略メインクラス
     
-    改良版v2:
+    改良版v3 (ベリーハード強化):
     - チェック優先回避
     - 迅雷・暴風警戒
     - 鉄壁・氷結の温存
     - コンボ対処
+    - ★NEW: プレイヤーパターン学習の活用
+    - ★NEW: コンボ検出との統合
+    - ★NEW: 2手先読み評価
+    - ★NEW: 攻撃的/防御的戦略の動的切り替え
+    - ★NEW: カードの連携使用（コンボプレイ）
     """
     
-    def __init__(self, difficulty: int):
+    def __init__(self, difficulty: int, simulate_move_func=None, is_in_check_func=None):
         self.difficulty = difficulty
+        self.simulate_move = simulate_move_func
+        self.is_in_check = is_in_check_func
+        
         # 難易度別のカード使用確率
         self.play_probabilities = {
             1: 0.35,  # Easy: 35%の確率でカードを使用
             2: 0.55,  # Normal: 55% (少し控えめに - 決着を遅らせる)
             3: 0.75,  # Hard: 75%
-            4: 0.90,  # Expert: 90%
+            4: 0.95,  # Expert: 95% (ベリーハード強化)
         }
         # 難易度別の試行回数
         self.max_attempts = {
             1: 1,
             2: 2,
             3: 2,  # Hard: 2回に制限（温存戦略）
-            4: 3,  # Expert: 3回に制限
+            4: 4,  # Expert: 4回に増加（コンボ使用のため）
         }
+        
+        # ベリーハード専用: コンボ使用の追跡
+        self._combo_cards_to_play: List[str] = []
+        self._last_played_card: Optional[str] = None
     
     def should_play_card(self) -> bool:
         """カードを使用すべきかどうかの確率判定"""
+        # コンボ中は必ず使用
+        if self._combo_cards_to_play:
+            return True
+        
         prob = self.play_probabilities.get(self.difficulty, 0.5)
         return random.random() < prob
     
@@ -1022,6 +1710,110 @@ class AICardStrategy:
             return True
         
         return False
+    
+    def _detect_combo_opportunity(self, ai_player, game, chess, get_valid_moves_func) -> List[str]:
+        """コンボ使用の機会を検出（ベリーハード専用）
+        
+        Returns:
+            使用すべきカードの名前リスト（順序付き）
+        """
+        if self.difficulty < 4:
+            return []
+        
+        combo_detector = CheckmateComboDetector(
+            chess, game, get_valid_moves_func,
+            self.simulate_move, self.is_in_check
+        )
+        combos = combo_detector.find_all_combos()
+        
+        if not combos:
+            return []
+        
+        # 最も優先度の高いコンボを選択
+        best_combo = combos[0]
+        combo_type = best_combo.get('combo', '')
+        
+        # コンボタイプに応じたカード順序を決定
+        hand_cards = {c.name for c in ai_player.hand.cards if c.can_play(ai_player)}
+        
+        if combo_type == 'queen_storm_check':
+            if '暴風' in hand_cards:
+                return ['暴風']
+        
+        elif combo_type == 'queen_lightning_checkmate':
+            if '迅雷' in hand_cards:
+                return ['迅雷']
+        
+        elif combo_type == 'freeze_attack':
+            if '氷結' in hand_cards and '迅雷' in hand_cards:
+                return ['氷結', '迅雷']
+            elif '氷結' in hand_cards:
+                return ['氷結']
+        
+        return []
+    
+    def _get_strategic_mode(self, analysis: BoardAnalysis, opponent_analysis: OpponentAnalysis) -> str:
+        """現在の戦略モードを決定（ベリーハード専用）
+        
+        Returns:
+            'aggressive': 攻撃的戦略
+            'defensive': 防御的戦略
+            'balanced': バランス戦略
+        """
+        if self.difficulty < 4:
+            return 'balanced'
+        
+        # チェックメイトできそうなら攻撃的
+        if analysis.ai_can_checkmate or analysis.player_in_check:
+            return 'aggressive'
+        
+        # 危機的状況なら防御的
+        if analysis.ai_in_check or analysis.ai_checkmate_threat:
+            return 'defensive'
+        
+        # マテリアル差で判断
+        material_diff = analysis.ai_material - analysis.player_material
+        
+        if material_diff > 5:
+            return 'aggressive'  # 大幅に優勢なら攻めて決める
+        elif material_diff < -3:
+            return 'defensive'  # 劣勢なら守りながら挽回を狙う
+        
+        # プレイヤーの傾向に応じた対応
+        learner = get_player_learner()
+        if learner.is_player_aggressive():
+            return 'defensive'  # 攻撃的プレイヤーには守りで対応
+        elif learner.is_player_defensive():
+            return 'aggressive'  # 防御的プレイヤーには攻めで対応
+        
+        return 'balanced'
+    
+    def _adjust_scores_by_strategy(self, card_scores: List[Tuple[int, float, str]], 
+                                    strategy_mode: str) -> List[Tuple[int, float, str]]:
+        """戦略モードに応じてスコアを調整（ベリーハード専用）"""
+        if self.difficulty < 4:
+            return card_scores
+        
+        adjusted = []
+        
+        aggressive_cards = {'迅雷', '暴風', '灼熱', '氷結', 'ハンです☆'}
+        defensive_cards = {'鉄壁', '摂取', '2ドロー'}
+        
+        for idx, score, name in card_scores:
+            if strategy_mode == 'aggressive':
+                if name in aggressive_cards:
+                    score *= 1.3
+                elif name in defensive_cards:
+                    score *= 0.8
+            elif strategy_mode == 'defensive':
+                if name in defensive_cards:
+                    score *= 1.3
+                elif name in aggressive_cards:
+                    score *= 0.9
+            
+            adjusted.append((idx, score, name))
+        
+        return adjusted
     
     def select_card(self, ai_player, game, chess, get_valid_moves_func) -> Optional[int]:
         """使用するカードを選択
@@ -1066,11 +1858,55 @@ class AICardStrategy:
                 # カードでチェック回避できない → 駒移動を優先
                 return None
         
+        # === ベリーハード専用: コンボ検出 ===
+        if self.difficulty >= 4:
+            # コンボ使用中かチェック
+            if self._combo_cards_to_play:
+                next_card = self._combo_cards_to_play[0]
+                for idx in playable_indices:
+                    if ai_player.hand.cards[idx].name == next_card:
+                        self._combo_cards_to_play.pop(0)
+                        self._last_played_card = next_card
+                        return idx
+                # コンボカードが使えなくなった
+                self._combo_cards_to_play = []
+            
+            # 新しいコンボ機会を検出
+            combo_cards = self._detect_combo_opportunity(ai_player, game, chess, get_valid_moves_func)
+            if combo_cards:
+                # コンボの最初のカードを使用
+                first_card = combo_cards[0]
+                for idx in playable_indices:
+                    if ai_player.hand.cards[idx].name == first_card:
+                        if len(combo_cards) > 1:
+                            self._combo_cards_to_play = combo_cards[1:]
+                        self._last_played_card = first_card
+                        return idx
+        
+        # === コンボ検出器と先読み評価器の作成 ===
+        combo_detector = None
+        lookahead = None
+        player_learner = None
+        
+        if self.difficulty >= 4:
+            combo_detector = CheckmateComboDetector(
+                chess, game, get_valid_moves_func,
+                self.simulate_move, self.is_in_check
+            )
+            lookahead = LookaheadEvaluator(
+                chess, game, get_valid_moves_func,
+                self.simulate_move, self.is_in_check
+            )
+            player_learner = get_player_learner()
+        
         # カード評価（新しい分析を使用）
         evaluator = CardEvaluator(
             analysis, self.difficulty, ai_player,
             game_phase=game_phase,
-            opponent_analysis=opponent_analysis
+            opponent_analysis=opponent_analysis,
+            combo_detector=combo_detector,
+            lookahead=lookahead,
+            player_learner=player_learner
         )
         
         # 各カードをスコアリング
@@ -1080,7 +1916,6 @@ class AICardStrategy:
             score = evaluator.evaluate_card(card)
             card_scores.append((idx, score, card.name))
         
-        
         # スコアが -1 のカード（使用すべきでない）を除外
         valid_card_scores = [(idx, score, name) for idx, score, name in card_scores if score >= 0]
         
@@ -1088,13 +1923,20 @@ class AICardStrategy:
         if not valid_card_scores:
             return None
         
+        # === ベリーハード専用: 戦略モードに応じたスコア調整 ===
+        if self.difficulty >= 4:
+            strategy_mode = self._get_strategic_mode(analysis, opponent_analysis)
+            valid_card_scores = self._adjust_scores_by_strategy(valid_card_scores, strategy_mode)
+        
         # スコアでソート
         valid_card_scores.sort(key=lambda x: x[1], reverse=True)
         
         # 難易度に応じた選択
         if self.difficulty >= 4:
-            # Expert: 最高スコアのカードを選択
-            return valid_card_scores[0][0]
+            # Expert (ベリーハード): 常に最高スコアのカードを選択
+            chosen_idx = valid_card_scores[0][0]
+            self._last_played_card = ai_player.hand.cards[chosen_idx].name
+            return chosen_idx
         elif self.difficulty == 3:
             # Hard: 95%で最高スコア、5%で2番目
             if random.random() < 0.95 or len(valid_card_scores) == 1:
@@ -1121,11 +1963,29 @@ class AICardStrategy:
         """封鎖位置を選択"""
         analysis = BoardAnalysis(chess, game, lambda p, **kw: [])
         return analysis.get_best_block_positions(max_tiles)
+    
+    def notify_player_card_used(self, card_name: str, game_state: Dict[str, Any]):
+        """プレイヤーがカードを使用したことを記録（学習用）"""
+        if self.difficulty >= 4:
+            learner = get_player_learner()
+            learner.record_card_usage(card_name, game_state)
+    
+    def notify_turn_end(self):
+        """ターン終了を記録（学習用）"""
+        if self.difficulty >= 4:
+            learner = get_player_learner()
+            learner.record_turn_end()
+    
+    def notify_game_end(self):
+        """ゲーム終了を記録（学習データ保存）"""
+        if self.difficulty >= 4:
+            learner = get_player_learner()
+            learner.record_game_end()
 
 
-def create_ai_card_strategy(difficulty: int) -> AICardStrategy:
+def create_ai_card_strategy(difficulty: int, simulate_move_func=None, is_in_check_func=None) -> AICardStrategy:
     """AI カード戦略インスタンスを作成"""
-    return AICardStrategy(difficulty)
+    return AICardStrategy(difficulty, simulate_move_func, is_in_check_func)
 
 
 # テスト用

@@ -212,19 +212,22 @@ class Game:
         If `ended_color` is None, behave like the legacy behavior and decrement
         all status counters.
         """
-        # Decay ironwall protection turns
-        if ended_color is None or ended_color == 'white':
+        # Decay ironwall protection turns for both sides every call so the guard
+        # reliably expires after1 round (白→黒) even if ended_color is specified.
+        try:
             if getattr(self, 'player_ironwall_protection_turns', 0) > 0:
-                try:
-                    self.player_ironwall_protection_turns -= 1
-                except Exception:
-                    pass
-        if ended_color is None or ended_color == 'black':
+                self.player_ironwall_protection_turns = max(
+                    0, getattr(self, 'player_ironwall_protection_turns', 0) - 1
+                )
+        except Exception:
+            pass
+        try:
             if getattr(self, 'ai_ironwall_protection_turns', 0) > 0:
-                try:
-                    self.ai_ironwall_protection_turns -= 1
-                except Exception:
-                    pass
+                self.ai_ironwall_protection_turns = max(
+                    0, getattr(self, 'ai_ironwall_protection_turns', 0) - 1
+                )
+        except Exception:
+            pass
         # If protection turns have expired, ensure any transient iron_wall_active
         # flags are cleared so the effect does not persist beyond the intended
         # single turn. Also clear UI-visible showing flags so visuals/telops
@@ -1485,7 +1488,13 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
     """
     game.pending = PendingAction(
         kind="target_piece",
-        info={"turns": 1, "note": "Freeze enemy piece until end of next opponent turn."},
+        info={
+            "turns": 1,
+            "note": "Freeze enemy piece until end of next opponent turn.",
+            # pass source info so iron-wall checks/logging know who applied it
+            "source_color": 'white' if player is game.player else 'black',
+            "source_card_name": "氷結",
+        },
     )
     return "凍結する相手コマを選択してください。"
 

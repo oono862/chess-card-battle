@@ -214,15 +214,7 @@ class Game:
         all status counters.
         """
         # Decay status counters (frozen pieces, blocked tiles, etc.)
-        # No longer needed protection_turns decay logic
-                        try:
-                            self.ironwall_showing['black'] = False
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        # Protection turns decay logic removed - using trigger-based iron wall now
         
         # Decay blocked tiles: support both legacy int-based values and
         # the new per-tile entries which allow overlapping effects.

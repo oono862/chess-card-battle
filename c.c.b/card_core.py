@@ -1390,6 +1390,10 @@ def eff_heat_block_tile(game: Game, player: PlayerState) -> str:
     
     if opponent and getattr(opponent, 'iron_wall_shield', False):
         opponent.iron_wall_shield = False
+        try:
+            opponent.iron_wall_block = False
+        except Exception:
+            pass
         return "相手の鉄壁により効果が無効化されました。"
     
     # If the player has any frozen own pieces, offer the choice to unfreeze
@@ -1416,6 +1420,10 @@ def eff_freeze_piece(game: Game, player: PlayerState) -> str:
     
     if opponent and getattr(opponent, 'iron_wall_shield', False):
         opponent.iron_wall_shield = False
+        try:
+            opponent.iron_wall_block = False
+        except Exception:
+            pass
         return "相手の鉄壁により効果が無効化されました。"
     
     game.pending = PendingAction(
@@ -1442,6 +1450,10 @@ def eff_storm_jump_once(game: Game, player: PlayerState) -> str:
     
     if opponent and getattr(opponent, 'iron_wall_block', False):
         opponent.iron_wall_block = False
+        try:
+            opponent.iron_wall_shield = False
+        except Exception:
+            pass
         return "相手の鉄壁により効果が無効化されました。"
     
     # Mark the flag on the PlayerState so human benefits immediately.
@@ -1467,6 +1479,10 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
     
     if opponent and getattr(opponent, 'iron_wall_block', False):
         opponent.iron_wall_block = False
+        try:
+            opponent.iron_wall_shield = False
+        except Exception:
+            pass
         return "相手の鉄壁により効果が無効化されました。"
     
     # grant extra full chess turn to the player
@@ -1542,6 +1558,10 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
         # 成功時：相手の鉄壁のblock効果をチェック
         if opponent and getattr(opponent, 'iron_wall_block', False):
             opponent.iron_wall_block = False
+            try:
+                opponent.iron_wall_shield = False
+            except Exception:
+                pass
             return "25%の確率に成功！しかし相手の鉄壁により効果は無効化されました。"
         
         # 自分のルークとキング以外の駒をクイーンに変更
@@ -1557,6 +1577,10 @@ def eff_risky_gamble(game: Game, player: PlayerState) -> str:
         # 失敗時：自分の鉄壁のshield効果をチェック
         if getattr(player, 'iron_wall_shield', False):
             player.iron_wall_shield = False
+            try:
+                player.iron_wall_block = False
+            except Exception:
+                pass
             return "25%の確率に失敗...しかし鉄壁の保護により相手への効果は無効化されました。自ターンスキップ。"
         
         # 相手のルークとキング以外の駒をクイーンに変更

@@ -1,9 +1,48 @@
 """AI思考・行動ロジックモジュール
 
 このモジュールは、AIの駒選択とカードプレイの判断を担当します。
+戦略的なカード使用のためにcard_strategyモジュールを使用します。
+
+改良版v3 (ベリーハード強化):
+- チェック優先回避
+- 迅雷・暴風警戒時の駒配置
+- 鉄壁・氷結の温存
+- コンボ対処
+- ★NEW: プレイヤーパターン学習
+- ★NEW: コンボ検出と連携使用
+- ★NEW: 2手先読み評価
+- ★NEW: 攻撃的/防御的戦略の動的切り替え
 """
 
 import random
+
+# 戦略モジュールのインポート
+try:
+    from .card_strategy import (
+        AICardStrategy, BoardAnalysis, CardEvaluator, 
+        create_ai_card_strategy, GamePhase, OpponentAnalysis,
+        CheckmateComboDetector, LookaheadEvaluator,
+        get_player_learner, PlayerPatternLearner
+    )
+except ImportError:
+    try:
+        from ai.card_strategy import (
+            AICardStrategy, BoardAnalysis, CardEvaluator, 
+            create_ai_card_strategy, GamePhase, OpponentAnalysis,
+            CheckmateComboDetector, LookaheadEvaluator,
+            get_player_learner, PlayerPatternLearner
+        )
+    except ImportError:
+        AICardStrategy = None
+        BoardAnalysis = None
+        CardEvaluator = None
+        create_ai_card_strategy = None
+        GamePhase = None
+        OpponentAnalysis = None
+        CheckmateComboDetector = None
+        LookaheadEvaluator = None
+        get_player_learner = None
+        PlayerPatternLearner = None
 
 
 def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY, 
@@ -61,9 +100,124 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
 
     # --- AI: consider playing a card before moving ---
     def ai_consider_play_card():
-        """AIがカードをプレイするか判断する内部関数"""
-        # aggressiveness / per-attempt probability by difficulty
-        # increased base play probability so AI uses cards more often on Easy/Normal
+        """AIがカードをプレイするか判断する内部関数
+        
+        新しい戦略モジュール（card_strategy）を使用して、
+        難易度に応じた戦略的なカード選択を行います。
+        """
+        if not ai_player.hand.cards:
+            return False
+        
+        # 新しい戦略モジュールが利用可能な場合はそれを使用
+        if create_ai_card_strategy is not None:
+            return _ai_play_card_with_strategy()
+        
+        # フォールバック: 旧ロジック（戦略モジュールが読み込めない場合）
+        return _ai_play_card_legacy()
+    
+    def _ai_play_card_with_strategy():
+        """戦略モジュールを使用したカード選択
+        
+        改良版v3 (ベリーハード強化):
+        - コンボ検出と連携使用
+        - プレイヤーパターン学習の活用
+        - 2手先読み評価
+        """
+        # シミュレート関数と判定関数を取得
+        strategy = create_ai_card_strategy(
+            CPU_DIFFICULTY,
+            simulate_move_func=simulate_move,
+            is_in_check_func=is_in_check
+        )
+        max_attempts = strategy.max_attempts.get(CPU_DIFFICULTY, 2)
+        attempts = 0
+        made_any = False
+        played_names = set()
+        
+        while attempts < max_attempts:
+            # 確率判定
+            if not strategy.should_play_card():
+                break
+            
+            # プレイ可能なカードをフィルタ
+            playable = [
+                i for i, c in enumerate(ai_player.hand.cards) 
+                if c.can_play(ai_player) and c.name not in played_names
+            ]
+            if not playable:
+                break
+            
+            # 戦略的カード選択
+            chosen_idx = strategy.select_card(ai_player, game, chess, get_valid_moves)
+            
+            if chosen_idx is None or chosen_idx not in playable:
+                # フォールバック: ランダム選択
+                chosen_idx = random.choice(playable)
+            
+            # カードをプレイ
+            try:
+                card_name = ai_player.hand.cards[chosen_idx].name if 0 <= chosen_idx < len(ai_player.hand.cards) else None
+                
+                # 特定カードの戦略的処理
+                if card_name == '氷結':
+                    # 氷結の戦略的ターゲット選択をゲームに伝える
+                    target = strategy.get_freeze_target(game, chess)
+                    if target:
+                        try:
+                            game._ai_preferred_freeze_target = target
+                        except Exception:
+                            pass
+                elif card_name == '灼熱':
+                    # 灼熱の戦略的封鎖位置をゲームに伝える
+                    positions = strategy.get_block_positions(game, chess)
+                    if positions:
+                        try:
+                            game._ai_preferred_block_positions = positions
+                        except Exception:
+                            pass
+                
+                ok, msg = game.play_card_for(ai_player, chosen_idx)
+                if ok:
+                    made_any = True
+                    if card_name:
+                        played_names.add(card_name)
+                    # ログに難易度に応じた情報を追加
+                    if CPU_DIFFICULTY >= 4:
+                        try:
+                            # ベリーハード: コンボ情報を追加
+                            if hasattr(strategy, '_last_played_card') and strategy._last_played_card:
+                                if strategy._combo_cards_to_play:
+                                    game.log.append(f"AI[VH]: 『{card_name}』をコンボの一部として使用")
+                                else:
+                                    game.log.append(f"AI[VH]: 『{card_name}』を戦略的に使用")
+                            else:
+                                game.log.append(f"AI[VH]: 『{card_name}』を使用")
+                        except Exception:
+                            game.log.append(f"AI: 『{card_name}』を戦略的に使用しました。")
+                    elif CPU_DIFFICULTY >= 3:
+                        try:
+                            game.log.append(f"AI: 『{card_name}』を戦略的に使用しました。")
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        game.log.append(f"AI: カードの使用に失敗しました: {msg}")
+                    except Exception:
+                        pass
+                    if card_name:
+                        played_names.add(card_name)
+            except Exception as e:
+                try:
+                    game.log.append(f"AI: カード使用中に例外が発生しました: {e}")
+                except Exception:
+                    pass
+            
+            attempts += 1
+        
+        return made_any
+    
+    def _ai_play_card_legacy():
+        """旧ロジック（フォールバック用）"""
         probs = {1: 0.35, 2: 0.60, 3: 0.80, 4: 0.98}
         p_play = probs.get(CPU_DIFFICULTY, 0.45)
         if not ai_player.hand.cards:
@@ -382,50 +536,265 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         game.log.append('AI: 動ける手がありません')
         return ai_state
 
+    # === 迅雷・暴風警戒時の駒配置分析 (Normal以上) ===
+    opponent_threat_level = 0
+    should_spread_pieces = False
+    
+    if CPU_DIFFICULTY >= 2 and OpponentAnalysis is not None and BoardAnalysis is not None:
+        try:
+            opp_analysis = OpponentAnalysis(game)
+            opponent_threat_level = opp_analysis.estimate_threat_level()
+            
+            # 相手が迅雷・暴風を持っている可能性が高い場合
+            if opp_analysis.likely_has_lightning or opp_analysis.likely_has_storm:
+                board_analysis = BoardAnalysis(chess, game, get_valid_moves)
+                if board_analysis.are_pieces_clustered():
+                    should_spread_pieces = True
+        except Exception:
+            pass
+
     # Difficulty 1: fully random
     if CPU_DIFFICULTY == 1:
         sel = random.choice(candidates)
 
     # Difficulty 2: avoid moves that leave black in check; otherwise random
+    # 改良: 駒配置を分散させる (迅雷・暴風対策)
     elif CPU_DIFFICULTY == 2:
         safe = []
         for p, mv in candidates:
             newp = simulate_move(p, mv[0], mv[1])
             if not is_in_check(newp, 'black'):
                 safe.append((p, mv))
-        sel = random.choice(safe) if safe else random.choice(candidates)
+        
+        if safe:
+            if should_spread_pieces:
+                # 駒を分散させる移動を優先
+                spread_moves = _select_spreading_moves(safe, chess)
+                sel = random.choice(spread_moves) if spread_moves else random.choice(safe)
+            else:
+                sel = random.choice(safe)
+        else:
+            sel = random.choice(candidates)
 
     # Difficulty 3: prefer captures (highest piece value captured)
+    # 改良: チェック回避優先、駒配置分散
     elif CPU_DIFFICULTY == 3:
         best = []
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
+        
         for p, mv in candidates:
+            # チェック回避を優先
+            newp = simulate_move(p, mv[0], mv[1])
+            if is_in_check(newp, 'black'):
+                continue  # チェック状態になる手は除外
+            
             tgt = chess.get_piece_at(mv[0], mv[1])
             score = values.get(tgt.name,0) if tgt else 0
+            
+            # 駒配置分散ボーナス
+            if should_spread_pieces and not tgt:
+                spread_bonus = _calculate_spread_bonus(p, mv, chess)
+                score += spread_bonus * 0.5
+            
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
             elif score == best_score:
                 best.append((p,mv))
-        sel = random.choice(best)
+        
+        sel = random.choice(best) if best else random.choice(candidates)
 
     # Difficulty 4: prefer captures, avoid self-check, and favor higher-value captures
+    # 改良v4 (ベリーハード防御強化): キング周りの防御、駒配置戦略、コンボ活用、クイーン脅威対策
     else:
         best = []
         best_score = -999
         values = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':100}
+        
+        # AIキングとプレイヤーキングの位置を取得
+        ai_king_pos = None
+        player_king_pos = None
+        ai_queen = None
+        player_queen = None
+        player_queen_pos = None
+        
+        for p in chess.pieces:
+            color = getattr(p, 'color', None)
+            name = getattr(p, 'name', '')
+            if color == 'black':
+                if name == 'K':
+                    ai_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                elif name == 'Q':
+                    ai_queen = p
+            elif color == 'white':
+                if name == 'K':
+                    player_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                elif name == 'Q':
+                    player_queen = p
+                    player_queen_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+        
+        # ★★★ クイーン脅威の検出 ★★★
+        queen_threat_level = 0
+        queen_attack_line = []  # クイーンからキングへの攻撃ライン上のマス
+        
+        if player_queen_pos and ai_king_pos:
+            # プレイヤークイーンがAIキングをどの程度脅かしているか
+            qr, qc = player_queen_pos
+            kr, kc = ai_king_pos
+            dist = max(abs(qr - kr), abs(qc - kc))
+            
+            # 同じ行、列、または対角線上にいる場合は高脅威
+            if qr == kr or qc == kc or abs(qr - kr) == abs(qc - kc):
+                if dist <= 3:
+                    queen_threat_level = 90
+                elif dist <= 5:
+                    queen_threat_level = 70
+                else:
+                    queen_threat_level = 40
+                
+                # クイーンからキングへの攻撃ライン上のマスを計算
+                dr = 0 if qr == kr else (1 if kr > qr else -1)
+                dc = 0 if qc == kc else (1 if kc > qc else -1)
+                r, c = qr + dr, qc + dc
+                while 0 <= r < 8 and 0 <= c < 8 and (r, c) != (kr, kc):
+                    queen_attack_line.append((r, c))
+                    r += dr
+                    c += dc
+            else:
+                # 直線上でなくても近ければ脅威
+                if dist <= 2:
+                    queen_threat_level = 60
+                elif dist <= 4:
+                    queen_threat_level = 30
+        
+        # ベリーハード: 暴風・迅雷の効果がある場合の特別処理
+        has_storm = getattr(game, 'ai_next_move_can_jump', False)
+        has_lightning = getattr(game, 'ai_consecutive_turns', 0) >= 1
+        
+        # コンボ検出器を使用してチェック機会を探す
+        combo_move = None
+        if CheckmateComboDetector is not None and (has_storm or has_lightning):
+            try:
+                combo_detector = CheckmateComboDetector(chess, game, get_valid_moves, simulate_move, is_in_check)
+                
+                # 暴風有効時: クイーンでチェックを狙う
+                if has_storm and ai_queen:
+                    combo_info = combo_detector.find_queen_storm_checkmate()
+                    if combo_info and player_king_pos:
+                        # クイーンをキングに向かって移動
+                        queen_moves = get_valid_moves(ai_queen, ignore_check=True)
+                        for mv in queen_moves:
+                            newp = simulate_move(ai_queen, mv[0], mv[1])
+                            if not is_in_check(newp, 'black'):
+                                # キングに近づく移動を優先
+                                dist_to_king = abs(mv[0] - player_king_pos[0]) + abs(mv[1] - player_king_pos[1])
+                                if dist_to_king <= 2:
+                                    combo_move = (ai_queen, mv, 200)  # 非常に高いスコア
+                                    break
+                
+                # 迅雷有効時: 2手でチェックメイトを狙う
+                if has_lightning and not combo_move:
+                    combo_info = combo_detector.find_queen_lightning_checkmate()
+                    if combo_info:
+                        first_move = combo_info.get('first_move')
+                        attacker = combo_info.get('attacker')
+                        if first_move and attacker:
+                            combo_move = (attacker, first_move, 150)
+            except Exception:
+                pass
+        
         for p, mv in candidates:
             newp = simulate_move(p, mv[0], mv[1])
             if is_in_check(newp, 'black'):
                 continue
+            
             tgt = chess.get_piece_at(mv[0], mv[1])
             score = values.get(tgt.name,0) if tgt else 0
+            
+            # コンボ移動は最優先
+            if combo_move and p is combo_move[0] and mv == combo_move[1]:
+                score = combo_move[2]
+            
+            # ★★★ クイーン脅威への防御ボーナス ★★★
+            if queen_threat_level > 0:
+                piece_name = getattr(p, 'name', '')
+                
+                # プレイヤーのクイーンを取れる場合は最高優先
+                if tgt and getattr(tgt, 'name', '') == 'Q' and getattr(tgt, 'color', '') == 'white':
+                    score += 100  # クイーンを取る
+                
+                # 攻撃ライン上にブロッカーを配置
+                if queen_attack_line and (mv[0], mv[1]) in queen_attack_line:
+                    if piece_name != 'K':  # キング以外でブロック
+                        block_bonus = queen_threat_level * 0.6
+                        score += block_bonus
+                
+                # クイーンを攻撃できる位置に移動
+                if player_queen_pos:
+                    qr, qc = player_queen_pos
+                    piece_attacks_queen = False
+                    
+                    # 移動後にクイーンを攻撃できるかチェック（簡易版）
+                    if piece_name == 'N':  # ナイト
+                        knight_moves = [(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]
+                        for dr, dc in knight_moves:
+                            if mv[0] + dr == qr and mv[1] + dc == qc:
+                                piece_attacks_queen = True
+                                break
+                    elif piece_name in ['R', 'Q']:  # ルーク・クイーン（直線）
+                        if mv[0] == qr or mv[1] == qc:
+                            piece_attacks_queen = True
+                    elif piece_name in ['B', 'Q']:  # ビショップ・クイーン（対角線）
+                        if abs(mv[0] - qr) == abs(mv[1] - qc):
+                            piece_attacks_queen = True
+                    elif piece_name == 'P':  # ポーン
+                        if mv[0] + 1 == qr and abs(mv[1] - qc) == 1:
+                            piece_attacks_queen = True
+                    
+                    if piece_attacks_queen:
+                        score += queen_threat_level * 0.4
+                
+                # 高脅威時: キングを逃がす動きにボーナス
+                if queen_threat_level >= 70 and piece_name == 'K' and ai_king_pos:
+                    # キングが危険から離れる移動
+                    old_dist = max(abs(ai_king_pos[0] - player_queen_pos[0]), abs(ai_king_pos[1] - player_queen_pos[1])) if player_queen_pos else 99
+                    new_dist = max(abs(mv[0] - player_queen_pos[0]), abs(mv[1] - player_queen_pos[1])) if player_queen_pos else 99
+                    if new_dist > old_dist:
+                        score += (new_dist - old_dist) * 5
+            
+            # 駒配置分散ボーナス
+            if should_spread_pieces and not tgt:
+                spread_bonus = _calculate_spread_bonus(p, mv, chess)
+                score += spread_bonus * 0.3
+            
+            # キング周りの防御ボーナス
+            if ai_king_pos and not tgt:
+                king_dist_before = abs(p.row - ai_king_pos[0]) + abs(p.col - ai_king_pos[1])
+                king_dist_after = abs(mv[0] - ai_king_pos[0]) + abs(mv[1] - ai_king_pos[1])
+                # キングに近づく動きにボーナス（過度に近づかないように）
+                if 2 <= king_dist_after <= 3 and king_dist_after < king_dist_before:
+                    score += 0.5
+            
+            # ベリーハード: プレイヤーキングへの圧力ボーナス
+            if player_king_pos:
+                dist_to_player_king = abs(mv[0] - player_king_pos[0]) + abs(mv[1] - player_king_pos[1])
+                piece_name = getattr(p, 'name', '')
+                
+                # 強力な駒がキングに近づく移動にボーナス
+                if piece_name in ['Q', 'R'] and dist_to_player_king <= 3:
+                    score += (4 - dist_to_player_king) * 2
+                
+                # チェック状態になる移動は大ボーナス
+                if is_in_check(newp, 'white'):
+                    score += 30
+            
             if score > best_score:
                 best_score = score
                 best = [(p,mv)]
             elif score == best_score:
                 best.append((p,mv))
+        
         sel = random.choice(best) if best else random.choice(candidates)
 
     p, mv = sel
@@ -446,3 +815,58 @@ def ai_make_move(game, chess, ai_player, CPU_DIFFICULTY,
         pass
     
     return ai_state
+
+
+def _select_spreading_moves(candidates, chess) -> list:
+    """駒を分散させる移動を選択"""
+    if not candidates:
+        return candidates
+    
+    spread_moves = []
+    for p, mv in candidates:
+        bonus = _calculate_spread_bonus(p, mv, chess)
+        if bonus > 0:
+            spread_moves.append((p, mv))
+    
+    return spread_moves if spread_moves else candidates
+
+
+def _calculate_spread_bonus(piece, move, chess) -> float:
+    """移動後の駒分散度合いを計算"""
+    bonus = 0.0
+    
+    # 現在の位置と移動後の位置
+    new_row, new_col = move[0], move[1]
+    
+    # 他のAI駒との距離を計算
+    ai_pieces_positions = []
+    for p in chess.pieces:
+        if getattr(p, 'color', None) == 'black' and p is not piece:
+            row = getattr(p, 'row', 0)
+            col = getattr(p, 'col', 0)
+            ai_pieces_positions.append((row, col))
+    
+    if not ai_pieces_positions:
+        return 0.0
+    
+    # 移動後の最近傍距離
+    min_dist_after = float('inf')
+    for pos in ai_pieces_positions:
+        dist = abs(new_row - pos[0]) + abs(new_col - pos[1])
+        min_dist_after = min(min_dist_after, dist)
+    
+    # 移動前の最近傍距離
+    min_dist_before = float('inf')
+    for pos in ai_pieces_positions:
+        dist = abs(piece.row - pos[0]) + abs(piece.col - pos[1])
+        min_dist_before = min(min_dist_before, dist)
+    
+    # 距離が広がる移動にボーナス
+    if min_dist_after > min_dist_before:
+        bonus += (min_dist_after - min_dist_before) * 0.5
+    
+    # 極端に密集している場合はより高いボーナス
+    if min_dist_before <= 1 and min_dist_after >= 2:
+        bonus += 1.0
+    
+    return bonus

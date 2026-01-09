@@ -604,6 +604,13 @@ class OpponentAnalysis:
         self.combo_threat = False  # コンボの脅威
         self.aggressive_play = False  # 攻撃的なプレイスタイル
         
+        # ★NEW: プレイヤー手札の確定情報
+        self.player_has_lightning = False  # プレイヤーが迅雷を確実に持っている
+        self.player_has_storm = False  # プレイヤーが暴風を確実に持っている
+        self.player_has_freeze = False  # プレイヤーが氷結を確実に持っている
+        self.player_has_ironwall = False  # プレイヤーが鉄壁を確実に持っている
+        self.player_card_names = []  # プレイヤーの手札のカード名リスト
+        
         # ★NEW: クイーン+迅雷コンボの脅威分析
         self.queen_lightning_threat = False  # クイーン+迅雷コンボの脅威
         self.queen_lightning_threat_level = 0  # 脅威レベル (0-100)
@@ -611,10 +618,32 @@ class OpponentAnalysis:
         self.player_queen_can_check = False  # プレイヤーのクイーンがチェックできる
         self.turns_to_checkmate_estimate = 99  # チェックメイトまでの推定ターン数
         
+        # ★NEW: 迅雷使用時のシミュレーション結果
+        self.lightning_can_check = False  # 迅雷使用でチェック可能
+        self.lightning_can_checkmate = False  # 迅雷使用でチェックメイト可能
+        self.lightning_threat_moves = []  # 迅雷使用時の脅威となる移動
+        
         try:
-            # プレイヤーの手札数
+            # プレイヤーの手札を直接確認
             if hasattr(self.game, 'player') and hasattr(self.game.player, 'hand'):
                 self.hand_count = len(self.game.player.hand.cards)
+                
+                # ★★★ プレイヤーの手札を直接確認（確定情報）★★★
+                for card in self.game.player.hand.cards:
+                    card_name = getattr(card, 'name', '')
+                    self.player_card_names.append(card_name)
+                    
+                    if card_name == '迅雷':
+                        self.player_has_lightning = True
+                        self.likely_has_lightning = True
+                    elif card_name == '暴風':
+                        self.player_has_storm = True
+                        self.likely_has_storm = True
+                    elif card_name == '氷結':
+                        self.player_has_freeze = True
+                        self.likely_has_freeze = True
+                    elif card_name == '鉄壁':
+                        self.player_has_ironwall = True
             
             # ログから最近使われたカードを分析
             if hasattr(self.game, 'log'):
@@ -625,13 +654,14 @@ class OpponentAnalysis:
                             if card_name in str(log_entry):
                                 self.recent_cards_used.append(card_name)
             
-            # 手札が多い場合、危険なカードを持っている可能性が高い
-            if self.hand_count >= 2:
-                self.likely_has_lightning = True  # 2枚以上で迅雷の可能性を警戒
-            if self.hand_count >= 3:
-                self.likely_has_storm = True
-            if self.hand_count >= 4:
-                self.likely_has_freeze = True
+            # 手札を確認できなかった場合のフォールバック（推測）
+            if not self.player_card_names:
+                if self.hand_count >= 2:
+                    self.likely_has_lightning = True
+                if self.hand_count >= 3:
+                    self.likely_has_storm = True
+                if self.hand_count >= 4:
+                    self.likely_has_freeze = True
             
             # 最近連続でカードを使用していたらコンボ脅威
             card_count_in_recent = len(self.recent_cards_used)
@@ -647,7 +677,11 @@ class OpponentAnalysis:
             pass
     
     def _analyze_queen_lightning_threat(self):
-        """プレイヤーのクイーン+迅雷コンボの脅威を分析"""
+        """プレイヤーのクイーン+迅雷コンボの脅威を分析
+        
+        ★★★ 強化版: プレイヤーの手札を直接確認し、
+        迅雷使用時のチェック/チェックメイトをシミュレート ★★★
+        """
         if not self.chess or not self.get_valid_moves:
             return
         
@@ -656,6 +690,7 @@ class OpponentAnalysis:
             ai_king_pos = None
             player_queen = None
             player_queen_pos = None
+            ai_king = None
             
             for p in self.chess.pieces:
                 color = getattr(p, 'color', None)
@@ -665,6 +700,7 @@ class OpponentAnalysis:
                 
                 if color == 'black' and name == 'K':
                     ai_king_pos = (row, col)
+                    ai_king = p
                 elif color == 'white' and name == 'Q':
                     player_queen = p
                     player_queen_pos = (row, col)
@@ -679,6 +715,7 @@ class OpponentAnalysis:
                 self.player_queen_near_king = True
             
             # クイーンがチェックできるか
+            queen_moves = []
             try:
                 queen_moves = self.get_valid_moves(player_queen, ignore_check=True)
                 for mv in queen_moves:
@@ -696,6 +733,11 @@ class OpponentAnalysis:
             except Exception:
                 pass
             
+            # ★★★ 迅雷使用時のシミュレーション ★★★
+            # プレイヤーが迅雷を持っている場合、2回移動でチェック/チェックメイトできるか
+            if self.player_has_lightning and queen_moves:
+                self._simulate_lightning_attack(player_queen, queen_moves, ai_king_pos, ai_king)
+            
             # 脅威レベルの計算
             threat_level = 0
             
@@ -711,9 +753,17 @@ class OpponentAnalysis:
             if self.player_queen_can_check:
                 threat_level += 30
             
-            # 迅雷を持っている可能性がある
-            if self.likely_has_lightning:
-                threat_level += 20
+            # ★★★ 迅雷を確実に持っている場合は大幅に脅威UP ★★★
+            if self.player_has_lightning:
+                threat_level += 40  # 確実に持っている場合
+            elif self.likely_has_lightning:
+                threat_level += 20  # 可能性がある場合
+            
+            # 迅雷でチェック/チェックメイト可能な場合は最大脅威
+            if self.lightning_can_checkmate:
+                threat_level = 100
+            elif self.lightning_can_check:
+                threat_level = max(threat_level, 85)
             
             # 手札が多い（PPも潤沢と推測）
             if self.hand_count >= 3:
@@ -721,14 +771,18 @@ class OpponentAnalysis:
             
             self.queen_lightning_threat_level = min(threat_level, 100)
             
-            # 脅威レベルが50以上ならコンボ脅威とみなす
-            if self.queen_lightning_threat_level >= 50:
+            # ★脅威判定の閾値を下げる（より早期に警戒）
+            if self.queen_lightning_threat_level >= 40:
                 self.queen_lightning_threat = True
             
             # チェックメイトまでの推定ターン数
-            if self.player_queen_can_check and self.likely_has_lightning:
+            if self.lightning_can_checkmate:
+                self.turns_to_checkmate_estimate = 1  # 次のターンで詰み
+            elif self.lightning_can_check:
+                self.turns_to_checkmate_estimate = 1  # 次のターンでチェック
+            elif self.player_queen_can_check and self.player_has_lightning:
                 if queen_to_king_dist <= 2:
-                    self.turns_to_checkmate_estimate = 1  # 迅雷で即チェックメイトの危険
+                    self.turns_to_checkmate_estimate = 1
                 elif queen_to_king_dist <= 4:
                     self.turns_to_checkmate_estimate = 2
                 else:
@@ -738,6 +792,113 @@ class OpponentAnalysis:
             
         except Exception:
             pass
+    
+    def _simulate_lightning_attack(self, player_queen, queen_moves, ai_king_pos, ai_king):
+        """迅雷使用時の2回攻撃をシミュレートして脅威を分析"""
+        try:
+            # 1手目: クイーンがチェック位置またはキングに近づく位置に移動
+            for mv1 in queen_moves:
+                # 1手目でチェックできるか
+                if self._can_attack_from(mv1, ai_king_pos):
+                    # 1手目の位置からAIキングを直接攻撃できる
+                    # 間に駒がないかチェック（簡易版）
+                    if self._is_path_clear(mv1, ai_king_pos):
+                        self.lightning_can_check = True
+                        self.lightning_threat_moves.append({
+                            'type': 'check',
+                            'move1': mv1,
+                            'description': f'クイーン→{mv1}でチェック'
+                        })
+                        
+                        # 2手目: チェックメイトの可能性を評価
+                        # キングの逃げ道をチェック
+                        escape_squares = self._get_king_escape_squares(ai_king_pos)
+                        blocked_escapes = 0
+                        
+                        for escape in escape_squares:
+                            # この逃げ道をクイーンが2手目で塞げるか
+                            if self._can_attack_from(mv1, escape):
+                                blocked_escapes += 1
+                        
+                        # 逃げ道が少なければチェックメイトの可能性大
+                        if len(escape_squares) <= 2 or blocked_escapes >= len(escape_squares) - 1:
+                            self.lightning_can_checkmate = True
+                            self.lightning_threat_moves.append({
+                                'type': 'checkmate',
+                                'move1': mv1,
+                                'blocked_escapes': blocked_escapes,
+                                'description': f'クイーン→{mv1}で即詰みの危険'
+                            })
+                            return  # 最大脅威が見つかったので終了
+                
+                # 1手目でキングに近づき、2手目でチェックできるか
+                dist_after_mv1 = abs(mv1[0] - ai_king_pos[0]) + abs(mv1[1] - ai_king_pos[1])
+                if dist_after_mv1 <= 2:
+                    # 1手目の位置から2手目の移動をシミュレート
+                    hypothetical_moves = self._get_queen_moves_from(mv1)
+                    for mv2 in hypothetical_moves:
+                        if self._can_attack_from(mv2, ai_king_pos) and self._is_path_clear(mv2, ai_king_pos):
+                            self.lightning_can_check = True
+                            self.lightning_threat_moves.append({
+                                'type': 'delayed_check',
+                                'move1': mv1,
+                                'move2': mv2,
+                                'description': f'クイーン→{mv1}→{mv2}でチェック'
+                            })
+        except Exception:
+            pass
+    
+    def _get_king_escape_squares(self, king_pos):
+        """キングの逃げ道となるマスを取得"""
+        escapes = []
+        kr, kc = king_pos
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = kr + dr, kc + dc
+                if 0 <= nr < 8 and 0 <= nc < 8:
+                    # そのマスに自駒がないか確認
+                    piece_at = self.chess.get_piece_at(nr, nc) if self.chess else None
+                    if not piece_at or getattr(piece_at, 'color', '') != 'black':
+                        escapes.append((nr, nc))
+        return escapes
+    
+    def _get_queen_moves_from(self, pos):
+        """指定位置からのクイーンの移動可能マスを取得（簡易版）"""
+        moves = []
+        r, c = pos
+        # 8方向への移動
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]:
+            for dist in range(1, 8):
+                nr, nc = r + dr*dist, c + dc*dist
+                if 0 <= nr < 8 and 0 <= nc < 8:
+                    moves.append((nr, nc))
+                else:
+                    break
+        return moves
+    
+    def _is_path_clear(self, from_pos, to_pos):
+        """2点間のパスが空いているか（簡易チェック）"""
+        if not self.chess:
+            return True
+        
+        fr, fc = from_pos
+        tr, tc = to_pos
+        
+        # 方向を計算
+        dr = 0 if fr == tr else (1 if tr > fr else -1)
+        dc = 0 if fc == tc else (1 if tc > fc else -1)
+        
+        r, c = fr + dr, fc + dc
+        while (r, c) != (tr, tc) and 0 <= r < 8 and 0 <= c < 8:
+            piece = self.chess.get_piece_at(r, c)
+            if piece:
+                return False  # 駒がある
+            r += dr
+            c += dc
+        
+        return True
     
     def _can_attack_from(self, from_pos: Tuple[int, int], target_pos: Tuple[int, int]) -> bool:
         """from_posからtarget_posを攻撃できるか（クイーンの動き）"""
@@ -1539,6 +1700,27 @@ class CardEvaluator:
         # === ★★★ クイーン+迅雷コンボ対策（最優先）★★★ ===
         # ベリーハード専用: プレイヤーの即詰め狙いを先読みして阻止
         if self.difficulty >= 4 and self.opponent_analysis:
+            # ★★★ 最優先: プレイヤーが迅雷を確実に持っている場合 ★★★
+            if self.opponent_analysis.player_has_lightning:
+                # 迅雷でチェックメイト可能 → クイーンを即座に凍結
+                if self.opponent_analysis.lightning_can_checkmate:
+                    if self.analysis.should_prioritize_queen_freeze():
+                        return 99  # 最優先でクイーン凍結（チェックメイト阻止）
+                
+                # 迅雷でチェック可能 → クイーンを高優先で凍結
+                if self.opponent_analysis.lightning_can_check:
+                    if self.analysis.should_prioritize_queen_freeze():
+                        return 97  # 非常に高い優先度
+                
+                # クイーンがキングに近い且つ迅雷持ち → 先制的に凍結
+                queen_info = self.analysis.get_player_queen_threat_info()
+                if queen_info.get('queen') and not queen_info.get('is_frozen'):
+                    distance = queen_info.get('distance_to_king', 99)
+                    if distance <= 3:
+                        return 94  # 先制凍結
+                    elif distance <= 5:
+                        score = max(score, 85)
+            
             # クイーンが脅威になっている場合、凍結を最優先
             if self.opponent_analysis.queen_lightning_threat:
                 threat_level = self.opponent_analysis.queen_lightning_threat_level
@@ -1559,6 +1741,9 @@ class CardEvaluator:
             if self.opponent_analysis.turns_to_checkmate_estimate <= 2:
                 if self.analysis.should_prioritize_queen_freeze():
                     return 97  # 緊急凍結
+            elif self.opponent_analysis.turns_to_checkmate_estimate <= 1:
+                if self.analysis.should_prioritize_queen_freeze():
+                    return 99  # 即座に凍結
                     
             # クイーンがキングに近い・チェック可能な場合の早期対応
             queen_info = self.analysis.get_player_queen_threat_info()
@@ -1858,8 +2043,10 @@ class CardEvaluator:
     def _eval_ironwall(self) -> float:
         """鉄壁の評価
         
-        改良v4 (ベリーハード防御強化):
-        - ★クイーン+迅雷コンボへの先制防御
+        改良v5 (ベリーハード防御強化 - 先読み対応):
+        - ★★★ プレイヤーの手札を直接確認し、迅雷を持っていれば先制防御 ★★★
+        - ★★★ 迅雷使用でチェック/チェックメイト可能なら最優先で鉄壁 ★★★
+        - クイーン+迅雷コンボへの先制防御
         - 序盤でも脅威があれば使用
         - 相手のコンボ対処
         - 危機的状況での使用
@@ -1867,16 +2054,36 @@ class CardEvaluator:
         """
         score = 35
         
-        # === ★★★ クイーン+迅雷コンボへの先制防御（最優先）★★★ ===
+        # === ★★★ 最優先: プレイヤーが迅雷を持っている場合の先制防御 ★★★ ===
         if self.difficulty >= 4 and self.opponent_analysis:
+            # プレイヤーの手札に迅雷があることが確定している場合
+            if self.opponent_analysis.player_has_lightning:
+                # 迅雷使用でチェックメイト可能 → 即座に鉄壁を使用
+                if self.opponent_analysis.lightning_can_checkmate:
+                    return 99  # 最優先で鉄壁を使用（チェックメイト阻止）
+                
+                # 迅雷使用でチェック可能 → 高優先度で鉄壁を使用
+                if self.opponent_analysis.lightning_can_check:
+                    return 95  # 非常に高い優先度
+                
+                # クイーンがキングに近い且つ迅雷持ち → 先制的に鉄壁
+                queen_info = self.analysis.get_player_queen_threat_info()
+                if queen_info.get('queen') and not queen_info.get('is_frozen'):
+                    distance = queen_info.get('distance_to_king', 99)
+                    if distance <= 3:
+                        return 92  # 先制防御
+                    elif distance <= 5:
+                        score = max(score, 85)
+                
+                # 迅雷を確実に持っている場合の基本ボーナス
+                score = max(score, 75)
+            
             # クイーン+迅雷の脅威が検出されている場合
             if self.opponent_analysis.queen_lightning_threat:
                 threat_level = self.opponent_analysis.queen_lightning_threat_level
                 
                 # 脅威レベルに応じて鉄壁の価値を大幅UP
                 if threat_level >= 70:
-                    # 高脅威: 迅雷を無効化するために鉄壁を使用
-                    # ただし氷結でクイーン凍結の方が効果的な場合もあるため、やや低めに
                     score = max(score, 85)
                 elif threat_level >= 50:
                     score = max(score, 75)
@@ -1884,26 +2091,28 @@ class CardEvaluator:
                     score = max(score, 60)
             
             # 推定チェックメイトまでのターン数が少ない場合
-            if self.opponent_analysis.turns_to_checkmate_estimate <= 2:
-                score = max(score, 80)
+            if self.opponent_analysis.turns_to_checkmate_estimate <= 1:
+                score = max(score, 93)  # 即詰みの危険
+            elif self.opponent_analysis.turns_to_checkmate_estimate <= 2:
+                score = max(score, 85)
             
             # 防御優先度を確認
             defensive_priority = self.opponent_analysis.get_defensive_priority()
             if defensive_priority == 'critical':
-                score = max(score, 88)
+                score = max(score, 93)
             elif defensive_priority == 'high':
-                score = max(score, 75)
+                score = max(score, 80)
             elif defensive_priority == 'medium':
-                score = max(score, 55)
+                score = max(score, 60)
                 
             # クイーンがキングに近い場合は早めに鉄壁を張る
             queen_info = self.analysis.get_player_queen_threat_info()
             if queen_info.get('queen') and not queen_info.get('is_frozen'):
                 distance = queen_info.get('distance_to_king', 99)
                 if distance <= 2:
-                    score = max(score, 78)  # 非常に近い
+                    score = max(score, 82)  # 非常に近い
                 elif distance <= 3:
-                    score = max(score, 65)  # 近い
+                    score = max(score, 70)  # 近い
         
         # === 鉄壁の温存 ===
         # 序盤は温存（ただし、上記の脅威がある場合は使用する）
@@ -1951,7 +2160,7 @@ class CardEvaluator:
         if self.analysis.ai_in_check:
             score += 20
         
-        return min(score, 92)
+        return min(score, 96)
     
     def _eval_hand_discard(self) -> float:
         """ハンです☆の評価"""

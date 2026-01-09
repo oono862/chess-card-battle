@@ -1016,94 +1016,105 @@ class Game:
                 # Enhanced target selection: consider value, position, and strategic importance
                 vals = {'P':1,'N':3,'B':3,'R':5,'Q':9,'K':10}
                 
-                # Get opponent king position for strategic evaluation
-                opp_king_pos = None
-                if chess is not None:
+                # Check if AI strategy module has set a preferred target
+                preferred_target = getattr(self, '_ai_preferred_freeze_target', None)
+                if preferred_target is not None:
+                    # Use the strategically selected target
+                    target = preferred_target
                     try:
-                        for p in chess.pieces:
-                            if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
-                                opp_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
-                                break
+                        delattr(self, '_ai_preferred_freeze_target')
                     except Exception:
                         pass
                 
-                if chess is not None:
-                    try:
-                        candidates = []
-                        # First pass: collect non-king targets with strategic scoring
-                        for p in chess.pieces:
-                            if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') != 'K':
-                                # Skip already frozen pieces
-                                if id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0:
-                                    continue
-                                if hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0:
-                                    continue
-                                
-                                v = vals.get(getattr(p, 'name', ''), 0)
-                                score = v * 10
-                                
-                                pr, pc = getattr(p, 'row', None), getattr(p, 'col', None)
-                                if pr is not None and pc is not None:
-                                    # Bonus for pieces in center (more active)
-                                    center_dist = abs(pr - 3.5) + abs(pc - 3.5)
-                                    score += (7 - center_dist) * 2
-                                    
-                                    # Bonus for pieces near opponent's king (defensive target)
-                                    if opp_king_pos:
-                                        king_dist = abs(pr - opp_king_pos[0]) + abs(pc - opp_king_pos[1])
-                                        if king_dist <= 2:
-                                            score += 15  # High priority for king's defenders
-                                    
-                                    # Bonus for advanced pieces (closer to AI's side)
-                                    if own_color == 'black':
-                                        # Black AI: bonus for white pieces in upper rows (rows 0-3)
-                                        if pr <= 3:
-                                            score += (4 - pr) * 3
-                                    else:
-                                        # White AI: bonus for black pieces in lower rows (rows 4-7)
-                                        if pr >= 4:
-                                            score += (pr - 3) * 3
-                                    
-                                    # Extra bonus for active pieces (Knights and Bishops in good positions)
-                                    pname = getattr(p, 'name', '')
-                                    if pname == 'N' and 2 <= pr <= 5 and 2 <= pc <= 5:
-                                        score += 8  # Knights in center
-                                    elif pname == 'B' and ((pr + pc) % 2 == 0 or (pr + pc) % 2 == 1):
-                                        # Bishops on long diagonals
-                                        if pr == pc or pr + pc == 7:
-                                            score += 6
-                                
-                                candidates.append((p, score))
-                        
-                        # Select target with randomization to avoid always picking the same piece
-                        if candidates:
-                            # Sort by score
-                            candidates.sort(key=lambda x: x[1], reverse=True)
-                            
-                            # Top 40% chance to pick best, 30% for second best, 20% for third, 10% random
-                            import random
-                            roll = random.random()
-                            if roll < 0.40 and len(candidates) >= 1:
-                                target = candidates[0][0]
-                            elif roll < 0.70 and len(candidates) >= 2:
-                                target = candidates[1][0]
-                            elif roll < 0.90 and len(candidates) >= 3:
-                                target = candidates[2][0]
-                            else:
-                                # Pick randomly from top half of candidates
-                                top_half = candidates[:max(1, len(candidates)//2)]
-                                target = random.choice(top_half)[0]
-                        
-                        # if no non-king targets found, fall back to considering the king
-                        if target is None:
+                if target is None:
+                    # Get opponent king position for strategic evaluation
+                    opp_king_pos = None
+                    if chess is not None:
+                        try:
                             for p in chess.pieces:
                                 if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
-                                    # Only freeze king if not already frozen
-                                    if not (id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0):
-                                        target = p
+                                    opp_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
                                     break
-                    except Exception:
-                        target = None
+                        except Exception:
+                            pass
+                    
+                    if chess is not None:
+                        try:
+                            candidates = []
+                            # First pass: collect non-king targets with strategic scoring
+                            for p in chess.pieces:
+                                if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') != 'K':
+                                    # Skip already frozen pieces
+                                    if id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0:
+                                        continue
+                                    if hasattr(p, 'frozen_turns') and getattr(p, 'frozen_turns', 0) > 0:
+                                        continue
+                                    
+                                    v = vals.get(getattr(p, 'name', ''), 0)
+                                    score = v * 10
+                                    
+                                    pr, pc = getattr(p, 'row', None), getattr(p, 'col', None)
+                                    if pr is not None and pc is not None:
+                                        # Bonus for pieces in center (more active)
+                                        center_dist = abs(pr - 3.5) + abs(pc - 3.5)
+                                        score += (7 - center_dist) * 2
+                                        
+                                        # Bonus for pieces near opponent's king (defensive target)
+                                        if opp_king_pos:
+                                            king_dist = abs(pr - opp_king_pos[0]) + abs(pc - opp_king_pos[1])
+                                            if king_dist <= 2:
+                                                score += 15  # High priority for king's defenders
+                                        
+                                        # Bonus for advanced pieces (closer to AI's side)
+                                        if own_color == 'black':
+                                            # Black AI: bonus for white pieces in upper rows (rows 0-3)
+                                            if pr <= 3:
+                                                score += (4 - pr) * 3
+                                        else:
+                                            # White AI: bonus for black pieces in lower rows (rows 4-7)
+                                            if pr >= 4:
+                                                score += (pr - 3) * 3
+                                        
+                                        # Extra bonus for active pieces (Knights and Bishops in good positions)
+                                        pname = getattr(p, 'name', '')
+                                        if pname == 'N' and 2 <= pr <= 5 and 2 <= pc <= 5:
+                                            score += 8  # Knights in center
+                                        elif pname == 'B' and ((pr + pc) % 2 == 0 or (pr + pc) % 2 == 1):
+                                            # Bishops on long diagonals
+                                            if pr == pc or pr + pc == 7:
+                                                score += 6
+                                    
+                                    candidates.append((p, score))
+                            
+                            # Select target with randomization to avoid always picking the same piece
+                            if candidates:
+                                # Sort by score
+                                candidates.sort(key=lambda x: x[1], reverse=True)
+                                
+                                # Top 40% chance to pick best, 30% for second best, 20% for third, 10% random
+                                import random
+                                roll = random.random()
+                                if roll < 0.40 and len(candidates) >= 1:
+                                    target = candidates[0][0]
+                                elif roll < 0.70 and len(candidates) >= 2:
+                                    target = candidates[1][0]
+                                elif roll < 0.90 and len(candidates) >= 3:
+                                    target = candidates[2][0]
+                                else:
+                                    # Pick randomly from top half of candidates
+                                    top_half = candidates[:max(1, len(candidates)//2)]
+                                    target = random.choice(top_half)[0]
+                            
+                            # if no non-king targets found, fall back to considering the king
+                            if target is None:
+                                for p in chess.pieces:
+                                    if getattr(p, 'color', None) == opp_color and getattr(p, 'name', '') == 'K':
+                                        # Only freeze king if not already frozen
+                                        if not (id(p) in self.frozen_pieces and self.frozen_pieces.get(id(p), 0) > 0):
+                                            target = p
+                                        break
+                        except Exception:
+                            target = None
                 if target is not None:
                     try:
                         # Use helper which respects iron-wall

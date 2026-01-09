@@ -583,10 +583,15 @@ class GamePhase:
 
 
 class OpponentAnalysis:
-    """相手（プレイヤー）の状態分析"""
+    """相手（プレイヤー）の状態分析
     
-    def __init__(self, game):
+    改良版v3: クイーン+迅雷コンボの脅威検出を強化
+    """
+    
+    def __init__(self, game, chess=None, get_valid_moves_func=None):
         self.game = game
+        self.chess = chess
+        self.get_valid_moves = get_valid_moves_func
         self._analyze()
     
     def _analyze(self):
@@ -598,6 +603,13 @@ class OpponentAnalysis:
         self.likely_has_freeze = False  # 氷結を持っている可能性
         self.combo_threat = False  # コンボの脅威
         self.aggressive_play = False  # 攻撃的なプレイスタイル
+        
+        # ★NEW: クイーン+迅雷コンボの脅威分析
+        self.queen_lightning_threat = False  # クイーン+迅雷コンボの脅威
+        self.queen_lightning_threat_level = 0  # 脅威レベル (0-100)
+        self.player_queen_near_king = False  # プレイヤーのクイーンがAIキングに近い
+        self.player_queen_can_check = False  # プレイヤーのクイーンがチェックできる
+        self.turns_to_checkmate_estimate = 99  # チェックメイトまでの推定ターン数
         
         try:
             # プレイヤーの手札数
@@ -614,8 +626,9 @@ class OpponentAnalysis:
                                 self.recent_cards_used.append(card_name)
             
             # 手札が多い場合、危険なカードを持っている可能性が高い
+            if self.hand_count >= 2:
+                self.likely_has_lightning = True  # 2枚以上で迅雷の可能性を警戒
             if self.hand_count >= 3:
-                self.likely_has_lightning = True
                 self.likely_has_storm = True
             if self.hand_count >= 4:
                 self.likely_has_freeze = True
@@ -626,9 +639,122 @@ class OpponentAnalysis:
                 self.combo_threat = True
             if card_count_in_recent >= 3:
                 self.aggressive_play = True
+            
+            # ★クイーン+迅雷コンボの脅威分析
+            self._analyze_queen_lightning_threat()
                 
         except Exception:
             pass
+    
+    def _analyze_queen_lightning_threat(self):
+        """プレイヤーのクイーン+迅雷コンボの脅威を分析"""
+        if not self.chess or not self.get_valid_moves:
+            return
+        
+        try:
+            # AIキングとプレイヤークイーンの位置を取得
+            ai_king_pos = None
+            player_queen = None
+            player_queen_pos = None
+            
+            for p in self.chess.pieces:
+                color = getattr(p, 'color', None)
+                name = getattr(p, 'name', '')
+                row = getattr(p, 'row', 0)
+                col = getattr(p, 'col', 0)
+                
+                if color == 'black' and name == 'K':
+                    ai_king_pos = (row, col)
+                elif color == 'white' and name == 'Q':
+                    player_queen = p
+                    player_queen_pos = (row, col)
+            
+            if not ai_king_pos or not player_queen:
+                return
+            
+            # クイーンがAIキングに近いか
+            queen_to_king_dist = abs(player_queen_pos[0] - ai_king_pos[0]) + abs(player_queen_pos[1] - ai_king_pos[1])
+            
+            if queen_to_king_dist <= 4:
+                self.player_queen_near_king = True
+            
+            # クイーンがチェックできるか
+            try:
+                queen_moves = self.get_valid_moves(player_queen, ignore_check=True)
+                for mv in queen_moves:
+                    if mv == ai_king_pos:
+                        self.player_queen_can_check = True
+                        break
+                
+                # チェックできなくても、1手でチェック位置に行けるか
+                if not self.player_queen_can_check:
+                    for mv in queen_moves:
+                        # mvからキングに直線/斜線で攻撃できるか
+                        if self._can_attack_from(mv, ai_king_pos):
+                            self.player_queen_can_check = True
+                            break
+            except Exception:
+                pass
+            
+            # 脅威レベルの計算
+            threat_level = 0
+            
+            # クイーンがキングに近い
+            if queen_to_king_dist <= 2:
+                threat_level += 50
+            elif queen_to_king_dist <= 4:
+                threat_level += 30
+            elif queen_to_king_dist <= 6:
+                threat_level += 15
+            
+            # チェックできる状態
+            if self.player_queen_can_check:
+                threat_level += 30
+            
+            # 迅雷を持っている可能性がある
+            if self.likely_has_lightning:
+                threat_level += 20
+            
+            # 手札が多い（PPも潤沢と推測）
+            if self.hand_count >= 3:
+                threat_level += 10
+            
+            self.queen_lightning_threat_level = min(threat_level, 100)
+            
+            # 脅威レベルが50以上ならコンボ脅威とみなす
+            if self.queen_lightning_threat_level >= 50:
+                self.queen_lightning_threat = True
+            
+            # チェックメイトまでの推定ターン数
+            if self.player_queen_can_check and self.likely_has_lightning:
+                if queen_to_king_dist <= 2:
+                    self.turns_to_checkmate_estimate = 1  # 迅雷で即チェックメイトの危険
+                elif queen_to_king_dist <= 4:
+                    self.turns_to_checkmate_estimate = 2
+                else:
+                    self.turns_to_checkmate_estimate = 3
+            elif self.player_queen_near_king:
+                self.turns_to_checkmate_estimate = 3
+            
+        except Exception:
+            pass
+    
+    def _can_attack_from(self, from_pos: Tuple[int, int], target_pos: Tuple[int, int]) -> bool:
+        """from_posからtarget_posを攻撃できるか（クイーンの動き）"""
+        fr, fc = from_pos
+        tr, tc = target_pos
+        
+        # 同じ行
+        if fr == tr:
+            return True
+        # 同じ列
+        if fc == tc:
+            return True
+        # 斜め
+        if abs(fr - tr) == abs(fc - tc):
+            return True
+        
+        return False
     
     def estimate_threat_level(self) -> int:
         """相手の脅威レベルを推定（0-100）"""
@@ -645,10 +771,32 @@ class OpponentAnalysis:
         if self.aggressive_play:
             threat += 15
         
+        # ★クイーン+迅雷コンボの脅威を追加
+        if self.queen_lightning_threat:
+            threat += 30
+        
         # 手札数に応じた脅威
         threat += min(self.hand_count * 5, 25)
         
         return min(threat, 100)
+    
+    def get_defensive_priority(self) -> str:
+        """防御の優先度を決定
+        
+        Returns:
+            'critical': 即座に防御が必要（チェックメイト1-2ターン以内）
+            'high': 高優先度で防御（3ターン以内）
+            'medium': 中程度の防御
+            'low': 通常
+        """
+        if self.turns_to_checkmate_estimate <= 1:
+            return 'critical'
+        elif self.turns_to_checkmate_estimate <= 2:
+            return 'high'
+        elif self.queen_lightning_threat:
+            return 'medium'
+        else:
+            return 'low'
 
 
 class BoardAnalysis:
@@ -818,6 +966,118 @@ class BoardAnalysis:
             except Exception:
                 pass
         return False
+    
+    def get_player_queen(self) -> Optional[Any]:
+        """プレイヤーのクイーンを取得"""
+        for p in self.player_pieces:
+            if getattr(p, 'name', '') == 'Q':
+                return p
+        return None
+    
+    def get_player_queen_threat_info(self) -> Dict[str, Any]:
+        """プレイヤーのクイーンによる脅威情報を取得
+        
+        Returns:
+            {
+                'queen': プレイヤーのクイーン駒,
+                'queen_pos': クイーンの位置,
+                'distance_to_ai_king': AIキングまでの距離,
+                'can_check_now': 今すぐチェックできるか,
+                'can_check_in_one_move': 1手でチェックできるか,
+                'is_frozen': クイーンが凍結されているか,
+                'threat_level': 脅威レベル (0-100),
+            }
+        """
+        result = {
+            'queen': None,
+            'queen_pos': None,
+            'distance_to_ai_king': 99,
+            'can_check_now': False,
+            'can_check_in_one_move': False,
+            'is_frozen': False,
+            'threat_level': 0,
+        }
+        
+        player_queen = self.get_player_queen()
+        if not player_queen:
+            return result
+        
+        result['queen'] = player_queen
+        queen_row = getattr(player_queen, 'row', 0)
+        queen_col = getattr(player_queen, 'col', 0)
+        result['queen_pos'] = (queen_row, queen_col)
+        result['is_frozen'] = self._is_piece_frozen(player_queen)
+        
+        if not self.ai_king_pos:
+            return result
+        
+        # AIキングまでの距離
+        ai_kr, ai_kc = self.ai_king_pos
+        distance = abs(queen_row - ai_kr) + abs(queen_col - ai_kc)
+        result['distance_to_ai_king'] = distance
+        
+        # 凍結されていたら脅威は低い
+        if result['is_frozen']:
+            result['threat_level'] = 5
+            return result
+        
+        # クイーンの移動先を取得
+        try:
+            queen_moves = self.get_valid_moves(player_queen, ignore_check=True)
+            
+            # 今すぐチェックできるか
+            if self.ai_king_pos in queen_moves:
+                result['can_check_now'] = True
+                result['threat_level'] = 90
+            else:
+                # 1手でチェック位置に行けるか
+                for mv in queen_moves:
+                    # mvからキングに攻撃できるか
+                    mv_r, mv_c = mv
+                    # 直線・斜線でキングを攻撃できるか
+                    if mv_r == ai_kr or mv_c == ai_kc:  # 同じ行/列
+                        result['can_check_in_one_move'] = True
+                        break
+                    if abs(mv_r - ai_kr) == abs(mv_c - ai_kc):  # 斜め
+                        result['can_check_in_one_move'] = True
+                        break
+        except Exception:
+            pass
+        
+        # 脅威レベルの計算
+        if not result['can_check_now']:
+            threat = 0
+            
+            # 距離に基づく脅威
+            if distance <= 2:
+                threat = 70
+            elif distance <= 4:
+                threat = 50
+            elif distance <= 6:
+                threat = 30
+            else:
+                threat = 10
+            
+            # 1手でチェックできるならボーナス
+            if result['can_check_in_one_move']:
+                threat += 20
+            
+            result['threat_level'] = min(threat, 100)
+        
+        return result
+    
+    def should_prioritize_queen_freeze(self) -> bool:
+        """クイーンを凍結すべき優先度が高いか"""
+        queen_info = self.get_player_queen_threat_info()
+        
+        # クイーンがいない or 既に凍結
+        if not queen_info['queen'] or queen_info['is_frozen']:
+            return False
+        
+        # チェック可能または脅威レベルが高い
+        return (queen_info['can_check_now'] or 
+                queen_info['can_check_in_one_move'] or
+                queen_info['threat_level'] >= 50)
     
     def get_unfrozen_high_value_player_pieces(self) -> List:
         """凍結されていない高価値のプレイヤー駒を取得（キング以外）"""
@@ -1262,9 +1522,10 @@ class CardEvaluator:
     def _eval_freeze(self) -> float:
         """氷結の評価
         
-        改良v3 (ベリーハード強化): 
+        改良v4 (ベリーハード防御強化): 
         - 有効なターゲットがない場合は-1を返す
         - チェックメイトを防ぐための緊急使用を優先
+        - ★クイーン+迅雷コンボへの対策を最優先
         - 脅威を与えている駒を優先
         - コンボ検出との連携
         - プレイヤー学習に基づく対策
@@ -1274,6 +1535,38 @@ class CardEvaluator:
             return -1
         
         score = 40
+        
+        # === ★★★ クイーン+迅雷コンボ対策（最優先）★★★ ===
+        # ベリーハード専用: プレイヤーの即詰め狙いを先読みして阻止
+        if self.difficulty >= 4 and self.opponent_analysis:
+            # クイーンが脅威になっている場合、凍結を最優先
+            if self.opponent_analysis.queen_lightning_threat:
+                threat_level = self.opponent_analysis.queen_lightning_threat_level
+                
+                # クイーンが凍結可能かチェック
+                if self.analysis.should_prioritize_queen_freeze():
+                    # 脅威レベルに応じた超高スコア
+                    if threat_level >= 80:
+                        return 99  # 即座に凍結（チェックメイト阻止）
+                    elif threat_level >= 60:
+                        return 96  # 非常に高い優先度
+                    elif threat_level >= 40:
+                        return 90  # 高い優先度
+                    else:
+                        score = max(score, 75)
+                        
+            # 推定ターン数が少ない場合も警戒
+            if self.opponent_analysis.turns_to_checkmate_estimate <= 2:
+                if self.analysis.should_prioritize_queen_freeze():
+                    return 97  # 緊急凍結
+                    
+            # クイーンがキングに近い・チェック可能な場合の早期対応
+            queen_info = self.analysis.get_player_queen_threat_info()
+            if queen_info.get('queen') and not queen_info.get('is_frozen'):
+                if queen_info.get('can_check_now'):
+                    return 95  # 今すぐチェック可能なら凍結
+                elif queen_info.get('can_check_in_one_move') and queen_info.get('threat_level', 0) >= 50:
+                    score = max(score, 85)  # 1手後にチェック可能なら高優先
         
         # === コンボ検出 ===
         combo = self._has_combo_for_card('氷結')
@@ -1565,17 +1858,56 @@ class CardEvaluator:
     def _eval_ironwall(self) -> float:
         """鉄壁の評価
         
-        改良v3 (ベリーハード強化):
-        - 序盤は温存
+        改良v4 (ベリーハード防御強化):
+        - ★クイーン+迅雷コンボへの先制防御
+        - 序盤でも脅威があれば使用
         - 相手のコンボ対処
         - 危機的状況での使用
         - プレイヤー学習に基づく対策
         """
         score = 35
         
+        # === ★★★ クイーン+迅雷コンボへの先制防御（最優先）★★★ ===
+        if self.difficulty >= 4 and self.opponent_analysis:
+            # クイーン+迅雷の脅威が検出されている場合
+            if self.opponent_analysis.queen_lightning_threat:
+                threat_level = self.opponent_analysis.queen_lightning_threat_level
+                
+                # 脅威レベルに応じて鉄壁の価値を大幅UP
+                if threat_level >= 70:
+                    # 高脅威: 迅雷を無効化するために鉄壁を使用
+                    # ただし氷結でクイーン凍結の方が効果的な場合もあるため、やや低めに
+                    score = max(score, 85)
+                elif threat_level >= 50:
+                    score = max(score, 75)
+                elif threat_level >= 30:
+                    score = max(score, 60)
+            
+            # 推定チェックメイトまでのターン数が少ない場合
+            if self.opponent_analysis.turns_to_checkmate_estimate <= 2:
+                score = max(score, 80)
+            
+            # 防御優先度を確認
+            defensive_priority = self.opponent_analysis.get_defensive_priority()
+            if defensive_priority == 'critical':
+                score = max(score, 88)
+            elif defensive_priority == 'high':
+                score = max(score, 75)
+            elif defensive_priority == 'medium':
+                score = max(score, 55)
+                
+            # クイーンがキングに近い場合は早めに鉄壁を張る
+            queen_info = self.analysis.get_player_queen_threat_info()
+            if queen_info.get('queen') and not queen_info.get('is_frozen'):
+                distance = queen_info.get('distance_to_king', 99)
+                if distance <= 2:
+                    score = max(score, 78)  # 非常に近い
+                elif distance <= 3:
+                    score = max(score, 65)  # 近い
+        
         # === 鉄壁の温存 ===
-        # 序盤は温存（終盤や危機的状況でのみ使用）
-        if self._should_save_card('鉄壁'):
+        # 序盤は温存（ただし、上記の脅威がある場合は使用する）
+        if score < 55 and self._should_save_card('鉄壁'):
             return 15  # 温存のため低評価
         
         # === コンボ対処 ===
@@ -1619,7 +1951,7 @@ class CardEvaluator:
         if self.analysis.ai_in_check:
             score += 20
         
-        return min(score, 85)
+        return min(score, 92)
     
     def _eval_hand_discard(self) -> float:
         """ハンです☆の評価"""

@@ -6706,9 +6706,16 @@ def draw_panel():
             if check_colors != draw_panel.last_check_colors:
                 draw_panel.last_check_colors = check_colors.copy()
 
-            # 左パネルの中央付近に表示（手札と被らない位置）
+            # 左パネルのバトル開始ボタンの下に表示（他のテキストと被らないように）
             check_x = left_margin + 10
-            check_y = H // 2 - 50
+            # start_turn_rectがあればその下に、なければデフォルト位置
+            try:
+                if start_turn_rect is not None:
+                    check_y = start_turn_rect.bottom + 20
+                else:
+                    check_y = H // 2 + 50  # デフォルトは中央より下
+            except Exception:
+                check_y = H // 2 + 50
 
             # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
             if not hasattr(draw_panel, '_check_font'):

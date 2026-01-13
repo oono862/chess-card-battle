@@ -1510,19 +1510,31 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
 def eff_draw2(game: Game, player: PlayerState) -> str:
     """2ドロー(1): 山札から2枚引く。"""
     # Draw two cards for the specified player (works for both human and AI)
+    is_human = (player is game.player)
     items: List[str] = []
+    ai_draw_count = 0
     for _ in range(2):
         c = player.deck.draw()
         if c is None:
             continue
+        if not is_human:
+            ai_draw_count += 1
         if len(player.hand.cards) >= player.hand_limit:
             player.graveyard.append(c)
-            game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
-            items.append(f"{c.name}(墓地)")
+            if is_human:
+                game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
+                items.append(f"{c.name}(墓地)")
+            else:
+                game.log.append(f"手札上限{player.hand_limit}のため1枚が墓地へ。")
         else:
             player.hand.add(c)
-            items.append(c.name)
-    return "ドロー: " + (", ".join(items) if items else "なし")
+            if is_human:
+                items.append(c.name)
+    if is_human:
+        return "ドロー: " + (", ".join(items) if items else "なし")
+    else:
+        # AIのドロー内容は伏せる（枚数も秘匿）。引いていれば「非公開」。
+        return "ドロー: 非公開" if ai_draw_count > 0 else "ドロー: なし"
 
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:

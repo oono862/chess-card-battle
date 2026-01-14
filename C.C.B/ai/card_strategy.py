@@ -2359,6 +2359,8 @@ class AICardStrategy:
     def select_card(self, ai_player, game, chess, get_valid_moves_func) -> Optional[int]:
         """使用するカードを選択
         
+        改良版v3: 侵攻ルート予測に基づく防御カード優先使用
+        
         Returns:
             使用するカードの手札インデックス、または None
         """
@@ -2377,7 +2379,50 @@ class AICardStrategy:
         game_phase = GamePhase.get_phase(game)
         
         # 相手（プレイヤー）の分析
-        opponent_analysis = OpponentAnalysis(game)
+        opponent_analysis = OpponentAnalysis(game, chess, get_valid_moves_func)
+        
+        # ★★★ NEW: 侵攻ルート予測と防御戦略（Normal以上） ★★★
+        if self.difficulty >= 2:
+            threat_predictor = ThreatPredictor(chess, game, get_valid_moves_func, opponent_analysis)
+            defense_strategy = DefensiveStrategy(threat_predictor, analysis)
+            
+            # 防御を優先すべきか判定
+            if defense_strategy.should_prioritize_defense():
+                # 防御推奨カードを取得
+                defense_recommendations = defense_strategy.get_defense_recommendations(ai_player)
+                
+                if defense_recommendations:
+                    # 最優先の防御手段を実行
+                    for rec in defense_recommendations[:2]:  # 上位2つをチェック
+                        rec_card_name = rec.get('card_name')
+                        rec_priority = rec.get('priority', 0)
+                        
+                        # 優先度が高い場合のみ実行
+                        if rec_priority >= 70:
+                            # 該当カードを手札から探す
+                            for idx in playable_indices:
+                                card = ai_player.hand.cards[idx]
+                                if card.name == rec_card_name:
+                                    # 防御カードを使用
+                                    if rec_card_name == '氷結':
+                                        # 氷結のターゲットを設定
+                                        target = rec.get('target')
+                                        if target:
+                                            try:
+                                                game._ai_preferred_freeze_target = target
+                                            except Exception:
+                                                pass
+                                    elif rec_card_name == '灼熱':
+                                        # 灼熱の封鎖位置を設定
+                                        target_pos = rec.get('target')
+                                        if target_pos:
+                                            try:
+                                                game._ai_preferred_block_positions = [target_pos]
+                                            except Exception:
+                                                pass
+                                    
+                                    # 防御カードを使用
+                                    return idx
         
         # チェック回避を優先すべき場合
         if self.should_prioritize_check_escape(analysis):
@@ -2522,6 +2567,444 @@ class AICardStrategy:
         if self.difficulty >= 4:
             learner = get_player_learner()
             learner.record_game_end()
+
+
+# =============================================================================
+# 侵攻ルート予測・防御戦略システム
+# =============================================================================
+
+class ThreatPredictor:
+    """相手のギミック使用時の侵攻ルートを予測するクラス
+    
+    ★★★ 短期決着を防ぐための重要機能 ★★★
+    
+    予測内容:
+    - プレイヤーのカード使用時（灼熱、暴風、迅雷）にAIキングへの攻撃ルートを分析
+    - 暴風使用時: ジャンプ可能な経路を含めた侵攻ルート
+    - 迅雷使用時: 2手連続移動でのチェックメイト経路
+    - 灼熱使用時: 封鎖マスの影響を考慮した侵攻ルート
+    """
+    
+    def __init__(self, chess, game, get_valid_moves_func, opponent_analysis: OpponentAnalysis):
+        self.chess = chess
+        self.game = game
+        self.get_valid_moves = get_valid_moves_func
+        self.opponent_analysis = opponent_analysis
+    
+    def predict_invasion_routes(self) -> List[Dict[str, Any]]:
+        """プレイヤーのAIキングへの侵攻ルートを予測
+        
+        Returns:
+            侵攻ルートのリスト。各ルートには以下の情報が含まれる:
+            - attacker: 攻撃駒
+            - route: 侵攻経路（マスのリスト）
+            - turns_to_king: キングまでのターン数
+            - threat_level: 脅威レベル (0-100)
+            - gimmick_used: 使用されたギミック（迅雷、暴風など）
+        """
+        routes = []
+        
+        # AIキングの位置を取得
+        ai_king_pos = None
+        for p in self.chess.pieces:
+            if getattr(p, 'color', None) == 'black' and getattr(p, 'name', '') == 'K':
+                ai_king_pos = (getattr(p, 'row', 0), getattr(p, 'col', 0))
+                break
+        
+        if not ai_king_pos:
+            return routes
+        
+        # プレイヤーの各駒について侵攻ルートを分析
+        for p in self.chess.pieces:
+            if getattr(p, 'color', None) != 'white':
+                continue
+            
+            piece_name = getattr(p, 'name', '')
+            if piece_name == 'K':
+                continue  # プレイヤーキングは侵攻しない
+            
+            # 通常の侵攻ルート
+            normal_route = self._calculate_normal_route(p, ai_king_pos)
+            if normal_route:
+                routes.append(normal_route)
+            
+            # 暴風使用時の侵攻ルート
+            if self.opponent_analysis.player_has_storm or self.opponent_analysis.likely_has_storm:
+                storm_route = self._calculate_storm_route(p, ai_king_pos)
+                if storm_route:
+                    routes.append(storm_route)
+            
+            # 迅雷使用時の侵攻ルート
+            if self.opponent_analysis.player_has_lightning or self.opponent_analysis.likely_has_lightning:
+                lightning_route = self._calculate_lightning_route(p, ai_king_pos)
+                if lightning_route:
+                    routes.append(lightning_route)
+        
+        # 脅威レベルでソート
+        routes.sort(key=lambda x: x.get('threat_level', 0), reverse=True)
+        
+        return routes
+    
+    def _calculate_normal_route(self, piece, target_pos) -> Optional[Dict[str, Any]]:
+        """通常移動での侵攻ルートを計算"""
+        try:
+            piece_pos = (getattr(piece, 'row', 0), getattr(piece, 'col', 0))
+            piece_name = getattr(piece, 'name', '')
+            
+            # 駒の移動可能範囲を取得
+            valid_moves = self.get_valid_moves(piece, ignore_check=True)
+            
+            # ターゲットまでの最短距離
+            current_dist = abs(piece_pos[0] - target_pos[0]) + abs(piece_pos[1] - target_pos[1])
+            
+            # 1手でターゲットに近づける最良の手を探す
+            best_move = None
+            best_dist = current_dist
+            
+            for mv in valid_moves:
+                dist = abs(mv[0] - target_pos[0]) + abs(mv[1] - target_pos[1])
+                if dist < best_dist:
+                    best_dist = dist
+                    best_move = mv
+            
+            if not best_move:
+                return None
+            
+            # 推定ターン数（簡易計算）
+            piece_values = {'P': 1, 'N': 2, 'B': 3, 'R': 5, 'Q': 7, 'K': 1}
+            mobility = piece_values.get(piece_name, 2)
+            turns_estimate = max(1, best_dist // mobility)
+            
+            # 脅威レベル計算
+            threat_level = 0
+            if piece_name == 'Q':
+                threat_level = 80 - turns_estimate * 10
+            elif piece_name == 'R':
+                threat_level = 60 - turns_estimate * 10
+            elif piece_name in ['B', 'N']:
+                threat_level = 40 - turns_estimate * 10
+            else:
+                threat_level = 20 - turns_estimate * 5
+            
+            # 既にキングに近い場合は脅威増大
+            if current_dist <= 2:
+                threat_level += 30
+            elif current_dist <= 4:
+                threat_level += 15
+            
+            return {
+                'attacker': piece,
+                'route': [piece_pos, best_move],
+                'turns_to_king': turns_estimate,
+                'threat_level': max(0, threat_level),
+                'gimmick_used': None,
+                'description': f'{piece_name}が{turns_estimate}ターンでキングに接近可能'
+            }
+        except Exception:
+            return None
+    
+    def _calculate_storm_route(self, piece, target_pos) -> Optional[Dict[str, Any]]:
+        """暴風（ジャンプ）使用時の侵攻ルートを計算"""
+        try:
+            piece_pos = (getattr(piece, 'row', 0), getattr(piece, 'col', 0))
+            piece_name = getattr(piece, 'name', '')
+            
+            # ナイトは元々ジャンプできるので暴風の恩恵は小さい
+            if piece_name == 'N':
+                return None
+            
+            # ジャンプ可能な場合の移動先を計算（クイーン、ルーク、ビショップ）
+            jump_moves = self._get_jump_moves(piece, piece_pos)
+            
+            # ターゲットまでの最短距離（ジャンプあり）
+            current_dist = abs(piece_pos[0] - target_pos[0]) + abs(piece_pos[1] - target_pos[1])
+            
+            best_move = None
+            best_dist = current_dist
+            
+            for mv in jump_moves:
+                dist = abs(mv[0] - target_pos[0]) + abs(mv[1] - target_pos[1])
+                if dist < best_dist:
+                    best_dist = dist
+                    best_move = mv
+            
+            if not best_move or best_dist >= current_dist:
+                return None  # ジャンプしても近づけない
+            
+            # 推定ターン数（ジャンプで大幅短縮）
+            turns_estimate = max(1, best_dist // 4)
+            
+            # 脅威レベル計算（暴風使用なので高脅威）
+            threat_level = 0
+            if piece_name == 'Q':
+                threat_level = 90 - turns_estimate * 5
+            elif piece_name == 'R':
+                threat_level = 75 - turns_estimate * 5
+            elif piece_name == 'B':
+                threat_level = 60 - turns_estimate * 5
+            else:
+                threat_level = 40 - turns_estimate * 5
+            
+            # ジャンプで一気に接近できる場合は最大脅威
+            if best_dist <= 2:
+                threat_level = 95
+            
+            return {
+                'attacker': piece,
+                'route': [piece_pos, best_move],
+                'turns_to_king': turns_estimate,
+                'threat_level': max(0, threat_level),
+                'gimmick_used': '暴風',
+                'can_jump': True,
+                'description': f'{piece_name}が暴風で{turns_estimate}ターンでキングに肉薄'
+            }
+        except Exception:
+            return None
+    
+    def _calculate_lightning_route(self, piece, target_pos) -> Optional[Dict[str, Any]]:
+        """迅雷（2回移動）使用時の侵攻ルートを計算"""
+        try:
+            piece_pos = (getattr(piece, 'row', 0), getattr(piece, 'col', 0))
+            piece_name = getattr(piece, 'name', '')
+            
+            # 1手目の移動可能範囲
+            valid_moves_1st = self.get_valid_moves(piece, ignore_check=True)
+            
+            best_route = None
+            best_dist = 999
+            
+            for mv1 in valid_moves_1st:
+                # 1手目の移動後、2手目でどこまで行けるか
+                hypothetical_moves_2nd = self._get_hypothetical_moves(piece_name, mv1)
+                
+                for mv2 in hypothetical_moves_2nd:
+                    dist = abs(mv2[0] - target_pos[0]) + abs(mv2[1] - target_pos[1])
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_route = [piece_pos, mv1, mv2]
+            
+            if not best_route:
+                return None
+            
+            # 2手でどこまで接近できるか
+            turns_estimate = 1  # 迅雷使用なので1ターンで2手
+            
+            # 脅威レベル計算（迅雷使用なので超高脅威）
+            threat_level = 0
+            if piece_name == 'Q':
+                if best_dist == 0:
+                    threat_level = 100  # 即チェック可能
+                elif best_dist <= 1:
+                    threat_level = 95
+                elif best_dist <= 2:
+                    threat_level = 85
+                else:
+                    threat_level = 70
+            elif piece_name == 'R':
+                if best_dist <= 1:
+                    threat_level = 90
+                elif best_dist <= 3:
+                    threat_level = 75
+                else:
+                    threat_level = 60
+            else:
+                if best_dist <= 2:
+                    threat_level = 70
+                else:
+                    threat_level = 50
+            
+            return {
+                'attacker': piece,
+                'route': best_route,
+                'turns_to_king': turns_estimate,
+                'threat_level': max(0, threat_level),
+                'gimmick_used': '迅雷',
+                'double_move': True,
+                'final_distance': best_dist,
+                'description': f'{piece_name}が迅雷で{turns_estimate}ターンでキングに急接近（距離{best_dist}）'
+            }
+        except Exception:
+            return None
+    
+    def _get_jump_moves(self, piece, piece_pos) -> List[Tuple[int, int]]:
+        """ジャンプ可能な移動先を取得（暴風効果）"""
+        moves = []
+        piece_name = getattr(piece, 'name', '')
+        pr, pc = piece_pos
+        
+        # クイーン、ルーク、ビショップは直線/斜線上の全マスにジャンプ可能
+        if piece_name == 'Q':
+            # 8方向
+            directions = [(0,1), (0,-1), (1,0), (-1,0), (1,1), (1,-1), (-1,1), (-1,-1)]
+        elif piece_name == 'R':
+            # 4方向（縦横）
+            directions = [(0,1), (0,-1), (1,0), (-1,0)]
+        elif piece_name == 'B':
+            # 4方向（斜め）
+            directions = [(1,1), (1,-1), (-1,1), (-1,-1)]
+        else:
+            return []
+        
+        for dr, dc in directions:
+            for dist in range(1, 8):
+                nr, nc = pr + dr * dist, pc + dc * dist
+                if 0 <= nr < 8 and 0 <= nc < 8:
+                    moves.append((nr, nc))
+                else:
+                    break
+        
+        return moves
+    
+    def _get_hypothetical_moves(self, piece_name, from_pos) -> List[Tuple[int, int]]:
+        """仮想的な移動先を取得（駒の種類に基づく）"""
+        moves = []
+        fr, fc = from_pos
+        
+        if piece_name == 'Q':
+            # クイーン: 8方向
+            directions = [(0,1), (0,-1), (1,0), (-1,0), (1,1), (1,-1), (-1,1), (-1,-1)]
+            for dr, dc in directions:
+                for dist in range(1, 8):
+                    nr, nc = fr + dr * dist, fc + dc * dist
+                    if 0 <= nr < 8 and 0 <= nc < 8:
+                        moves.append((nr, nc))
+                    else:
+                        break
+        elif piece_name == 'R':
+            # ルーク: 4方向（縦横）
+            directions = [(0,1), (0,-1), (1,0), (-1,0)]
+            for dr, dc in directions:
+                for dist in range(1, 8):
+                    nr, nc = fr + dr * dist, fc + dc * dist
+                    if 0 <= nr < 8 and 0 <= nc < 8:
+                        moves.append((nr, nc))
+                    else:
+                        break
+        elif piece_name == 'B':
+            # ビショップ: 4方向（斜め）
+            directions = [(1,1), (1,-1), (-1,1), (-1,-1)]
+            for dr, dc in directions:
+                for dist in range(1, 8):
+                    nr, nc = fr + dr * dist, fc + dc * dist
+                    if 0 <= nr < 8 and 0 <= nc < 8:
+                        moves.append((nr, nc))
+                    else:
+                        break
+        elif piece_name == 'N':
+            # ナイト
+            knight_moves = [(2,1), (2,-1), (-2,1), (-2,-1), (1,2), (1,-2), (-1,2), (-1,-2)]
+            for dr, dc in knight_moves:
+                nr, nc = fr + dr, fc + dc
+                if 0 <= nr < 8 and 0 <= nc < 8:
+                    moves.append((nr, nc))
+        elif piece_name == 'P':
+            # ポーン（白）
+            if fr < 7:
+                moves.append((fr + 1, fc))
+        
+        return moves
+
+
+class DefensiveStrategy:
+    """侵攻ルートに対する防御戦略を決定するクラス
+    
+    ★★★ 短期決着を防ぐための防御カード使用判定 ★★★
+    
+    防御手段:
+    - 氷結: 侵攻する駒を凍結
+    - 灼熱: 侵攻ルート上に封鎖マスを設置
+    - 鉄壁: 相手のカードを無効化
+    - 駒配置: 侵攻ルートを遮断する駒配置
+    """
+    
+    def __init__(self, threat_predictor: ThreatPredictor, board_analysis: BoardAnalysis):
+        self.threat_predictor = threat_predictor
+        self.board_analysis = board_analysis
+    
+    def should_prioritize_defense(self) -> bool:
+        """防御を優先すべきか判定"""
+        routes = self.threat_predictor.predict_invasion_routes()
+        
+        if not routes:
+            return False
+        
+        # 最高脅威レベルをチェック
+        max_threat = max(r.get('threat_level', 0) for r in routes)
+        
+        # 脅威レベル60以上で防御優先
+        if max_threat >= 60:
+            return True
+        
+        # 2ターン以内にキングに到達する駒がいる場合
+        urgent_threats = [r for r in routes if r.get('turns_to_king', 99) <= 2]
+        if urgent_threats:
+            return True
+        
+        return False
+    
+    def get_defense_recommendations(self, ai_player) -> List[Dict[str, Any]]:
+        """防御手段の推奨リストを取得
+        
+        Returns:
+            防御手段のリスト（優先度順）。各アイテムには:
+            - card_name: 使用すべきカード名
+            - target: ターゲット（氷結の場合は駒、灼熱の場合は位置）
+            - priority: 優先度 (0-100)
+            - reason: 使用理由の説明
+        """
+        recommendations = []
+        routes = self.threat_predictor.predict_invasion_routes()
+        
+        if not routes:
+            return recommendations
+        
+        # 最も危険なルートに対する対策を推奨
+        for route in routes[:3]:  # 上位3つの脅威に対処
+            threat_level = route.get('threat_level', 0)
+            attacker = route.get('attacker')
+            gimmick = route.get('gimmick_used')
+            
+            if threat_level < 40:
+                continue  # 低脅威は無視
+            
+            # 氷結による対処
+            if attacker and not self.board_analysis._is_piece_frozen(attacker):
+                freeze_priority = threat_level + 10
+                recommendations.append({
+                    'card_name': '氷結',
+                    'target': attacker,
+                    'priority': min(100, freeze_priority),
+                    'reason': f'侵攻する{getattr(attacker, "name", "駒")}を凍結して脅威を阻止',
+                    'route_info': route
+                })
+            
+            # 灼熱による対処（侵攻ルート上に封鎖）
+            if 'route' in route and len(route['route']) >= 2:
+                block_pos = route['route'][1]  # 次の移動先
+                heat_priority = threat_level * 0.7
+                recommendations.append({
+                    'card_name': '灼熱',
+                    'target': block_pos,
+                    'priority': min(100, heat_priority),
+                    'reason': f'侵攻ルート上のマス{block_pos}を封鎖',
+                    'route_info': route
+                })
+            
+            # 鉄壁による対処（ギミック使用時）
+            if gimmick in ['迅雷', '暴風']:
+                ironwall_priority = threat_level + 20
+                recommendations.append({
+                    'card_name': '鉄壁',
+                    'target': None,
+                    'priority': min(100, ironwall_priority),
+                    'reason': f'相手の{gimmick}使用を無効化して侵攻を阻止',
+                    'route_info': route
+                })
+        
+        # 優先度でソート
+        recommendations.sort(key=lambda x: x.get('priority', 0), reverse=True)
+        
+        return recommendations
 
 
 def create_ai_card_strategy(difficulty: int, simulate_move_func=None, is_in_check_func=None) -> AICardStrategy:

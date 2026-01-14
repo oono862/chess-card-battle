@@ -5707,7 +5707,7 @@ def ai_make_move():
 
 
 HELP_LINES = [
-    "[T] 次のターン開始",
+    "[T] ターン開始",
     "[1-7] カード使用",
     "[D] 保留中: 捨て札確定",
     "[L] ログ表示切替",
@@ -6641,7 +6641,6 @@ def draw_panel():
             s = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
             s.fill(highlight_color)
             screen.blit(s, hrect.topleft)
-    # 盤面の左右に太めの黒線を描画して境界を明確に（元実装に近づける）
     left_x = board_left
     right_x = board_left + 8 * square_w
     pygame.draw.rect(screen, (20,20,20), (left_x-3, board_top, 6, 8 * square_h))
@@ -6893,8 +6892,6 @@ def draw_panel():
         pygame.draw.rect(screen, (100, 100, 120),
                          (log_panel_left, log_panel_top, log_panel_width, log_panel_height), 2)
 
-        # タイトル（クリックで閉じる）
-        # 上部余白を確保して、見出し／ヒントに被らないようにする
         try:
             top_line_h = FONT.get_height() if 'FONT' in globals() and FONT is not None else 20
         except Exception:
@@ -6905,7 +6902,6 @@ def draw_panel():
 
 
 
-        # ログの折り返し処理 — ビューに応じてフィルタを行い、各行に種類を付与（AI / player）して後続描画で差別化
         def _is_piece_line(s):
             """駒の移動に関するログかどうかを判定
             
@@ -6920,7 +6916,6 @@ def draw_panel():
                     if '迅雷' in ss and '移動' in ss:
                         return True
                     return False
-                # 駒移動の典型的なパターン
                 _piece_re = re.compile(r"移動|飛び越|→|->", re.UNICODE)
                 return bool(_piece_re.search(ss))
             except Exception:
@@ -7022,8 +7017,6 @@ def draw_panel():
         else:  # 'card'
             source_lines = [t[2] for t in timeline if _is_card_line(t[2])]
 
-        # Debug: 描画ルートで現在のビューとフィルタ結果を端末に出力（診断用の一時出力）
-        # try:
         #     sample = source_lines[:3]
         #     print(f"[cardgame-debug] active_view={active_view} source_lines={len(source_lines)} sample={sample}")
         # except Exception:
@@ -7068,7 +7061,6 @@ def draw_panel():
                 except Exception:
                     display_sline = sline
 
-            # ターン区切り線は折り返さず1行で扱う
             if kind == 'separator':
                 wrapped_lines.append((display_sline, kind, piece_letter, True))
             else:
@@ -7077,7 +7069,6 @@ def draw_panel():
                     is_first = (idx == 0)
                     wrapped_lines.append((wline, kind, piece_letter, is_first))
 
-        # スクロールオフセットの範囲制限
         global log_scroll_offset
         # 行高さは現在のフォントから取得し、各文章ごとに1行分の余白を入れる
         line_h = FONT.get_height()
@@ -7101,13 +7092,11 @@ def draw_panel():
             start_idx = max(0, start_idx)
             visible_lines = wrapped_lines[start_idx:start_idx + max_lines_visible]
 
-        # ログ描画開始位置（見出しとヒントの下に余白を確保）
         # overlay.py と揃えるため top_line_h を考慮する
         log_y = log_panel_top + 56 + top_line_h
         # reduce horizontal padding so more space is available for text
         pad_x = 6
         pad_y = 4
-        # 診断用フラッシュ: モジュール側で記録された直近のビュー切替情報があれば表示
         try:
             try:
                 from ui import overlay as _ov
@@ -7137,10 +7126,8 @@ def draw_panel():
         except Exception:
             pass
         
-        # ログアイコンのツールチップ表示用リスト（位置と駒の種類を記録）
         log_icon_tooltips = []
         
-        # グループ化: 同じ文章（is_first=Falseが連続）をまとめる
         line_groups = []
         current_group = []
         for item in visible_lines:

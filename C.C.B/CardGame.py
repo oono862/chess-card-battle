@@ -658,6 +658,11 @@ W, H = 1200, 800
 is_fullscreen = False
 # store previous windowed size so we can restore when leaving fullscreen
 _prev_window_size = (W, H)
+
+# GIFアニメーション用キャッシュ
+_deck_bg_gif_frames = None
+_deck_bg_gif_durations = None
+_deck_bg_gif_start_time = 0
 # 既存のdisplay surfaceを再利用（複数ウィンドウ防止）
 try:
     existing_surf = pygame.display.get_surface()
@@ -2426,8 +2431,71 @@ def show_deck_modal(screen, battle_select_mode=False):
                         save_decks_to_file(decks)
                     continue
 
-        # draw full-screen deck grid
-        screen.fill((240, 235, 230))
+        # draw full-screen deck grid with animated background
+        global _deck_bg_gif_frames, _deck_bg_gif_durations, _deck_bg_gif_start_time
+        
+        try:
+            import os
+            img_dir = "images"
+            gif_path = os.path.join(img_dir, "deck_bg.gif")
+            
+            # GIFフレームを初回のみ読み込み
+            if _deck_bg_gif_frames is None and os.path.exists(gif_path):
+                try:
+                    from PIL import Image
+                    gif = Image.open(gif_path)
+                    frames = []
+                    durations = []
+                    
+                    for frame_idx in range(0, getattr(gif, 'n_frames', 1)):
+                        gif.seek(frame_idx)
+                        frame = gif.convert('RGBA')
+                        mode = frame.mode
+                        size = frame.size
+                        data = frame.tobytes()
+                        surf = pygame.image.fromstring(data, size, mode).convert_alpha()
+                        frames.append(surf)
+                        dur = gif.info.get('duration', 100)  # ミリ秒
+                        durations.append(dur)
+                    
+                    _deck_bg_gif_frames = frames
+                    _deck_bg_gif_durations = durations
+                    _deck_bg_gif_start_time = _ct_time.time()
+                    print(f"✓ GIFアニメーション読み込み: {len(frames)}フレーム")
+                except Exception as e:
+                    print(f"GIFアニメーション読み込みエラー: {e}")
+                    _deck_bg_gif_frames = []
+            
+            # アニメーションフレームを表示
+            if _deck_bg_gif_frames and len(_deck_bg_gif_frames) > 0:
+                elapsed = (_ct_time.time() - _deck_bg_gif_start_time) * 1000  # ミリ秒
+                total_duration = sum(_deck_bg_gif_durations)
+                elapsed = elapsed % total_duration
+                
+                accumulated = 0
+                frame_idx = 0
+                for i, dur in enumerate(_deck_bg_gif_durations):
+                    accumulated += dur
+                    if elapsed < accumulated:
+                        frame_idx = i
+                        break
+                
+                frame = _deck_bg_gif_frames[frame_idx]
+                scaled_frame = pygame.transform.scale(frame, (W, H))
+                screen.blit(scaled_frame, (0, 0))
+            else:
+                # フォールバック: PNG or 単色
+                png_path = os.path.join(img_dir, "deck_bg.png")
+                if os.path.exists(png_path):
+                    bg_img = pygame.image.load(png_path)
+                    bg_img = pygame.transform.scale(bg_img, (W, H))
+                    screen.blit(bg_img, (0, 0))
+                else:
+                    screen.fill((240, 235, 230))
+        except Exception as e:
+            print(f"背景エラー: {e}")
+            screen.fill((240, 235, 230))
+        
         title_font = get_font(36, bold=True)
         title = title_font.render("作成デッキを選択してください", True, (30,30,30))
         screen.blit(title, ((W - title.get_width()) // 2, 24))
@@ -2932,8 +3000,58 @@ def show_deck_editor(screen, existing_deck, slot_idx):
                 scroll_offset -= event.y * 30
                 scroll_offset = max(0, min(scroll_offset, len(available_cards) * 50 - 400))
         
-        # 背景
-        screen.fill((240, 235, 230))
+        # 背景 with animated GIF
+        global _deck_bg_gif_frames, _deck_bg_gif_durations, _deck_bg_gif_start_time
+        
+        try:
+            import os
+            img_dir = "images"
+            gif_path = os.path.join(img_dir, "deck_bg.gif")
+            
+            # GIFフレーム初回読み込み
+            if _deck_bg_gif_frames is None and os.path.exists(gif_path):
+                try:
+                    from PIL import Image
+                    gif = Image.open(gif_path)
+                    frames = []
+                    durations = []
+                    
+                    for frame_idx in range(0, getattr(gif, 'n_frames', 1)):
+                        gif.seek(frame_idx)
+                        frame = gif.convert('RGBA')
+                        data = frame.tobytes()
+                        surf = pygame.image.fromstring(data, frame.size, frame.mode).convert_alpha()
+                        frames.append(surf)
+                        durations.append(gif.info.get('duration', 100))
+                    
+                    _deck_bg_gif_frames = frames
+                    _deck_bg_gif_durations = durations
+                    _deck_bg_gif_start_time = _ct_time.time()
+                except Exception:
+                    _deck_bg_gif_frames = []
+            
+            # アニメーション表示
+            if _deck_bg_gif_frames and len(_deck_bg_gif_frames) > 0:
+                win_w, win_h = screen.get_size()
+                elapsed = (_ct_time.time() - _deck_bg_gif_start_time) * 1000
+                total_duration = sum(_deck_bg_gif_durations)
+                elapsed = elapsed % total_duration
+                
+                accumulated = 0
+                frame_idx = 0
+                for i, dur in enumerate(_deck_bg_gif_durations):
+                    accumulated += dur
+                    if elapsed < accumulated:
+                        frame_idx = i
+                        break
+                
+                frame = _deck_bg_gif_frames[frame_idx]
+                scaled = pygame.transform.scale(frame, (win_w, win_h))
+                screen.blit(scaled, (0, 0))
+            else:
+                screen.fill((240, 235, 230))
+        except Exception:
+            screen.fill((240, 235, 230))
         
         # タイトル
         title_font = get_font(28, bold=True)

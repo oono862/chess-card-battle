@@ -69,6 +69,13 @@ IC_GIF_SPEED_FACTOR = 2.5
 # Scale multiplier for ice GIF when rendering over a tile
 IC_GIF_SCALE = 1.4
 
+# Deck background GIF cache
+deck_bg_gif_frames_cache = None
+deck_bg_gif_durations = None
+deck_bg_gif_total_duration = 0.0
+deck_bg_gif_load_attempted = False
+deck_bg_gif_load_success = False
+
 # Global time scale for animations (multiply frame durations).
 # Set to 2.0 to make animations twice as long.
 ANIM_TIME_SCALE = 2.0
@@ -388,6 +395,96 @@ def _ensure_ic_gif_loaded():
             ic_gif_anim['total_duration'] = len(durations) * 0.1 if durations else 0.0
     
     ic_gif_load_success = True
+
+
+def _ensure_deck_bg_gif_loaded():
+    """Lazily load deck_bg.gif frames into deck_bg_gif_* globals."""
+    global deck_bg_gif_frames_cache, deck_bg_gif_durations, deck_bg_gif_total_duration
+    global deck_bg_gif_load_attempted, deck_bg_gif_load_success
+    
+    if deck_bg_gif_frames_cache is not None and deck_bg_gif_durations is not None:
+        return
+    if deck_bg_gif_load_attempted:
+        return
+    
+    deck_bg_gif_load_attempted = True
+    gif_path = os.path.join(IMG_DIR, 'deck_bg.gif')
+    frames, durations = _load_gif_frames(gif_path)
+    
+    if not frames:
+        deck_bg_gif_frames_cache = None
+        deck_bg_gif_durations = None
+        deck_bg_gif_total_duration = 0.0
+        deck_bg_gif_load_success = False
+        # fallback: try pygame.image.load as a single-surface fallback
+        try:
+            surf = pygame.image.load(gif_path).convert_alpha()
+            deck_bg_gif_frames_cache = [surf]
+            deck_bg_gif_durations = [1000]
+            deck_bg_gif_total_duration = 1.0
+            deck_bg_gif_load_success = True
+            return
+        except Exception:
+            return
+    
+    deck_bg_gif_frames_cache = frames
+    try:
+        deck_bg_gif_durations = [int(d * ANIM_TIME_SCALE) for d in (durations or [])]
+    except Exception:
+        deck_bg_gif_durations = durations
+    try:
+        deck_bg_gif_total_duration = sum(deck_bg_gif_durations) / 1000.0
+    except Exception:
+        deck_bg_gif_total_duration = len(deck_bg_gif_durations) * 0.001 * 100 if deck_bg_gif_durations else 0.0
+    deck_bg_gif_load_success = True
+
+
+def get_deck_bg_frame(W: int, H: int, time_offset: float = 0.0):
+    """Get current frame of deck background GIF, scaled to screen size.
+    
+    Args:
+        W: Screen width
+        H: Screen height
+        time_offset: Time offset in seconds for animation (default: current time)
+    
+    Returns:
+        pygame.Surface or None
+    """
+    global deck_bg_gif_frames_cache, deck_bg_gif_durations, deck_bg_gif_total_duration
+    
+    if deck_bg_gif_frames_cache is None:
+        _ensure_deck_bg_gif_loaded()
+    
+    if not deck_bg_gif_frames_cache or not deck_bg_gif_load_success:
+        return None
+    
+    frames = deck_bg_gif_frames_cache
+    durations = deck_bg_gif_durations or [100] * len(frames)
+    total_dur = deck_bg_gif_total_duration
+    
+    if total_dur <= 0:
+        total_dur = sum(durations) / 1000.0
+    
+    if time_offset == 0.0:
+        time_offset = _ct_time.time()
+    
+    elapsed = (time_offset * 1000.0) % (total_dur * 1000.0)
+    
+    accumulated = 0.0
+    frame_idx = 0
+    for i, d in enumerate(durations):
+        accumulated += d
+        if elapsed < accumulated:
+            frame_idx = i
+            break
+    
+    try:
+        frame = frames[frame_idx]
+        # Scale to screen size
+        scaled = pygame.transform.scale(frame, (W, H))
+        return scaled
+    except Exception:
+        return None
 
 
 def play_ic_gif_at(row: int, col: int):

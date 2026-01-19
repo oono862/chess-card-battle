@@ -517,8 +517,44 @@ def show_deck_modal(screen, *args, **kwargs):
                         save_decks_to_file(decks)
                     continue
 
-        # draw full-screen deck grid
-        screen.fill((240, 235, 230))
+        # draw full-screen deck grid with background image
+        try:
+            import os
+            # Try GIF first, then PNG
+            img_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..", "images")
+            bg_loaded = False
+            
+            # Try GIF
+            gif_path = os.path.join(img_dir, "deck_bg.gif")
+            if os.path.exists(gif_path):
+                try:
+                    bg_img = pygame.image.load(gif_path)
+                    bg_img = pygame.transform.scale(bg_img, (W, H))
+                    screen.blit(bg_img, (0, 0))
+                    bg_loaded = True
+                    print("✓ GIF背景を表示")
+                except Exception as e:
+                    print(f"GIF読み込みエラー: {e}")
+            
+            # Try PNG if GIF failed
+            if not bg_loaded:
+                png_path = os.path.join(img_dir, "deck_bg.png")
+                if os.path.exists(png_path):
+                    try:
+                        bg_img = pygame.image.load(png_path)
+                        bg_img = pygame.transform.scale(bg_img, (W, H))
+                        screen.blit(bg_img, (0, 0))
+                        bg_loaded = True
+                        print("✓ PNG背景を表示")
+                    except Exception as e:
+                        print(f"PNG読み込みエラー: {e}")
+            
+            if not bg_loaded:
+                screen.fill((240, 235, 230))
+        except Exception as e:
+            print(f"背景読み込みエラー: {e}")
+            screen.fill((240, 235, 230))
+        
         title_font = get_font(36, bold=True)
         title = title_font.render("作成デッキを選択してください", True, (30,30,30))
         screen.blit(title, ((W - title.get_width()) // 2, 24))
@@ -1334,8 +1370,39 @@ def show_deck_editor(screen, W, H, get_font, FONT, SMALL, existing_deck, slot_id
                 scroll_offset -= event.y * 30
                 scroll_offset = max(0, min(scroll_offset, len(available_cards) * 50 - 400))
         
-        # 背景
-        screen.fill((240, 235, 230))
+        # 背景 - GIF/PNG背景
+        try:
+            import os
+            img_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..", "images")
+            bg_loaded = False
+            
+            # Try GIF first
+            gif_path = os.path.join(img_dir, "deck_bg.gif")
+            if os.path.exists(gif_path):
+                try:
+                    bg_img = pygame.image.load(gif_path)
+                    bg_img = pygame.transform.scale(bg_img, (win_w, win_h))
+                    screen.blit(bg_img, (0, 0))
+                    bg_loaded = True
+                except Exception:
+                    pass
+            
+            # Try PNG if GIF failed
+            if not bg_loaded:
+                png_path = os.path.join(img_dir, "deck_bg.png")
+                if os.path.exists(png_path):
+                    try:
+                        bg_img = pygame.image.load(bg_path)
+                        bg_img = pygame.transform.scale(bg_img, (win_w, win_h))
+                        screen.blit(bg_img, (0, 0))
+                        bg_loaded = True
+                    except Exception:
+                        pass
+            
+            if not bg_loaded:
+                screen.fill((240, 235, 230))
+        except Exception:
+            screen.fill((240, 235, 230))
         
         # タイトル
         title_font = get_font(28, bold=True)

@@ -1755,8 +1755,12 @@ class CardEvaluator:
         
         # === コンボ検出 ===
         combo = self._has_combo_for_card('氷結')
-        if combo and self.difficulty >= 4:
-            score += combo.get('priority', 0) * 0.5
+        if combo:
+            # ハード以上でコンボ優先度を適用
+            if self.difficulty >= 3:
+                combo_priority = combo.get('priority', 0)
+                bonus = combo_priority * 0.6 if self.difficulty >= 4 else combo_priority * 0.4
+                score += bonus
         
         # === チェック優先回避 ===
         # チェックメイトの危機がある場合、AIキングを脅かす駒を凍結する価値が高い
@@ -1797,21 +1801,46 @@ class CardEvaluator:
         targets = self.analysis.get_unfrozen_high_value_player_pieces()
         if targets:
             best_target, value, _ = targets[0]
+            # ハード以上では高価値駒への攻撃性を大幅強化
+            value_multiplier = 1.5 if self.difficulty >= 3 else 1.0
+            
             if value >= 9:  # クイーン
-                score += 35
+                score += int(35 * value_multiplier)
             elif value >= 5:  # ルーク
-                score += 25
+                score += int(25 * value_multiplier)
             elif value >= 3:  # ナイト/ビショップ
-                score += 15
+                score += int(15 * value_multiplier)
+            
+            # キング周辺の駒を凍結するボーナス（ハード以上では特に重要）
+            target_piece = best_target
+            row = getattr(target_piece, 'row', 0)
+            col = getattr(target_piece, 'col', 0)
+            
+            if self.analysis.player_king_pos:
+                king_row, king_col = self.analysis.player_king_pos
+                dist = abs(row - king_row) + abs(col - king_col)
+                if dist <= 2:
+                    # ハード以上ではキング周辺の防御駒を積極的に狙う
+                    king_bonus = 35 if self.difficulty >= 3 else 20
+                    score += king_bonus
+                    
+                    # ベリーハード: その駒がキングを守っているか判定
+                    if self.difficulty >= 4:
+                        # AI の攻撃駒からキングへのラインを遮断している駒は最優先
+                        for ai_piece in self.analysis.ai_pieces:
+                            if getattr(ai_piece, 'name', '') in ['Q', 'R', 'B']:
+                                if self._is_blocking_attack_line(target_piece, ai_piece, self.analysis.player_king_pos):
+                                    score += 25  # 防御ライン上の駒は超優先
         
         # AIが圧迫されている場合は防御的に使用
         if self.analysis.is_ai_under_pressure():
             score += 15
         
-        # ベリーハード: 2手先読み評価
-        if self.difficulty >= 4 and self.lookahead and targets:
+        # ハード以上: 2手先読み評価
+        if self.difficulty >= 3 and self.lookahead and targets:
             lookahead_score = self.lookahead.evaluate_after_freeze(targets[0][0])
-            score += lookahead_score * 0.3
+            multiplier = 0.4 if self.difficulty >= 4 else 0.25
+            score += lookahead_score * multiplier
         
         return min(score, 95)
     
@@ -1864,13 +1893,14 @@ class CardEvaluator:
         if getattr(self.analysis.game, 'ai_next_move_can_jump', False):
             return 5
         
-        # === ベリーハード専用: コンボ検出 ===
-        if self.difficulty >= 4:
+        # === ハード以上: コンボ検出 ===
+        if self.difficulty >= 3:
             combo = self._has_combo_for_card('暴風')
             if combo:
                 # クイーン+暴風でチェック可能なら最優先
                 if combo.get('combo') == 'queen_storm_check':
-                    return 96  # 非常に高い優先度
+                    priority = 98 if self.difficulty >= 4 else 94
+                    return priority  # 非常に高い優先度
         
         # === チェック優先回避 ===
         # チェックメイトの危機がある場合、逃げ道を作るために使用
@@ -1891,24 +1921,37 @@ class CardEvaluator:
                     score += 25
         
         # AIのモビリティが低い場合は高評価
+        mobility_bonus = 25 if self.difficulty >= 3 else 20
         if self.analysis.ai_mobility < self.analysis.player_mobility:
-            score += 20
+            score += mobility_bonus
         
         # 駒が密集している場合（ジャンプが有効）
         non_knight_count = sum(1 for p in self.analysis.ai_pieces 
                                if getattr(p, 'name', '') not in ['N', 'K']
                                and not self.analysis._is_piece_frozen(p))
         if non_knight_count >= 3:
-            score += 15
+            density_bonus = 20 if self.difficulty >= 3 else 15
+            score += density_bonus
         
         # 攻撃機会が少ない場合
+        attack_bonus = 20 if self.difficulty >= 3 else 15
         if len(self.analysis.ai_attack_opportunities) < 2:
-            score += 15
+            score += attack_bonus
         
-        # ベリーハード: 2手先読み評価
-        if self.difficulty >= 4 and self.lookahead:
+        # ハード以上: クイーンやルークがプレイヤーキングに向かう際、障害物を飛び越える価値を評価
+        if self.difficulty >= 3 and self.analysis.player_king_pos:
+            for ai_piece in self.analysis.ai_pieces:
+                piece_name = getattr(ai_piece, 'name', '')
+                if piece_name in ['Q', 'R']:
+                    # キングとの間に駒があれば、暴風で飛び越えて攻撃可能
+                    if self._can_reach_king_by_jumping(ai_piece, self.analysis.player_king_pos):
+                        score += 30  # 暴風で直接キングを攻撃できる
+        
+        # ハード以上: 2手先読み評価
+        if self.difficulty >= 3 and self.lookahead:
             lookahead_score = self.lookahead.evaluate_after_storm()
-            score += lookahead_score * 0.4
+            multiplier = 0.5 if self.difficulty >= 4 else 0.3
+            score += lookahead_score * multiplier
         
         return min(score, 95)
     
@@ -1928,8 +1971,8 @@ class CardEvaluator:
         if getattr(self.analysis.game, 'ai_consecutive_turns', 0) >= 1:
             return 5
         
-        # === ベリーハード専用: コンボ検出 ===
-        if self.difficulty >= 4:
+        # === ハード以上: コンボ検出 ===
+        if self.difficulty >= 3:
             combo = self._has_combo_for_card('迅雷')
             if combo:
                 # クイーン+迅雷でチェックメイト狙い
@@ -1938,9 +1981,11 @@ class CardEvaluator:
                     if escape_count <= 1:
                         return 99  # ほぼチェックメイト確定
                     elif escape_count <= 2:
-                        return 95  # 非常に高い確率
+                        priority = 97 if self.difficulty >= 4 else 93
+                        return priority  # 非常に高い確率
                     else:
-                        score += 40
+                        bonus = 45 if self.difficulty >= 4 else 35
+                        score += bonus
         
         # === チェックメイト狙い ===
         # AIがチェックメイトできる状態なら最優先
@@ -1963,26 +2008,46 @@ class CardEvaluator:
         
         # 攻撃機会が多い場合は高評価（2回動けることで取れる駒が増える）
         attack_count = len(self.analysis.ai_attack_opportunities)
+        attack_multiplier = 12 if self.difficulty >= 3 else 8  # ハード以上で攻撃性強化
         if attack_count >= 2:
-            score += attack_count * 8
-        
-        # AIが優勢な場合は押し込みに使える
-        if self.analysis.is_ai_dominant():
+            score += attack_count * attack_multiplier
+        elif attack_count == 1 and self.difficulty >= 3:
+            # ハード以上では1つの攻撃機会でも評価
             score += 15
         
-        # 相手キングへの脅威がある場合
+        # AIが優勢な場合は押し込みに使える
+        dominance_bonus = 20 if self.difficulty >= 3 else 15
+        if self.analysis.is_ai_dominant():
+            score += dominance_bonus
+        
+        # 相手キングへの脅威がある場合（ハード以上では大幅強化）
         if self.analysis.player_king_pos:
+            king_threat_found = False
             for p, mv, _ in self.analysis.ai_attack_opportunities:
                 king_dist = abs(mv[0] - self.analysis.player_king_pos[0]) + \
                            abs(mv[1] - self.analysis.player_king_pos[1])
                 if king_dist <= 2:
-                    score += 10
+                    king_bonus = 25 if self.difficulty >= 3 else 10
+                    score += king_bonus
+                    king_threat_found = True
                     break
+            
+            # ハード以上: 強力な駒（Q, R）が2手でキングに到達可能なら超高評価
+            if self.difficulty >= 3 and not king_threat_found:
+                for ai_piece in self.analysis.ai_pieces:
+                    if getattr(ai_piece, 'name', '') in ['Q', 'R']:
+                        piece_row = getattr(ai_piece, 'row', 0)
+                        piece_col = getattr(ai_piece, 'col', 0)
+                        dist = abs(piece_row - self.analysis.player_king_pos[0]) + \
+                               abs(piece_col - self.analysis.player_king_pos[1])
+                        if dist <= 4:  # 2手で到達可能な距離
+                            score += 20
         
-        # ベリーハード: 2手先読み評価
-        if self.difficulty >= 4 and self.lookahead:
+        # ハード以上: 2手先読み評価
+        if self.difficulty >= 3 and self.lookahead:
             lookahead_score = self.lookahead.evaluate_after_lightning()
-            score += lookahead_score * 0.5
+            multiplier = 0.6 if self.difficulty >= 4 else 0.4
+            score += lookahead_score * multiplier
         
         return min(score, 95)
     
@@ -2135,12 +2200,13 @@ class CardEvaluator:
             if self.opponent_analysis.likely_has_freeze:
                 score += 15
         
-        # ベリーハード: プレイヤー学習に基づく補正
-        if self.difficulty >= 4 and self.player_learner:
+        # ハード以上: プレイヤー学習に基づく補正
+        if self.difficulty >= 3 and self.player_learner:
             most_used = self.player_learner.get_most_used_cards(3)
+            bonus = 12 if self.difficulty >= 4 else 8
             for card, _ in most_used:
                 if card in {'迅雷', '氷結', '暴風'}:
-                    score += 10  # プレイヤーがこれらをよく使うなら鉄壁の価値UP
+                    score += bonus  # プレイヤーがこれらをよく使うなら鉄壁の価値UP
                     break
         
         # 相手が脅威的なカードを持っている可能性を考慮
@@ -2179,6 +2245,100 @@ class CardEvaluator:
             pass
         
         return min(score, 75)
+    
+    def _is_blocking_attack_line(self, blocking_piece, attacker, king_pos) -> bool:
+        """駒が攻撃者とキングの間にいるか判定（ベリーハード用）"""
+        try:
+            blocker_row = getattr(blocking_piece, 'row', 0)
+            blocker_col = getattr(blocking_piece, 'col', 0)
+            attacker_row = getattr(attacker, 'row', 0)
+            attacker_col = getattr(attacker, 'col', 0)
+            king_row, king_col = king_pos
+            
+            attacker_name = getattr(attacker, 'name', '')
+            
+            # クイーン、ルーク、ビショップの直線攻撃ラインをチェック
+            if attacker_name == 'Q':
+                # 縦、横、斜め全て
+                return self._is_on_line(attacker_row, attacker_col, king_row, king_col, blocker_row, blocker_col)
+            elif attacker_name == 'R':
+                # 縦、横のみ
+                if attacker_row == king_row or attacker_col == king_col:
+                    return self._is_on_line(attacker_row, attacker_col, king_row, king_col, blocker_row, blocker_col)
+            elif attacker_name == 'B':
+                # 斜めのみ
+                if abs(attacker_row - king_row) == abs(attacker_col - king_col):
+                    return self._is_on_line(attacker_row, attacker_col, king_row, king_col, blocker_row, blocker_col)
+            
+            return False
+        except Exception:
+            return False
+    
+    def _is_on_line(self, r1: int, c1: int, r2: int, c2: int, check_r: int, check_c: int) -> bool:
+        """3点が同一直線上にあり、check点がr1とr2の間にあるかチェック"""
+        # 同じ行
+        if r1 == r2 == check_r:
+            return min(c1, c2) < check_c < max(c1, c2)
+        # 同じ列
+        if c1 == c2 == check_c:
+            return min(r1, r2) < check_r < max(r1, r2)
+        # 斜め
+        if abs(r2 - r1) == abs(c2 - c1):
+            dr = 1 if r2 > r1 else -1
+            dc = 1 if c2 > c1 else -1
+            r, c = r1 + dr, c1 + dc
+            while (r, c) != (r2, c2):
+                if (r, c) == (check_r, check_c):
+                    return True
+                r += dr
+                c += dc
+        return False
+    
+    def _can_reach_king_by_jumping(self, piece, king_pos) -> bool:
+        """暴風でジャンプすればキングに到達可能か判定（ハード以上用）"""
+        try:
+            piece_row = getattr(piece, 'row', 0)
+            piece_col = getattr(piece, 'col', 0)
+            piece_name = getattr(piece, 'name', '')
+            king_row, king_col = king_pos
+            
+            # クイーン、ルーク、ビショップのみ
+            if piece_name not in ['Q', 'R', 'B']:
+                return False
+            
+            # 同じ直線上にあるか
+            on_same_line = False
+            if piece_name in ['Q', 'R']:
+                # 縦または横
+                if piece_row == king_row or piece_col == king_col:
+                    on_same_line = True
+            if piece_name in ['Q', 'B']:
+                # 斜め
+                if abs(piece_row - king_row) == abs(piece_col - king_col):
+                    on_same_line = True
+            
+            if not on_same_line:
+                return False
+            
+            # 間に駒があるか
+            dr = 0 if piece_row == king_row else (1 if king_row > piece_row else -1)
+            dc = 0 if piece_col == king_col else (1 if king_col > piece_col else -1)
+            
+            r, c = piece_row + dr, piece_col + dc
+            has_blocking = False
+            while (r, c) != (king_row, king_col):
+                if not (0 <= r < 8 and 0 <= c < 8):
+                    break
+                piece_at = self.analysis.chess.get_piece_at(r, c)
+                if piece_at:
+                    has_blocking = True
+                    break
+                r += dr
+                c += dc
+            
+            return has_blocking  # 間に駒があれば、暴風で飛び越えて到達可能
+        except Exception:
+            return False
 
 
 class AICardStrategy:
@@ -2205,14 +2365,14 @@ class AICardStrategy:
         self.play_probabilities = {
             1: 0.35,  # Easy: 35%の確率でカードを使用
             2: 0.55,  # Normal: 55% (少し控えめに - 決着を遅らせる)
-            3: 0.75,  # Hard: 75%
+            3: 0.85,  # Hard: 85% (より積極的なカード使用)
             4: 0.95,  # Expert: 95% (ベリーハード強化)
         }
         # 難易度別の試行回数
         self.max_attempts = {
             1: 1,
             2: 2,
-            3: 2,  # Hard: 2回に制限（温存戦略）
+            3: 3,  # Hard: 3回に増加（より戦略的に）
             4: 4,  # Expert: 4回に増加（コンボ使用のため）
         }
         
@@ -2253,12 +2413,13 @@ class AICardStrategy:
         return False
     
     def _detect_combo_opportunity(self, ai_player, game, chess, get_valid_moves_func) -> List[str]:
-        """コンボ使用の機会を検出（ベリーハード専用）
+        """コンボ使用の機会を検出（ハード以上で有効）
         
         Returns:
             使用すべきカードの名前リスト（順序付き）
         """
-        if self.difficulty < 4:
+        # ハード以上でコンボ検出を有効化
+        if self.difficulty < 3:
             return []
         
         combo_detector = CheckmateComboDetector(
@@ -2294,14 +2455,15 @@ class AICardStrategy:
         return []
     
     def _get_strategic_mode(self, analysis: BoardAnalysis, opponent_analysis: OpponentAnalysis) -> str:
-        """現在の戦略モードを決定（ベリーハード専用）
+        """現在の戦略モードを決定（ハード以上で有効）
         
         Returns:
             'aggressive': 攻撃的戦略
             'defensive': 防御的戦略
             'balanced': バランス戦略
         """
-        if self.difficulty < 4:
+        # ハード以上で戦略的判断を使用
+        if self.difficulty < 3:
             return 'balanced'
         
         # チェックメイトできそうなら攻撃的
@@ -2312,27 +2474,43 @@ class AICardStrategy:
         if analysis.ai_in_check or analysis.ai_checkmate_threat:
             return 'defensive'
         
-        # マテリアル差で判断
+        # マテリアル差で判断（ハードでは閾値を調整）
         material_diff = analysis.ai_material - analysis.player_material
         
-        if material_diff > 5:
-            return 'aggressive'  # 大幅に優勢なら攻めて決める
+        if material_diff > 4:  # 優勢なら攻めて決める
+            return 'aggressive'
         elif material_diff < -3:
             return 'defensive'  # 劣勢なら守りながら挽回を狙う
         
-        # プレイヤーの傾向に応じた対応
-        learner = get_player_learner()
-        if learner.is_player_aggressive():
-            return 'defensive'  # 攻撃的プレイヤーには守りで対応
-        elif learner.is_player_defensive():
-            return 'aggressive'  # 防御的プレイヤーには攻めで対応
+        # ハード以上: プレイヤーのキング周辺の状況を評価
+        if self.difficulty >= 3:
+            # プレイヤーキング周辺の守りが薄ければ攻撃的に
+            if analysis.player_king_pos:
+                player_defenders = 0
+                king_row, king_col = analysis.player_king_pos
+                for p in analysis.player_pieces:
+                    p_row = getattr(p, 'row', 0)
+                    p_col = getattr(p, 'col', 0)
+                    if abs(p_row - king_row) <= 2 and abs(p_col - king_col) <= 2:
+                        player_defenders += 1
+                
+                if player_defenders <= 2:
+                    return 'aggressive'  # 守りが薄いので攻める
+        
+        # プレイヤーの傾向に応じた対応（ベリーハードのみ）
+        if self.difficulty >= 4:
+            learner = get_player_learner()
+            if learner.is_player_aggressive():
+                return 'defensive'  # 攻撃的プレイヤーには守りで対応
+            elif learner.is_player_defensive():
+                return 'aggressive'  # 防御的プレイヤーには攻めで対応
         
         return 'balanced'
     
     def _adjust_scores_by_strategy(self, card_scores: List[Tuple[int, float, str]], 
                                     strategy_mode: str) -> List[Tuple[int, float, str]]:
-        """戦略モードに応じてスコアを調整（ベリーハード専用）"""
-        if self.difficulty < 4:
+        """戦略モードに応じてスコアを調整（ハード以上で有効）"""
+        if self.difficulty < 3:
             return card_scores
         
         adjusted = []
@@ -2340,17 +2518,27 @@ class AICardStrategy:
         aggressive_cards = {'迅雷', '暴風', '灼熱', '氷結', 'ハンです☆'}
         defensive_cards = {'鉄壁', '摂取', '2ドロー'}
         
+        # ハード以上では調整倍率を強化
+        aggressive_multiplier = 1.5 if self.difficulty >= 4 else 1.3
+        defensive_penalty = 0.7 if self.difficulty >= 4 else 0.8
+        
         for idx, score, name in card_scores:
             if strategy_mode == 'aggressive':
                 if name in aggressive_cards:
-                    score *= 1.3
+                    # ハード以上ではより攻撃的に
+                    score *= aggressive_multiplier
+                    # 特に迅雷と氷結は高価値駒攻撃で更に強化
+                    if self.difficulty >= 3 and name in {'迅雷', '氷結'}:
+                        score *= 1.1
                 elif name in defensive_cards:
-                    score *= 0.8
+                    score *= defensive_penalty
             elif strategy_mode == 'defensive':
                 if name in defensive_cards:
                     score *= 1.3
                 elif name in aggressive_cards:
-                    score *= 0.9
+                    # ハード以上では防御時でも攻撃カードをそれほど下げない
+                    penalty = 0.95 if self.difficulty >= 3 else 0.9
+                    score *= penalty
             
             adjusted.append((idx, score, name))
         

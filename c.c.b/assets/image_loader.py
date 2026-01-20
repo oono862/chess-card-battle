@@ -135,6 +135,7 @@ def get_card_image(name: str, size=(72, 96)):
     
     For animated GIFs, returns the current frame of the animation.
     """
+    
     # Check if this is an animated GIF
     if is_animated_gif(name):
         frame = get_current_gif_frame(name, size)
@@ -153,6 +154,7 @@ def get_card_image(name: str, size=(72, 96)):
         '負けるわけないだろwww': '負けるわけないだろwww.gif',
         # Cards with special spacing or characters
         'ハンです☆': 'ハン です☆.png',
+        'ハン です☆-j.png': 'ハン です☆-j.png',  # 特殊演出用の別画像
     }
 
     def _normalize(s: str) -> str:

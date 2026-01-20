@@ -95,8 +95,12 @@ def draw_hand_cards(
         rect = pygame.Rect(x, card_y, card_w, card_h)
         card_rects.append((rect, i))
         
-        # カード画像を描画
-        thumb = get_card_image_func(c.name, size=(card_w, card_h))
+        # カード画像を描画（custom_imageがあればそれを優先）
+        image_name = c.custom_image if hasattr(c, 'custom_image') and c.custom_image else c.name
+        # デバッグ出力
+        if 'ハン' in c.name:
+            print(f"[CARD_RENDERER] Card: {c.name}, custom_image: {getattr(c, 'custom_image', None)}, using: {image_name}")
+        thumb = get_card_image_func(image_name, size=(card_w, card_h))
         screen.blit(thumb, (x, card_y))
         
         # 錬成で選択中のカードを金色の枠で強調

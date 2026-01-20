@@ -66,6 +66,7 @@ class Card:
     cost: int
     effect: EffectFn
     precheck: Optional[PrecheckFn] = None
+    custom_image: Optional[str] = None  # カスタム画像ファイル名（特殊演出用）
 
     def can_play(self, player: "PlayerState") -> bool:
         return self.cost <= player.pp_current
@@ -81,7 +82,17 @@ class Deck:
     def draw(self) -> Optional[Card]:
         if not self.cards:
             return None
-        return self.cards.pop(0)
+        card = self.cards.pop(0)
+        
+        # 「ハン です☆」が引かれた時、5%の確率で特殊画像に変更
+        # スペースありなしの両方に対応
+        if card and card.name in ('ハンです☆', 'ハン です☆'):
+            import random
+            roll = random.random()
+            if roll < 0.05:  # 5%の確率
+                card.custom_image = 'ハン です☆-j.png'
+        
+        return card
 
 
 @dataclass

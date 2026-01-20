@@ -184,7 +184,7 @@ except Exception:
                 pass
 try:
     from card_core import new_game_with_sample_deck, new_game_with_rule_deck, PlayerState, make_rule_cards_deck, PendingAction, Card, Game, Deck
-    from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2
+    from card_core import eff_heat_block_tile, eff_freeze_piece, eff_storm_jump_once, eff_lightning_two_actions, eff_draw2, eff_alchemy, eff_graveyard_roulette, eff_leech_pp2, eff_hand_discard
 except Exception:
     logger.exception("Failed to import card_core module")
     raise
@@ -7428,8 +7428,9 @@ def draw_panel():
         rect = pygame.Rect(x, card_y, card_w, card_h)
         card_rects.append((rect, i))
         
-        # カード画像のみ表示
-        thumb = get_card_image(c.name, size=(card_w, card_h))
+        # カード画像のみ表示（custom_imageがあればそれを優先）
+        image_name = getattr(c, 'custom_image', None) if hasattr(c, 'custom_image') and c.custom_image else c.name
+        thumb = get_card_image(image_name, size=(card_w, card_h))
         screen.blit(thumb, (x, card_y))
         
         # 錬成で選択中のカードを金色の枠で強調
@@ -7483,17 +7484,24 @@ def draw_panel():
         draw_text(screen, "墓地のカード一覧 [G]で閉じる", overlay_x + 20, overlay_y + 20, (120, 0, 0))
         draw_text(screen, "カードをクリックで拡大表示", overlay_x + 320, overlay_y + 20, (80, 80, 80))
         
-        counts = {}
+        # カード名ごとにグループ化（custom_imageも考慮）
+        card_groups = {}  # {(name, custom_image): [cards]}
         for c in game.player.graveyard:
-            counts[c.name] = counts.get(c.name, 0) + 1
+            key = (c.name, getattr(c, 'custom_image', None))
+            if key not in card_groups:
+                card_groups[key] = []
+            card_groups[key].append(c)
         
         gy = overlay_y + 60
         gx = overlay_x + 30
         col_w = 280
         global grave_card_rects
         grave_card_rects = []
-        for name, cnt in sorted(counts.items()):
-            thumb = get_card_image(name, size=(70, 95))
+        for (name, custom_img), cards in sorted(card_groups.items(), key=lambda x: (x[0][0], x[0][1] or "")):
+            cnt = len(cards)
+            # custom_imageがあればそれを使用
+            image_name = custom_img if custom_img else name
+            thumb = get_card_image(image_name, size=(70, 95))
             screen.blit(thumb, (gx, gy))
             draw_text(screen, f"{name}: {cnt}枚", gx + 80, gy + 35)
             # クリック用の矩形を保存
@@ -7571,8 +7579,9 @@ def draw_panel():
         dark_overlay.set_alpha(150)
         screen.blit(dark_overlay, (0, 0))
         
-        # 拡大画像のみ表示
-        large_img = get_card_image(c.name, size=(enlarged_w, enlarged_h))
+        # 拡大画像のみ表示（custom_imageがあればそれを使用）
+        image_name = getattr(c, 'custom_image', None) if hasattr(c, 'custom_image') and c.custom_image else c.name
+        large_img = get_card_image(image_name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
         
         # 拡大率表示（デバッグ用）
@@ -8147,7 +8156,56 @@ def handle_keydown(key):
         debug_reset_initial()
         return
     if key == pygame.K_F5:
-        debug_setup_checkmate()
+        # デバッグ機能: ハンです☆を100枚山札に追加 + PP無限化
+        try:
+            # PP無限化（最大PPを大きな値に設定）
+            game.player.pp_max = 9999
+            game.player.pp_current = 9999
+            
+            # ハンです☆を100枚追加（実際の効果を使用）
+            for _ in range(100):
+                han_card = Card("ハン です☆", cost=2, effect=eff_hand_discard)
+                game.player.deck.cards.append(han_card)
+            
+            msg = "【デバッグ】ハンです☆×100を山札に追加、PP無限化"
+            game.log.append(msg)
+            notice_msg = msg
+            notice_until = _ct_time.time() + 3.0
+        except Exception as e:
+            game.log.append(f"F5デバッグエラー: {e}")
+        return
+    
+    if key == pygame.K_F6:
+        # デバッグ機能: カードを1枚ドロー
+        try:
+            if len(game.player.hand.cards) >= 7:
+                msg = "【デバッグ】手札が満杯です（最大7枚）"
+                game.log.append(msg)
+                notice_msg = msg
+                notice_until = _ct_time.time() + 2.0
+            else:
+                card = game.player.deck.draw()
+                if card:
+                    game.player.hand.add(card)
+                    # デバッグ情報を詳しく表示
+                    custom_img = getattr(card, 'custom_image', None)
+                    if custom_img:
+                        msg = f"【デバッグ】カードをドロー: {card.name} ★特殊画像: {custom_img}★"
+                    else:
+                        msg = f"【デバッグ】カードをドロー: {card.name} (通常画像)"
+                    game.log.append(msg)
+                    notice_msg = msg
+                    notice_until = _ct_time.time() + 2.0
+                else:
+                    msg = "【デバッグ】山札が空です"
+                    game.log.append(msg)
+                    notice_msg = msg
+                    notice_until = _ct_time.time() + 2.0
+        except Exception as e:
+            game.log.append(f"F6デバッグエラー: {e}")
+            print(f"[F6 ERROR] {e}")
+            import traceback
+            traceback.print_exc()
         return
     
     # 1-9 キーでカード使用

@@ -16,7 +16,16 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
         layout: レイアウト情報
         draw_text: テキスト描画関数
     """
-    if not tutorial_manager or not tutorial_manager.enabled:
+    if not tutorial_manager:
+        return
+    
+    # チュートリアル完了後の完了ボタン表示
+    if getattr(tutorial_manager, 'completed', False):
+        _draw_tutorial_completion_screen(screen, tutorial_manager, layout, draw_text)
+        return
+    
+    # enabledでなければ何も表示しない
+    if not getattr(tutorial_manager, 'enabled', False):
         return
     
     try:
@@ -26,6 +35,7 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
 
     step = tutorial_manager.get_current_step()
     message = tutorial_manager.get_message()
+    
     lock_ui = False
     try:
         lock_ui = bool(getattr(step, 'lock_ui', False) or getattr(tutorial_manager, 'waiting_for_start', False))
@@ -43,8 +53,24 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
 
     # 改行に応じた行分割（簡易）
     lines = message.split("\n") if "\n" in message else [message]
+    
+    # 最終ステップの場合は高さを増やしてボタン用スペースを確保
+    is_final_step = False
+    try:
+        if step and step.step_id == 5:
+            is_final_step = True
+    except Exception:
+        pass
+    
     box_height = max(120, len(lines) * 34 + 60)
-    box_y = 40
+    if is_final_step:
+        box_height = max(280, len(lines) * 34 + 120)  # 完了ボタン用のスペースを追加
+    
+    # lock_ui時は画面中央に配置、それ以外は上部
+    if lock_ui and is_final_step:
+        box_y = (H - box_height - 80) // 2  # 中央寄り
+    else:
+        box_y = 40
 
     if lock_ui:
         dim = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -82,11 +108,81 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     except Exception:
         pass
 
+    # チュートリアル完了時: ボタンを表示
+    try:
+        if step and step.step_id == 5:  # 最終ステップ
+            _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text)
+            return
+    except Exception:
+        pass
+
     # スキップボタン（右下）
     skip_text = "[ESC: スキップ]"
     skip_x = box_x + box_width - 150
     skip_y = box_y + box_height - 25
     draw_text(screen, skip_text, skip_x, skip_y, (180, 180, 180), scale=0.8)
+
+
+def _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text):
+    """チュートリアル完了時のボタンを描画"""
+    btn_w, btn_h = 180, 45
+    spacing = 40
+    total_width = btn_w * 2 + spacing
+    start_x = box_x + (box_width - total_width) // 2
+    btn_y = box_y + box_height - btn_h - 25  # ボックスの中のに配置
+    
+    # CPU戦へボタン
+    cpu_rect = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+    pygame.draw.rect(screen, (60, 140, 200), cpu_rect)
+    pygame.draw.rect(screen, (200, 220, 255), cpu_rect, 3)
+    draw_text(screen, "CPU戦へ", start_x + 45, btn_y + 10, (255, 255, 255), bold=True, scale=1.1)
+    
+    # もう一度チュートリアルボタン
+    retry_rect = pygame.Rect(start_x + btn_w + spacing, btn_y, btn_w, btn_h)
+    pygame.draw.rect(screen, (80, 140, 80), retry_rect)
+    pygame.draw.rect(screen, (180, 220, 180), retry_rect, 3)
+    draw_text(screen, "もう一度", start_x + btn_w + spacing + 40, btn_y + 10, (255, 255, 255), bold=True, scale=1.1)
+    
+    # ボタン情報を保存
+    try:
+        tutorial_manager.completion_cpu_rect = cpu_rect
+        tutorial_manager.completion_retry_rect = retry_rect
+    except Exception:
+        pass
+
+
+def _draw_tutorial_completion_screen(screen, tutorial_manager, layout, draw_text):
+    """チュートリアル完了後の完了画面を描画"""
+    W = layout.get('screen_width', 1600)
+    H = layout.get('screen_height', 900)
+    
+    # 半透明オーバーレイ
+    dim = pygame.Surface((W, H), pygame.SRCALPHA)
+    dim.fill((0, 0, 0, 200))
+    screen.blit(dim, (0, 0))
+    
+    # 完了メッセージ
+    message = "チュートリアル完了！\n次は実戦で遊んでみましょう"
+    box_width = 800
+    box_height = 250
+    box_x = (W - box_width) // 2
+    box_y = (H - box_height) // 2
+    
+    overlay = pygame.Surface((box_width, box_height))
+    overlay.set_alpha(240)
+    overlay.fill((40, 60, 120))
+    screen.blit(overlay, (box_x, box_y))
+    pygame.draw.rect(screen, (200, 220, 255), (box_x, box_y, box_width, box_height), 3)
+    
+    # メッセージテキスト
+    lines = message.split("\n")
+    text_y = box_y + 40
+    for line in lines:
+        text_x = box_x + (box_width - len(line) * 16) // 2
+        draw_text(screen, line, text_x, text_y, (255, 255, 255), bold=True, scale=1.2)
+        text_y += 40
+    
+    _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text)
 
 
 def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, square_w, square_h, 
@@ -129,8 +225,22 @@ def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, sq
     # カードのハイライト（青の枠）
     for card_idx in highlight_info['cards']:
         if 0 <= card_idx < len(card_rects):
-            rect = card_rects[card_idx]
-            pygame.draw.rect(screen, (100, 200, 255), rect, 5)
+            rect_data = card_rects[card_idx]
+            # card_rectsは (pygame.Rect, インデックス) のタプル形式の場合がある
+            try:
+                if isinstance(rect_data, tuple) and len(rect_data) >= 1:
+                    # タプルの最初の要素がRect
+                    rect = rect_data[0]
+                else:
+                    rect = rect_data
+                
+                if isinstance(rect, pygame.Rect):
+                    pygame.draw.rect(screen, (100, 200, 255), rect, 5)
+                elif rect is not None and hasattr(rect, '__iter__') and len(rect) >= 4:
+                    r = pygame.Rect(rect[0], rect[1], rect[2], rect[3])
+                    pygame.draw.rect(screen, (100, 200, 255), r, 5)
+            except Exception as e:
+                pass  # エラーは無視
 
 
 def draw_background(screen, W, H, play_bg_img, play_bg_surf, PLAY_BG_FILENAME, IMG_DIR):

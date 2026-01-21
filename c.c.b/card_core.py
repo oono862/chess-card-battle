@@ -25,6 +25,10 @@ import random
 # Data models
 # -----------------------------
 
+# チュートリアル用グローバルフラグ（CardGame.pyから制御）
+# このフラグがTrueの場合、PP消費後に即座に全回復
+TUTORIAL_INFINITE_PP = False
+
 EffectFn = Callable[["Game", "PlayerState"], str]
 PrecheckFn = Callable[["Game", "PlayerState"], Optional[str]]  # None: OK, str: error message
 
@@ -127,6 +131,9 @@ class PlayerState:
     def spend_pp(self, amount: int) -> bool:
         if amount <= self.pp_current:
             self.pp_current -= amount
+            # チュートリアルモード時は即座にPPを全回復
+            if TUTORIAL_INFINITE_PP:
+                self.pp_current = self.pp_max
             return True
         return False
 

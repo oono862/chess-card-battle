@@ -17,12 +17,81 @@ def init_tutorial_mode(state: GameState, mode: str):
     """
     if mode == 'tutorial':
         from game.tutorial import TutorialManager
-        state.tutorial_manager = TutorialManager()
-        state.tutorial_manager.start()
+        # TutorialManagerが既に設定されていなければ新規作成
+        if not getattr(state, 'tutorial_manager', None):
+            state.tutorial_manager = TutorialManager()
+            state.tutorial_manager.start()
+        
+        # 注意: 固定デッキは new_game_with_mode() で既に設定されているため、
+        # ここでは上書きしない（順序が崩れるため）
+        
         return True
     else:
         state.tutorial_manager = None
         return False
+
+
+def _apply_tutorial_fixed_deck(state: GameState):
+    """チュートリアル用の固定デッキを適用"""
+    if not state.tutorial_manager:
+        return
+    
+    step = state.tutorial_manager.get_current_step()
+    if not step or not step.fixed_deck:
+        # ステップ0の固定デッキを取得
+        try:
+            steps = state.tutorial_manager.steps
+            if steps and len(steps) > 0:
+                step = steps[0]
+            else:
+                return
+        except Exception:
+            return
+    
+    if not step.fixed_deck:
+        return
+    
+    # カード名リストからCardオブジェクトを生成
+    import card_core
+    
+    fixed_cards = []
+    for card_name in step.fixed_deck:
+        # card_core内のカード定義から該当するカードを探す
+        # make_rule_cards_deckで定義されているカードを参照
+        card_def = None
+        if card_name == '2ドロー':
+            card_def = card_core.Card('2ドロー', 1, card_core.eff_draw2)
+        elif card_name == '氷結':
+            card_def = card_core.Card('氷結', 2, card_core.eff_freeze_piece)
+        elif card_name == '灼熱':
+            card_def = card_core.Card('灼熱', 2, card_core.eff_heat_block_tile)
+        elif card_name == '暴風':
+            card_def = card_core.Card('暴風', 3, card_core.eff_storm_jump_once)
+        elif card_name == '迅雷':
+            card_def = card_core.Card('迅雷', 3, card_core.eff_lightning_two_actions)
+        elif card_name == '錬成':
+            card_def = card_core.Card('錬成', 0, card_core.eff_alchemy)
+        elif card_name == '墓地ルーレット':
+            card_def = card_core.Card('墓地ルーレット', 1, card_core.eff_graveyard_roulette)
+        elif card_name == '摂取':
+            card_def = card_core.Card('摂取', 1, card_core.eff_leech_pp2)
+        
+        if card_def:
+            fixed_cards.append(card_def)
+    
+    # プレイヤーのデッキを固定デッキで置き換え
+    if state.game and hasattr(state.game, 'player'):
+        try:
+            state.game.player.deck = card_core.Deck(fixed_cards.copy())
+            # 手札をクリアして再ドロー
+            if hasattr(state.game.player, 'hand'):
+                state.game.player.hand.cards.clear()
+                for _ in range(min(4, len(fixed_cards))):
+                    card = state.game.player.deck.draw()
+                    if card:
+                        state.game.player.hand.add(card)
+        except Exception:
+            pass
 
 
 def check_tutorial_action(state: GameState, action: str) -> bool:
@@ -74,7 +143,27 @@ def handle_tutorial_esc_key(state: GameState) -> bool:
 def handle_tutorial_click(state: GameState, pos) -> bool:
     """チュートリアル専用クリック処理（開始ボタンなど）"""
     tm = getattr(state, 'tutorial_manager', None)
-    if not tm or not tm.enabled:
+    if not tm:
+        return False
+
+    # チュートリアル完了時のボタン処理
+    if getattr(tm, 'completed', False):
+        cpu_rect = getattr(tm, 'completion_cpu_rect', None)
+        retry_rect = getattr(tm, 'completion_retry_rect', None)
+        
+        if cpu_rect and hasattr(cpu_rect, 'collidepoint') and cpu_rect.collidepoint(pos):
+            # CPU戦へ遷移
+            _transition_to_cpu_battle(state)
+            return True
+        
+        if retry_rect and hasattr(retry_rect, 'collidepoint') and retry_rect.collidepoint(pos):
+            # チュートリアル再開
+            _restart_tutorial(state)
+            return True
+        
+        return True  # 完了画面中は他のクリックを無効化
+    
+    if not tm.enabled:
         return False
 
     step = None
@@ -90,13 +179,58 @@ def handle_tutorial_click(state: GameState, pos) -> bool:
             tm.begin_after_intro()
             return True
         return True  # ロック中は他UIをすべて無効化
+    
     # 完了画面など lock_ui 中は入力を無効化
     try:
         if step and getattr(step, 'lock_ui', False):
+            # ステップ5（最終ステップ）の場合はボタン処理
+            if step.step_id == 5:
+                cpu_rect = getattr(tm, 'completion_cpu_rect', None)
+                retry_rect = getattr(tm, 'completion_retry_rect', None)
+                
+                if cpu_rect and hasattr(cpu_rect, 'collidepoint') and cpu_rect.collidepoint(pos):
+                    _transition_to_cpu_battle(state)
+                    return True
+                
+                if retry_rect and hasattr(retry_rect, 'collidepoint') and retry_rect.collidepoint(pos):
+                    _restart_tutorial(state)
+                    return True
             return True
     except Exception:
         pass
     return False
+
+
+def _transition_to_cpu_battle(state: GameState):
+    """チュートリアル完了後にCPU戦へ遷移"""
+    try:
+        # チュートリアルモードを無効化
+        import CardGame
+        CardGame.IS_TUTORIAL_MODE = False
+        if state.tutorial_manager:
+            state.tutorial_manager.enabled = False
+            state.tutorial_manager = None
+        
+        # ゲームを再起動
+        CardGame.restart_game()
+    except Exception as e:
+        import logging
+        logging.debug("CPU戦遷移エラー: %s", e)
+
+
+def _restart_tutorial(state: GameState):
+    """チュートリアルを最初から再開"""
+    try:
+        from game.tutorial import TutorialManager
+        state.tutorial_manager = TutorialManager()
+        state.tutorial_manager.start()
+        
+        # ゲームをリセット
+        import CardGame
+        CardGame.restart_game()
+    except Exception as e:
+        import logging
+        logging.debug("チュートリアル再開エラー: %s", e)
 
 
 # CardGame.py の draw_panel に追加する描画呼び出し
@@ -106,30 +240,54 @@ def render_tutorial_ui(screen, state: GameState, layout, draw_text,
     
     draw_panel() の最後に呼び出します（他の要素より手前に表示）
     """
-    if not state.tutorial_manager:
+    if not state:
         return
+    
+    # tutorial_managerの取得（state.tutorial_managerを優先、なければグローバルから）
+    tm = state.tutorial_manager
+    
+    if tm is None:
+        try:
+            import CardGame
+            tm = getattr(CardGame, '_current_tutorial', None)
+        except Exception:
+            pass
+    
+    if tm is None:
+        return
+    
+    # state.tutorial_managerが設定されていなければ設定
+    if state.tutorial_manager is None:
+        state.tutorial_manager = tm
     
     from ui.renderer import draw_tutorial_overlay, draw_tutorial_highlights
     
     # ハイライト描画（カード名ヒントから動的ハイライト）
     try:
-        step = state.tutorial_manager.get_current_step()
+        step = tm.get_current_step()
         hints = []
         try:
-            hints = state.tutorial_manager.get_card_name_hints()
+            hints = tm.get_card_name_hints()
         except Exception:
             hints = []
         if step and hints:
             dynamic_indices = []
             try:
-                hand_cards = getattr(state.game.player.hand, 'cards', [])
-                for idx, c in enumerate(hand_cards):
-                    nm = getattr(c, 'name', '')
-                    lower_nm = nm.lower()
-                    for h in hints:
-                        if h.lower() in lower_nm:
-                            dynamic_indices.append(idx)
-                            break
+                # state.gameがNoneの場合はグローバルのgameを使用
+                game_instance = state.game
+                if game_instance is None:
+                    import CardGame
+                    game_instance = CardGame.game
+                
+                if game_instance and hasattr(game_instance, 'player') and hasattr(game_instance.player, 'hand'):
+                    hand_cards = getattr(game_instance.player.hand, 'cards', [])
+                    for idx, c in enumerate(hand_cards):
+                        nm = getattr(c, 'name', '')
+                        lower_nm = nm.lower()
+                        for h in hints:
+                            if h.lower() in lower_nm:
+                                dynamic_indices.append(idx)
+                                break
             except Exception:
                 dynamic_indices = []
             try:
@@ -142,14 +300,20 @@ def render_tutorial_ui(screen, state: GameState, layout, draw_text,
     except Exception:
         pass
 
-    draw_tutorial_highlights(
-        screen, state.tutorial_manager,
-        board_left, board_top, square_w, square_h,
-        card_rects, layout
-    )
+    try:
+        draw_tutorial_highlights(
+            screen, tm,
+            board_left, board_top, square_w, square_h,
+            card_rects, layout
+        )
+    except Exception:
+        pass
     
-    # メッセージオーバーレイ
-    draw_tutorial_overlay(screen, state.tutorial_manager, layout, draw_text)
+    try:
+        # メッセージオーバーレイ
+        draw_tutorial_overlay(screen, tm, layout, draw_text)
+    except Exception:
+        pass
 
 
 def on_tutorial_effect_resolved(state: GameState, event: str):

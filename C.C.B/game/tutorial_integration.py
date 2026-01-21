@@ -83,7 +83,31 @@ def render_tutorial_ui(screen, state: GameState, layout, draw_text,
     
     from ui.renderer import draw_tutorial_overlay, draw_tutorial_highlights
     
-    # ハイライト描画
+    # ハイライト描画（Step1では手札中の『Quick Draw』を動的にハイライト）
+    try:
+        step = state.tutorial_manager.get_current_step()
+        if step and getattr(step, 'step_id', None) == 1:
+            dynamic_indices = []
+            try:
+                # 手札から『Quick Draw』相当のカードを探索（英語名・部分一致）
+                hand_cards = getattr(state.game.player.hand, 'cards', [])
+                for idx, c in enumerate(hand_cards):
+                    nm = getattr(c, 'name', '')
+                    if nm == 'Quick Draw' or 'draw' in nm.lower():
+                        dynamic_indices.append(idx)
+            except Exception:
+                pass
+            # 現ステップのハイライトカードに反映（重複除去）
+            try:
+                cur = set(getattr(step, 'highlight_cards', []) or [])
+                for di in dynamic_indices:
+                    cur.add(di)
+                step.highlight_cards = list(sorted(cur))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     draw_tutorial_highlights(
         screen, state.tutorial_manager,
         board_left, board_top, square_w, square_h,

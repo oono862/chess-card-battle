@@ -66,9 +66,9 @@ class TutorialManager:
             # ステップ1: カードプレイ
             TutorialStep(
                 step_id=1,
-                message="良いですね！次はカードを使ってみましょう。「引く」カードを使用してください",
+                message="良いですね！次はカードを使ってみましょう。『Quick Draw（引く）』カードを使用してください",
                 allowed_actions={'play_card'},
-                highlight_cards=[0],  # 最初のカード（draw）
+                # 具体的なカード位置は手札に依存するため、ハイライトは省略
                 fixed_deck=['draw', 'attack', 'shield', 'move_boost', 'heal']
             ),
             

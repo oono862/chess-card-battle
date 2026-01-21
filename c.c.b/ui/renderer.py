@@ -7,6 +7,132 @@ import pygame
 import os
 
 
+def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
+    """チュートリアルオーバーレイを描画する
+    
+    Args:
+        screen: pygame display surface
+        tutorial_manager: TutorialManager インスタンス
+        layout: レイアウト情報
+        draw_text: テキスト描画関数
+    """
+    if not tutorial_manager or not tutorial_manager.enabled:
+        return
+    
+    try:
+        tutorial_manager.set_start_button_rect(None)
+    except Exception:
+        pass
+
+    step = tutorial_manager.get_current_step()
+    message = tutorial_manager.get_message()
+    lock_ui = False
+    try:
+        lock_ui = bool(getattr(step, 'lock_ui', False) or getattr(tutorial_manager, 'waiting_for_start', False))
+    except Exception:
+        lock_ui = False
+    if not message:
+        return
+    
+    # メッセージボックス描画（画面上部中央、テキスト折り返し対応）
+    W = layout.get('screen_width', 1600)
+    H = layout.get('screen_height', 900)
+    
+    box_width = min(1000, int(W * 0.8))
+    box_x = (W - box_width) // 2
+
+    # 改行に応じた行分割（簡易）
+    lines = message.split("\n") if "\n" in message else [message]
+    box_height = max(120, len(lines) * 34 + 60)
+    box_y = 40
+
+    if lock_ui:
+        dim = pygame.Surface((W, H), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 180))
+        screen.blit(dim, (0, 0))
+
+    # 半透明背景
+    overlay = pygame.Surface((box_width, box_height))
+    overlay.set_alpha(230 if lock_ui else 200)
+    overlay.fill((40, 60, 120))
+    screen.blit(overlay, (box_x, box_y))
+    
+    # 枠線
+    pygame.draw.rect(screen, (200, 220, 255), (box_x, box_y, box_width, box_height), 3)
+    
+    # メッセージテキスト（複数行対応）
+    text_x = box_x + 24
+    text_y = box_y + 20
+    for line in lines:
+        draw_text(screen, line, text_x, text_y, (255, 255, 255), bold=True, scale=1.0)
+        text_y += 32
+
+    # 開始前ロック: 開始ボタンを表示
+    try:
+        if getattr(tutorial_manager, 'waiting_for_start', False):
+            btn_w, btn_h = 180, 48
+            btn_x = box_x + (box_width - btn_w) // 2
+            btn_y = box_y + box_height - btn_h - 18
+            btn_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+            pygame.draw.rect(screen, (90, 180, 90), btn_rect)
+            pygame.draw.rect(screen, (240, 255, 240), btn_rect, 2)
+            draw_text(screen, "開始", btn_x + (btn_w // 2) - 22, btn_y + 12, (255, 255, 255), bold=True, scale=1.0)
+            tutorial_manager.set_start_button_rect(btn_rect)
+            return
+    except Exception:
+        pass
+
+    # スキップボタン（右下）
+    skip_text = "[ESC: スキップ]"
+    skip_x = box_x + box_width - 150
+    skip_y = box_y + box_height - 25
+    draw_text(screen, skip_text, skip_x, skip_y, (180, 180, 180), scale=0.8)
+
+
+def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, square_w, square_h, 
+                             card_rects, layout):
+    """チュートリアルハイライトを描画する
+    
+    Args:
+        screen: pygame display surface
+        tutorial_manager: TutorialManager インスタンス
+        board_left, board_top: チェス盤の左上座標
+        square_w, square_h: マスのサイズ
+        card_rects: カードの矩形リスト
+        layout: レイアウト情報
+    """
+    if not tutorial_manager or not tutorial_manager.enabled:
+        return
+    
+    highlight_info = tutorial_manager.get_highlight_info()
+    
+    # マスのハイライト（黄色の枠）
+    for (row, col) in highlight_info['tiles']:
+        rect = pygame.Rect(
+            board_left + col * square_w,
+            board_top + row * square_h,
+            square_w,
+            square_h
+        )
+        pygame.draw.rect(screen, (255, 255, 0), rect, 5)
+    
+    # 駒のハイライト（緑の枠）
+    for (row, col) in highlight_info['pieces']:
+        rect = pygame.Rect(
+            board_left + col * square_w,
+            board_top + row * square_h,
+            square_w,
+            square_h
+        )
+        pygame.draw.rect(screen, (0, 255, 100), rect, 5)
+    
+    # カードのハイライト（青の枠）
+    for card_idx in highlight_info['cards']:
+        if 0 <= card_idx < len(card_rects):
+            rect = card_rects[card_idx]
+            pygame.draw.rect(screen, (100, 200, 255), rect, 5)
+
+
 def draw_background(screen, W, H, play_bg_img, play_bg_surf, PLAY_BG_FILENAME, IMG_DIR):
     """背景を描画する
     

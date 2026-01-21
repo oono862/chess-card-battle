@@ -71,6 +71,34 @@ def handle_tutorial_esc_key(state: GameState) -> bool:
     return False
 
 
+def handle_tutorial_click(state: GameState, pos) -> bool:
+    """チュートリアル専用クリック処理（開始ボタンなど）"""
+    tm = getattr(state, 'tutorial_manager', None)
+    if not tm or not tm.enabled:
+        return False
+
+    step = None
+    try:
+        step = tm.get_current_step()
+    except Exception:
+        step = None
+
+    # 開始前ロック中は開始ボタンのみ反応させる
+    if getattr(tm, 'waiting_for_start', False):
+        btn = getattr(tm, 'start_button_rect', None)
+        if btn is not None and hasattr(btn, 'collidepoint') and btn.collidepoint(pos):
+            tm.begin_after_intro()
+            return True
+        return True  # ロック中は他UIをすべて無効化
+    # 完了画面など lock_ui 中は入力を無効化
+    try:
+        if step and getattr(step, 'lock_ui', False):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 # CardGame.py の draw_panel に追加する描画呼び出し
 def render_tutorial_ui(screen, state: GameState, layout, draw_text, 
                        board_left, board_top, square_w, square_h, card_rects):
@@ -83,21 +111,27 @@ def render_tutorial_ui(screen, state: GameState, layout, draw_text,
     
     from ui.renderer import draw_tutorial_overlay, draw_tutorial_highlights
     
-    # ハイライト描画（Step1では手札中の『Quick Draw』を動的にハイライト）
+    # ハイライト描画（カード名ヒントから動的ハイライト）
     try:
         step = state.tutorial_manager.get_current_step()
-        if step and getattr(step, 'step_id', None) == 1:
+        hints = []
+        try:
+            hints = state.tutorial_manager.get_card_name_hints()
+        except Exception:
+            hints = []
+        if step and hints:
             dynamic_indices = []
             try:
-                # 手札から『Quick Draw』相当のカードを探索（英語名・部分一致）
                 hand_cards = getattr(state.game.player.hand, 'cards', [])
                 for idx, c in enumerate(hand_cards):
                     nm = getattr(c, 'name', '')
-                    if nm == 'Quick Draw' or 'draw' in nm.lower():
-                        dynamic_indices.append(idx)
+                    lower_nm = nm.lower()
+                    for h in hints:
+                        if h.lower() in lower_nm:
+                            dynamic_indices.append(idx)
+                            break
             except Exception:
-                pass
-            # 現ステップのハイライトカードに反映（重複除去）
+                dynamic_indices = []
             try:
                 cur = set(getattr(step, 'highlight_cards', []) or [])
                 for di in dynamic_indices:
@@ -116,6 +150,12 @@ def render_tutorial_ui(screen, state: GameState, layout, draw_text,
     
     # メッセージオーバーレイ
     draw_tutorial_overlay(screen, state.tutorial_manager, layout, draw_text)
+
+
+def on_tutorial_effect_resolved(state: GameState, event: str):
+    """カード効果解決後の進行通知"""
+    if state.tutorial_manager:
+        state.tutorial_manager.on_effect_resolved(event)
 
 
 # 使用例（CardGame.py への組み込み方）

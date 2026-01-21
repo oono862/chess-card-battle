@@ -102,6 +102,27 @@ def draw_hand_cards(
             print(f"[CARD_RENDERER] Card: {c.name}, custom_image: {getattr(c, 'custom_image', None)}, using: {image_name}")
         thumb = get_card_image_func(image_name, size=(card_w, card_h))
         screen.blit(thumb, (x, card_y))
+
+        # 日本語エイリアスをカード下部に表示（画像の有無に関わらず）
+        try:
+            alias_map = {
+                'Quick Draw': '引く',
+                'Meditate': '瞑想',
+                'Tactical Surge': '戦術急襲',
+                '2ドロー': '2ドロー',
+            }
+            alias = alias_map.get(getattr(c, 'name', ''), None)
+            if alias:
+                label_surf = FONT.render(alias, True, (40, 40, 60))
+                lx = x + (card_w - label_surf.get_width()) // 2
+                ly = card_y + card_h - label_surf.get_height() - 4
+                # 背景を少し明るくして読めるように
+                bg_rect = pygame.Rect(lx - 6, ly - 2, label_surf.get_width() + 12, label_surf.get_height() + 4)
+                pygame.draw.rect(screen, (245, 245, 248), bg_rect)
+                pygame.draw.rect(screen, (200, 200, 210), bg_rect, 1)
+                screen.blit(label_surf, (lx, ly))
+        except Exception:
+            pass
         
         # 錬成で選択中のカードを金色の枠で強調
         if (getattr(game, 'pending', None) is not None and 

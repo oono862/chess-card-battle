@@ -189,6 +189,28 @@ except Exception:
     logger.exception("Failed to import card_core module")
     raise
 
+# チュートリアル機能のインポート
+try:
+    from game.state import GameState
+    from game.tutorial_integration import (
+        init_tutorial_mode, check_tutorial_action,
+        on_tutorial_piece_moved, on_tutorial_card_played, on_tutorial_turn_ended,
+        handle_tutorial_esc_key, render_tutorial_ui,
+        handle_tutorial_click, on_tutorial_effect_resolved
+    )
+    TUTORIAL_AVAILABLE = True
+except Exception:
+    TUTORIAL_AVAILABLE = False
+    logger.debug("Tutorial module not available")
+    # Fallback stubs to avoid NameError when tutorial is unavailable
+    def init_tutorial_mode(*args, **kwargs): return False
+    def check_tutorial_action(*args, **kwargs): return True
+    def on_tutorial_piece_moved(*args, **kwargs): return None
+    def on_tutorial_card_played(*args, **kwargs): return None
+    def on_tutorial_turn_ended(*args, **kwargs): return None
+    def handle_tutorial_esc_key(*args, **kwargs): return False
+    def render_tutorial_ui(*args, **kwargs): return None
+
 # スクリプトを直接実行する場合、同ディレクトリ下の `assets/` を import できるように
 # カレントファイルのディレクトリを sys.path に追加しておく（ローカル実行時の互換性補助）。
 _this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -878,6 +900,14 @@ current_bgm_mode = None
 # デッキモード: 'fixed'=ルールデッキ(24枚), 'custom'=作成デッキ(20枚)
 DECK_MODE = 'fixed'
 
+# チュートリアルモード管理
+IS_TUTORIAL_MODE = False
+# チュートリアル用ゲーム状態
+try:
+    game_state = GameState()
+except Exception:
+    game_state = None
+
 # 最後に選択されたカスタムデッキの情報（デッキ詳細を見た後にバトル開始する場合に使用）
 _selected_deck_slot_idx = None
 _selected_deck_card_names = None
@@ -954,6 +984,73 @@ def new_game_with_mode(mode: str):
     to ensure the saved deck is properly loaded.
     """
     try:
+        # --- Tutorial: use fixed small deck in deterministic order (no shuffle) ---
+        if IS_TUTORIAL_MODE:
+            try:
+                from card_core import Card, Deck, PlayerState, Game, eff_draw1, eff_gain_pp1, eff_placeholder_extra_move
+                # 優先: TutorialManagerのfixed_deck
+                names = []
+                try:
+                    if game_state and getattr(game_state, 'tutorial_manager', None):
+                        names = game_state.tutorial_manager.get_fixed_deck() or []
+                except Exception:
+                    names = []
+                if not names:
+                    names = [
+                        'Quick Draw', 'Meditate', 'Tactical Surge',
+                        'Quick Draw', 'Meditate', 'Tactical Surge',
+                        'Quick Draw', 'Meditate', 'Tactical Surge'
+                    ]
+                effect_map = {
+                    'Quick Draw': eff_draw1,
+                    'Meditate': eff_gain_pp1,
+                    'Tactical Surge': eff_placeholder_extra_move,
+                    '2ドロー': eff_draw2,
+                    '氷結': eff_freeze_piece,
+                    '灼熱': eff_heat_block_tile,
+                }
+                cost_map = {
+                    'Quick Draw': 0,
+                    'Meditate': 1,
+                    'Tactical Surge': 2,
+                    '2ドロー': 1,
+                    '氷結': 2,
+                    '灼熱': 2,
+                }
+                cards = []
+                for nm in names:
+                    eff = effect_map.get(nm)
+                    if eff:
+                        cost = cost_map.get(nm, 1)
+                        cards.append(Card(nm, cost, eff))
+                deck = Deck(cards)
+                player = PlayerState(deck=deck)
+                game = Game(player=player)
+                try:
+                    existing = list(getattr(game, 'log', []) or [])
+                    game.log = LogList('game', existing)
+                except Exception:
+                    try:
+                        game.log = LogList('game')
+                    except Exception:
+                        pass
+                try:
+                    player.reset_pp()
+                    game.log.append("バトル開始: PPを最大まで回復しました。")
+                except Exception:
+                    pass
+                # 最初の4枚をドロー（順序固定）
+                try:
+                    for _ in range(4):
+                        c = player.deck.draw()
+                        if c:
+                            player.hand.add(c)
+                except Exception:
+                    pass
+                return game
+            except Exception:
+                pass
+
         # Allow both 'fixed' and 'custom'; default to 'fixed' if unknown
         if mode not in ('fixed', 'custom'):
             logger.warning("new_game_with_mode called with mode=%s, falling back to fixed", mode)
@@ -1857,8 +1954,47 @@ def show_start_screen():
     1-4 のキーか、画面上のボタンで選択可能。選択はグローバル CPU_DIFFICULTY に保存される。
     """
     # 選択結果をグローバルに反映
-    global CPU_DIFFICULTY, W, H, screen
+    global CPU_DIFFICULTY, W, H, screen, IS_TUTORIAL_MODE
     global _selected_deck_card_names, _selected_deck_slot_idx
+    # reset tutorial state when returning to start screen
+    try:
+        if game_state is not None:
+            game_state.tutorial_manager = None
+    except Exception:
+        pass
+    
+    def _start_tutorial_mode():
+        """チュートリアルを開始して戻るための共通ヘルパー"""
+        global IS_TUTORIAL_MODE, CPU_DIFFICULTY, game, ai_player, DECK_MODE
+        IS_TUTORIAL_MODE = True
+        DECK_MODE = 'fixed'  # チュートリアルは固定デッキで強制
+        # 既に読み込み時に作成されたサンプルゲームを無効化し、起動後にチュートリアル用ゲームを再生成させる
+        game = None
+        ai_player = None
+        try:
+            from game.tutorial import TutorialManager
+            tutorial_manager = TutorialManager()
+            tutorial_manager.start()
+            globals()['_current_tutorial'] = tutorial_manager
+            # GameState に保持しておく
+            if game_state is not None:
+                try:
+                    game_state.tutorial_manager = tutorial_manager
+                    game_state.game = None
+                    game_state.ai_player = None
+                except Exception:
+                    pass
+        except Exception:
+            IS_TUTORIAL_MODE = False
+            if game_state is not None:
+                try:
+                    game_state.tutorial_manager = None
+                except Exception:
+                    pass
+        CPU_DIFFICULTY = 1  # 簡単
+        return True
+    # 以前の「チュートリアル/ゲーム」専用メニューはスキップし、
+    # 直接難易度選択画面へ遷移（右下ボタンからチュートリアル開始可能）
 
     # NOTE:
     # Avoid unintentionally reusing a previously persisted custom-deck
@@ -1962,6 +2098,12 @@ def show_start_screen():
                                 _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
                             except Exception:
                                 pass
+                            try:
+                                if game_state is not None:
+                                    game_state.game = globals().get('game')
+                                    game_state.ai_player = globals().get('ai_player')
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     return
@@ -2008,6 +2150,12 @@ def show_start_screen():
                                 except Exception:
                                     pass
                                 try:
+                                    if game_state is not None:
+                                        game_state.game = globals().get('game')
+                                        game_state.ai_player = globals().get('ai_player')
+                                except Exception:
+                                    pass
+                                try:
                                     gtmp = globals().get('game')
                                     logger.debug("global game set (start_screen) id=%s deck_count=%s", id(gtmp), len(getattr(gtmp.player.deck,'cards',[])) if gtmp and hasattr(gtmp,'player') else 'NA')
                                 except Exception:
@@ -2027,6 +2175,11 @@ def show_start_screen():
                 settings_h = deck_h
                 settings_x = 20
                 settings_y = deck_y
+                # tutorial button (right bottom)
+                tutorial_w = 220
+                tutorial_h = deck_h
+                tutorial_x = W - tutorial_w - 20
+                tutorial_y = deck_y
                 if settings_x <= mx <= settings_x + settings_w and settings_y <= my <= settings_y + settings_h:
                     # open settings modal/screen
                     show_settings_screen(screen)
@@ -2035,6 +2188,9 @@ def show_start_screen():
                 if deck_x <= mx <= deck_x + deck_w and deck_y <= my <= deck_y + deck_h:
                     # open deck selection modal (deck editor requires slot context)
                     show_deck_modal(screen)
+                if tutorial_x <= mx <= tutorial_x + tutorial_w and tutorial_y <= my <= tutorial_y + tutorial_h:
+                    _start_tutorial_mode()
+                    return
 
         # draw background (image if available) - always scale to current window size
         try:
@@ -2136,6 +2292,16 @@ def show_start_screen():
             pygame.draw.rect(screen, (70,70,70), settings_rect, 3)
             stxt = btn_font.render("設定", True, (30,30,30))
             screen.blit(stxt, (settings_x + (settings_w - stxt.get_width())//2, settings_y + (settings_h - stxt.get_height())//2))
+            # tutorial button on the right bottom (aligned with deck/settings buttons)
+            tutorial_w = 220
+            tutorial_h = deck_btn_h
+            tutorial_x = W - tutorial_w - 20
+            tutorial_y = deck_y
+            tutorial_rect = pygame.Rect(tutorial_x, tutorial_y, tutorial_w, tutorial_h)
+            pygame.draw.rect(screen, (210, 235, 210), tutorial_rect)
+            pygame.draw.rect(screen, (50, 130, 50), tutorial_rect, 3)
+            ttxt = btn_font.render("チュートリアル", True, (20, 60, 20))
+            screen.blit(ttxt, (tutorial_x + (tutorial_w - ttxt.get_width())//2, tutorial_y + (tutorial_h - ttxt.get_height())//2))
         except Exception:
             pass
         # BGM クレジット表示（右下） 
@@ -5846,29 +6012,34 @@ def draw_panel():
         info_y += 10  # 区切り用の余白
 
     # マウスでも押せる『ターン開始(T)』ボタンを左パネルに配置
+    # チュートリアル中は非表示
     global start_turn_rect
     btn_w, btn_h = 160, 36
     start_turn_rect = pygame.Rect(info_x, info_y, btn_w, btn_h)
-    # 押下可否に応じて色分け
-    can_start = (getattr(game, 'pending', None) is None) and (not getattr(game, 'turn_active', False)) and (chess_current_turn == 'white') and (not cpu_wait) and (not game_over)
-    bg_col = (60, 140, 220) if can_start else (140, 140, 140)
-    pygame.draw.rect(screen, bg_col, start_turn_rect)
-    pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
-    # Scale the button label so it follows the UI scale used on the right-side rendering
-    ui_scale = layout.get('scale', 1.0)
-    try:
-        # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
-        font_size = max(12, int(FONT.get_height() * ui_scale))
-        if not hasattr(draw_panel, '_btn_font_cache'):
-            draw_panel._btn_font_cache = {}
-        if font_size not in draw_panel._btn_font_cache:
-            draw_panel._btn_font_cache[font_size] = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", font_size, bold=True)
-        lab_font = draw_panel._btn_font_cache[font_size]
-        lab = lab_font.render("バトル開始 (T)", True, (255,255,255))
-        screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
-    except Exception:
-        lab = FONT.render("バトル開始 (T)", True, (255,255,255))
-        screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+    
+    # チュートリアル中でなければボタンを描画
+    if not IS_TUTORIAL_MODE:
+        # 押下可否に応じて色分け
+        can_start = (getattr(game, 'pending', None) is None) and (not getattr(game, 'turn_active', False)) and (chess_current_turn == 'white') and (not cpu_wait) and (not game_over)
+        bg_col = (60, 140, 220) if can_start else (140, 140, 140)
+        pygame.draw.rect(screen, bg_col, start_turn_rect)
+        pygame.draw.rect(screen, (255,255,255), start_turn_rect, 2)
+        # Scale the button label so it follows the UI scale used on the right-side rendering
+        ui_scale = layout.get('scale', 1.0)
+        try:
+            # フォントキャッシュを使用（毎フレームのSysFont呼び出しを回避）
+            font_size = max(12, int(FONT.get_height() * ui_scale))
+            if not hasattr(draw_panel, '_btn_font_cache'):
+                draw_panel._btn_font_cache = {}
+            if font_size not in draw_panel._btn_font_cache:
+                draw_panel._btn_font_cache[font_size] = pygame.font.SysFont("Noto Sans JP, Meiryo, MS Gothic", font_size, bold=True)
+            lab_font = draw_panel._btn_font_cache[font_size]
+            lab = lab_font.render("バトル開始 (T)", True, (255,255,255))
+            screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+        except Exception:
+            lab = FONT.render("バトル開始 (T)", True, (255,255,255))
+            screen.blit(lab, (start_turn_rect.x + (btn_w - lab.get_width())//2, start_turn_rect.y + (btn_h - lab.get_height())//2))
+    
     info_y += left_line_step
     
     # 保留中表示（基本情報の下）
@@ -7837,6 +8008,16 @@ def draw_panel():
     except Exception:
         pass
 
+    # Tutorial overlay/highlight (drawn last, before game-over overlay)
+    try:
+        render_tutorial_ui(
+            screen, game_state, layout, draw_text,
+            board_left, board_top, square_w, square_h,
+            card_rects
+        )
+    except Exception:
+        pass
+
     # ゲーム終了画面（勝敗表示と再戦ボタン）
     if game_over:
         # 半透明オーバーレイを全画面に表示（より強く暗くして文字を目立たせる）
@@ -7989,6 +8170,20 @@ def start_player_turn(ai_end_msg: str = None):
 def attempt_start_turn():
     """[T]と同等のターン開始処理をUIやマウスからも呼べるように関数化。"""
     global notice_msg, notice_until, turn_telop_msg, turn_telop_until, log_scroll_offset
+    # チュートリアル中は指定ステップ以外でのターン進行を制限
+    if IS_TUTORIAL_MODE:
+        try:
+            if not check_tutorial_action(game_state, 'end_turn'):
+                game.log.append("チュートリアル: まず指示された操作を完了してください（ターン終了）。")
+                try:
+                    notice_msg = "チュートリアル: 今はターンを進められません。"
+                    notice_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
+                return
+        except Exception:
+            game.log.append("チュートリアル: 今はターンを進められません。")
+            return
     if getattr(game, 'pending', None) is not None:
         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
         return
@@ -8015,6 +8210,11 @@ def attempt_start_turn():
         return
     # 開始
     start_player_turn()
+    try:
+        if IS_TUTORIAL_MODE:
+            on_tutorial_turn_ended(game_state)
+    except Exception:
+        pass
 
 
 def handle_keydown(key):
@@ -8029,6 +8229,25 @@ def handle_keydown(key):
             pygame.quit()
             sys.exit(0)
         return  # ゲーム終了時は他のキー操作を無効化
+
+    # チュートリアル開始前はESC以外の入力を無効化
+    try:
+        if IS_TUTORIAL_MODE and game_state and getattr(game_state, 'tutorial_manager', None):
+            tm = game_state.tutorial_manager
+            if getattr(tm, 'waiting_for_start', False):
+                if key == pygame.K_ESCAPE:
+                    handle_tutorial_esc_key(game_state)
+                return
+            try:
+                cur_step = tm.get_current_step()
+                if cur_step and getattr(cur_step, 'lock_ui', False):
+                    if key == pygame.K_ESCAPE:
+                        handle_tutorial_esc_key(game_state)
+                    return
+            except Exception:
+                pass
+    except Exception:
+        pass
     
     if key == pygame.K_ESCAPE:
         pygame.quit()
@@ -8121,6 +8340,9 @@ def handle_keydown(key):
             return
     
     if key == pygame.K_t:
+        # チュートリアル中はTキーを無視
+        if IS_TUTORIAL_MODE:
+            return
         attempt_start_turn()
         return
     
@@ -8249,22 +8471,43 @@ def handle_keydown(key):
             else:
                 game.log.append("操作待ち: 先に保留中の選択を完了してください。")
             return
-        # ターン開始前はカード使用不可（既存のメッセージを表示）
+        # ターン開始前はカード使用不可
         if not getattr(game, 'turn_active', False):
-            msg = "ターンが開始されていませんTキーでターンを開始してください"
-            game.log.append(msg)
-            try:
-                notice_msg = msg
-                notice_until = _ct_time.time() + 1.0
-            except Exception:
+            if IS_TUTORIAL_MODE:
+                # チュートリアル中は自動開始のため促し文言を出さない
+                try:
+                    game.log.append("チュートリアル: ターンは自動開始されます。指示に従ってください。")
+                    notice_msg = "チュートリアル: ターンは自動開始されます。指示に従ってください。"
+                    notice_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
+            else:
+                msg = "ターンが開始されていませんTキーでターンを開始してください"
+                game.log.append(msg)
+                try:
+                    notice_msg = msg
+                    notice_until = _ct_time.time() + 1.0
+                except Exception:
+                    pass
                 pass
             return
+        try:
+            if IS_TUTORIAL_MODE and not check_tutorial_action(game_state, 'play_card'):
+                game.log.append("チュートリアル: 今はカードを使う手番ではありません。")
+                return
+        except Exception:
+            pass
         ok, msg = game.play_card(idx)
         if not ok:
             game.log.append(msg)
         else:
             # [DEBUG] カード直後のみ許可モード：カード使用扱いフラグを立てる
             _debug_mark_card_played()
+            try:
+                if IS_TUTORIAL_MODE:
+                    on_tutorial_card_played(game_state, idx)
+            except Exception:
+                pass
         log_scroll_offset = 0  # カード使用後は最新ログへ
         return
 
@@ -8434,6 +8677,14 @@ def handle_mouse_click(pos):
             sys.exit(0)
         return
 
+    # チュートリアル開始前は開始ボタン以外を無効化
+    try:
+        if IS_TUTORIAL_MODE and game_state and getattr(game_state, 'tutorial_manager', None):
+            if handle_tutorial_click(game_state, pos):
+                return
+    except Exception:
+        pass
+
     # Click timing for double-click detection
     # We use a combination of index-based detection (same logical card index
     # clicked twice within the interval) and the previous position-based
@@ -8500,22 +8751,42 @@ def handle_mouse_click(pos):
                     if getattr(game, 'pending', None) is not None:
                         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
                     elif not getattr(game, 'turn_active', False):
-                        msg = "ターンが開始されていませんTキーでターンを開始してください"
-                        game.log.append(msg)
-                        try:
-                            notice_msg = msg
-                            notice_until = _ct_time.time() + 1.0
-                        except Exception:
-                            pass
+                        if IS_TUTORIAL_MODE:
+                            try:
+                                game.log.append("チュートリアル: ターンは自動開始されます。指示に従ってください。")
+                                notice_msg = "チュートリアル: ターンは自動開始されます。指示に従ってください。"
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
+                        else:
+                            msg = "ターンが開始されていませんTキーでターンを開始してください"
+                            game.log.append(msg)
+                            try:
+                                notice_msg = msg
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
                     else:
                         try:
-                            ok, m = game.play_card(idx)
+                            try:
+                                if IS_TUTORIAL_MODE and not check_tutorial_action(game_state, 'play_card'):
+                                    game.log.append("チュートリアル: 今はカードを使う手番ではありません。")
+                                    ok, m = False, None
+                                else:
+                                    ok, m = game.play_card(idx)
+                            except Exception:
+                                ok, m = game.play_card(idx)
                             if not ok:
                                 game.log.append(m)
                             else:
                                 _debug_mark_card_played()
                                 try:
                                     log_scroll_offset = 0
+                                except Exception:
+                                    pass
+                                try:
+                                    if IS_TUTORIAL_MODE:
+                                        on_tutorial_card_played(game_state, idx)
                                 except Exception:
                                     pass
                         except Exception:
@@ -8755,22 +9026,42 @@ def handle_mouse_click(pos):
                     if getattr(game, 'pending', None) is not None:
                         game.log.append("操作待ち: 先に保留中の選択を完了してください。")
                     elif not getattr(game, 'turn_active', False):
-                        msg = "ターンが開始されていませんTキーでターンを開始してください"
-                        game.log.append(msg)
-                        try:
-                            notice_msg = msg
-                            notice_until = _ct_time.time() + 1.0
-                        except Exception:
-                            pass
+                        if IS_TUTORIAL_MODE:
+                            try:
+                                game.log.append("チュートリアル: ターンは自動開始されます。指示に従ってください。")
+                                notice_msg = "チュートリアル: ターンは自動開始されます。指示に従ってください。"
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
+                        else:
+                            msg = "ターンが開始されていませんTキーでターンを開始してください"
+                            game.log.append(msg)
+                            try:
+                                notice_msg = msg
+                                notice_until = _ct_time.time() + 1.0
+                            except Exception:
+                                pass
                     else:
                         try:
-                            ok, m = game.play_card(idx)
+                            try:
+                                if IS_TUTORIAL_MODE and not check_tutorial_action(game_state, 'play_card'):
+                                    game.log.append("チュートリアル: 今はカードを使う手番ではありません。")
+                                    ok, m = False, None
+                                else:
+                                    ok, m = game.play_card(idx)
+                            except Exception:
+                                ok, m = game.play_card(idx)
                             if not ok:
                                 game.log.append(m)
                             else:
                                 _debug_mark_card_played()
                                 try:
                                     log_scroll_offset = 0
+                                except Exception:
+                                    pass
+                                try:
+                                    if IS_TUTORIAL_MODE:
+                                        on_tutorial_card_played(game_state, idx)
                                 except Exception:
                                     pass
                         except Exception:
@@ -8846,6 +9137,17 @@ def handle_mouse_click(pos):
         # If a card effect is waiting for a tile/piece target, handle it here first
         if getattr(game, 'pending', None) is not None:
             if game.pending.kind == 'target_tile':
+                try:
+                    if IS_TUTORIAL_MODE:
+                        if not check_tutorial_action(game_state, 'select_tile'):
+                            game.log.append("チュートリアル: 指定のマスを選んでください。")
+                            return
+                        tm = getattr(game_state, 'tutorial_manager', None)
+                        if tm and not tm.is_tile_selection_allowed((row, col)):
+                            game.log.append("チュートリアル: 光っているマスを選んでください。")
+                            return
+                except Exception:
+                    pass
                 # require empty tile
                 if clicked is None:
                     turns = game.pending.info.get('turns', 2)
@@ -8862,6 +9164,11 @@ def handle_mouse_click(pos):
                             pass
                         game.log.append(f"『灼熱』を使用しました: {(row,col)} を中心に3x3の範囲を {turns} ターン封鎖")
                         game.log.append(f"『灼熱』による封鎖: {(row,col)} を {turns} ターン封鎖 (対象: {applies_to})")
+                    try:
+                        if IS_TUTORIAL_MODE:
+                            on_tutorial_effect_resolved(game_state, 'heat')
+                    except Exception:
+                        pass
                     game.pending = None
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
@@ -8869,6 +9176,17 @@ def handle_mouse_click(pos):
             elif getattr(game, 'pending', None) is not None and game.pending.kind == 'target_tiles_multi':
                 # allow selecting up to max_tiles empty tiles; selection toggles and BLOCKING
                 # only happens when player has selected max_tiles tiles.
+                try:
+                    if IS_TUTORIAL_MODE:
+                        if not check_tutorial_action(game_state, 'select_tile'):
+                            game.log.append("チュートリアル: 指定のマスを選んでください。")
+                            return
+                        tm = getattr(game_state, 'tutorial_manager', None)
+                        if tm and not tm.is_tile_selection_allowed((row, col)):
+                            game.log.append("チュートリアル: 指定された3マスを選んでください。")
+                            return
+                except Exception:
+                    pass
                 if clicked is None:
                     sel = game.pending.info.get('selected', [])
                     tmax = game.pending.info.get('max_tiles', 3)
@@ -8931,6 +9249,11 @@ def handle_mouse_click(pos):
                                 game.log.append(f"『灼熱』による封鎖: {sel} を {turns} ターン封鎖 (対象: {applies_to})")
                             
                             game.pending = None
+                            try:
+                                if IS_TUTORIAL_MODE:
+                                    on_tutorial_effect_resolved(game_state, 'heat')
+                            except Exception:
+                                pass
                         return
                 else:
                     game.log.append("そのマスは空ではありません。別のマスを選んでください。")
@@ -9017,6 +9340,17 @@ def handle_mouse_click(pos):
                 # must select an opponent piece
                 # assume player controls white
                 player_color = 'white'
+                try:
+                    if IS_TUTORIAL_MODE:
+                        if not check_tutorial_action(game_state, 'select_piece'):
+                            game.log.append("チュートリアル: 指定の駒を選んでください。")
+                            return
+                        tm = getattr(game_state, 'tutorial_manager', None)
+                        if tm and not tm.is_piece_selection_allowed((row, col)):
+                            game.log.append("チュートリアル: 指定された駒を選んでください。")
+                            return
+                except Exception:
+                    pass
                 # clicked may be a Piece object or dict; normalize check
                 clicked_color = None
                 try:
@@ -9087,6 +9421,11 @@ def handle_mouse_click(pos):
                     except Exception:
                         pass
                     game.pending = None
+                    try:
+                        if IS_TUTORIAL_MODE:
+                            on_tutorial_effect_resolved(game_state, 'freeze')
+                    except Exception:
+                        pass
                 else:
                     game.log.append("相手の駒を選んでください。")
                 return
@@ -9118,10 +9457,29 @@ def handle_mouse_click(pos):
             except Exception:
                 pass
             if clicked and (getattr(clicked, 'color', None) == chess_current_turn or (isinstance(clicked, dict) and clicked.get('color') == chess_current_turn)):
+                # チュートリアルで選択制限がある場合はハイライト駒のみ選択可
+                try:
+                    if IS_TUTORIAL_MODE:
+                        if not check_tutorial_action(game_state, 'select_piece'):
+                            game.log.append("チュートリアル: 指定の駒を選んでください。")
+                            return
+                        tm = getattr(game_state, 'tutorial_manager', None)
+                        if tm and not tm.is_piece_selection_allowed((row, col)):
+                            game.log.append("チュートリアル: 光っている駒を選んでください。")
+                            return
+                except Exception:
+                    pass
                 selected_piece = clicked
                 highlight_squares = get_valid_moves(clicked)
         else:
             if (row, col) in highlight_squares:
+                # Tutorial: check move allowance
+                try:
+                    if IS_TUTORIAL_MODE and not check_tutorial_action(game_state, 'move_piece'):
+                        game.log.append("チュートリアル: まず指示された順に操作してください。")
+                        return
+                except Exception:
+                    pass
                 # Enforce one chess move per card-game turn unless player has extra_moves_this_turn
                 try:
                     moved_flag = getattr(game, 'player_moved_this_turn', False)
@@ -9155,7 +9513,17 @@ def handle_mouse_click(pos):
                     post_sim = simulate_move(selected_piece, row, col)
                 except Exception:
                     post_sim = None
+                # capture from/to before applying move for tutorial
+                try:
+                    from_pos = (getattr(selected_piece, 'row', None), getattr(selected_piece, 'col', None))
+                except Exception:
+                    from_pos = (None, None)
                 apply_move(selected_piece, row, col)
+                try:
+                    if IS_TUTORIAL_MODE:
+                        on_tutorial_piece_moved(game_state, from_pos, (row, col))
+                except Exception:
+                    pass
                 # Consume storm jump effect after the player's next move (whether used or not)
                 try:
                     if getattr(game.player, 'next_move_can_jump', False):
@@ -9195,6 +9563,16 @@ def handle_mouse_click(pos):
                         # defensive: set flag
                         game.player_moved_this_turn = True
                         game.turn_active = False
+                    # --- チュートリアル: ポーン移動後は次のターンを自動開始しカード使用へ誘導 ---
+                    try:
+                        if IS_TUTORIAL_MODE and game_state and getattr(game_state, 'tutorial_manager', None):
+                            cur = game_state.tutorial_manager.get_current_step()
+                            # ステップ1（カード使用）に進んだ直後なら自動でターン開始
+                            if cur is not None and getattr(cur, 'step_id', None) == 2 and not getattr(game, 'turn_active', False):
+                                start_player_turn()
+                                game.log.append("[チュートリアル] 次のターンを自動開始しました。カードを使ってみましょう。")
+                    except Exception:
+                        pass
                 # log safely for both object and dict styles
                 try:
                     name = selected_piece.name
@@ -9489,6 +9867,9 @@ def main_loop():
     except Exception as e:
         logger.debug("Error logging initial hand: %s", e)
     
+    # チュートリアルモード: 最初のフレームで自動的にプレイヤーターンを開始
+    tutorial_turn_auto_started = False
+    
     # Transition audio: stop title BGM and start gameplay BGM (MusMus-BGM-173.mp3).
     try:
         # ensure mixer available
@@ -9676,6 +10057,19 @@ def main_loop():
                                 log_scroll_offset = log_scroll_offset + 1
                         elif event.y < 0:
                             log_scroll_offset = max(0, log_scroll_offset - 1)
+
+        # === チュートリアルモード: 最初のフレームでプレイヤーターンを自動開始 ===
+        if IS_TUTORIAL_MODE and not tutorial_turn_auto_started and game_state and game_state.tutorial_manager:
+            try:
+                if getattr(game_state.tutorial_manager, '_should_auto_start_turn', False):
+                    # ターンを自動開始
+                    start_player_turn()
+                    # フラグを消費（二度開始しない）
+                    game_state.tutorial_manager._should_auto_start_turn = False
+                    tutorial_turn_auto_started = True
+                    game.log.append("[チュートリアル] プレイヤーターンを自動開始しました。")
+            except Exception as e:
+                logger.debug("チュートリアル自動開始エラー: %s", e)
 
         # --- 自動処理: AI の保留昇格を即時解決 ---
         # どこかの効果でAI（黒）のポーンがプロモーション待ちになった場合、
@@ -10417,6 +10811,13 @@ if __name__ == "__main__":
                 _init_ai_start_hand(globals()['ai_player'], 4, globals()['game'])
             except Exception:
                 pass
+        # Keep GameState references in sync
+        try:
+            if game_state is not None:
+                game_state.game = globals().get('game')
+                game_state.ai_player = globals().get('ai_player')
+        except Exception:
+            pass
     except Exception:
         pass
     main_loop()

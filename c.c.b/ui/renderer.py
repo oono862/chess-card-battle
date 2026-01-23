@@ -63,20 +63,20 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     # 改行に応じた行分割（簡易）
     lines = message.split("\n") if "\n" in message else [message]
     
-    # 最終ステップ（Turn 5またはCOMPLETE）の場合は高さを増やしてボタン用スペースを確保
-    is_final_step = False
+    # 完了画面（COMPLETE）の場合のみボタン用スペースを確保
+    is_complete_step = False
     try:
-        if step and step.step_id >= 5:  # Turn 5 (step_id=5) or COMPLETE (step_id=6)
-            is_final_step = True
+        if step and step.step_id == 6:  # COMPLETE (step_id=6) のみ
+            is_complete_step = True
     except Exception:
         pass
     
     box_height = max(120, len(lines) * 34 + 60)
-    if is_final_step:
+    if is_complete_step:
         box_height = max(280, len(lines) * 34 + 120)  # 完了ボタン用のスペースを追加
     
     # lock_ui時は画面中央に配置、それ以外は上部
-    if lock_ui and is_final_step:
+    if lock_ui and is_complete_step:
         box_y = (H - box_height - 80) // 2  # 中央寄り
     else:
         box_y = 40
@@ -185,19 +185,15 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     except Exception:
         pass
 
-    # チュートリアル完了時またはTurn 5: ボタンを表示
+    # スキップボタン（右下）- Turn 5以外で表示
     try:
-        if step and step.step_id >= 5:  # Turn 5 (step_id=5) or COMPLETE (step_id=6)
-            _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text)
-            return
+        if step and step.step_id < 5:  # Turn 5未満の場合のみスキップボタンを表示
+            skip_text = "[ESC: スキップ]"
+            skip_x = box_x + box_width - 150
+            skip_y = box_y + box_height - 25
+            draw_text(screen, skip_text, skip_x, skip_y, (180, 180, 180), scale=0.8)
     except Exception:
         pass
-
-    # スキップボタン（右下）
-    skip_text = "[ESC: スキップ]"
-    skip_x = box_x + box_width - 150
-    skip_y = box_y + box_height - 25
-    draw_text(screen, skip_text, skip_x, skip_y, (180, 180, 180), scale=0.8)
 
 
 def _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text):
@@ -279,7 +275,17 @@ def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, sq
     
     highlight_info = tutorial_manager.get_highlight_info()
     
-    # マスのハイライト（黄色の枠）
+    # Turn 5（チェックメイト）かどうかを判定
+    is_checkmate_phase = False
+    try:
+        from game.tutorial import TutorialPhase
+        if hasattr(tutorial_manager, 'state') and tutorial_manager.state.phase == TutorialPhase.TURN5_CHECKMATE:
+            is_checkmate_phase = True
+    except Exception:
+        pass
+    
+    # マスのハイライト（Turn 5は赤色、それ以外は黄色）
+    tile_color = (255, 50, 50) if is_checkmate_phase else (255, 255, 0)
     for (row, col) in highlight_info['tiles']:
         rect = pygame.Rect(
             board_left + col * square_w,
@@ -287,7 +293,15 @@ def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, sq
             square_w,
             square_h
         )
-        pygame.draw.rect(screen, (255, 255, 0), rect, 5)
+        # Turn 5の場合は太い枠と半透明の塗りつぶし
+        if is_checkmate_phase:
+            # 半透明の赤い塗りつぶし
+            highlight_surf = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+            highlight_surf.fill((255, 50, 50, 80))
+            screen.blit(highlight_surf, rect.topleft)
+            pygame.draw.rect(screen, tile_color, rect, 6)
+        else:
+            pygame.draw.rect(screen, tile_color, rect, 5)
     
     # 駒のハイライト（緑の枠）
     for (row, col) in highlight_info['pieces']:

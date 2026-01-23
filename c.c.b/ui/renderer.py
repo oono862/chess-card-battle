@@ -19,13 +19,22 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     if not tutorial_manager:
         return
     
+    # enabledでなければ何も表示しない（最優先チェック）
+    if not getattr(tutorial_manager, 'enabled', False):
+        return
+    
+    # IS_TUTORIAL_MODEをチェック（CPU戦遷移後は描画しない）
+    try:
+        import sys
+        main_mod = sys.modules.get('__main__')
+        if main_mod and not getattr(main_mod, 'IS_TUTORIAL_MODE', False):
+            return
+    except Exception:
+        pass
+    
     # チュートリアル完了後の完了ボタン表示
     if getattr(tutorial_manager, 'completed', False):
         _draw_tutorial_completion_screen(screen, tutorial_manager, layout, draw_text)
-        return
-    
-    # enabledでなければ何も表示しない
-    if not getattr(tutorial_manager, 'enabled', False):
         return
     
     try:
@@ -54,10 +63,10 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     # 改行に応じた行分割（簡易）
     lines = message.split("\n") if "\n" in message else [message]
     
-    # 最終ステップの場合は高さを増やしてボタン用スペースを確保
+    # 最終ステップ（Turn 5またはCOMPLETE）の場合は高さを増やしてボタン用スペースを確保
     is_final_step = False
     try:
-        if step and step.step_id == 5:
+        if step and step.step_id >= 5:  # Turn 5 (step_id=5) or COMPLETE (step_id=6)
             is_final_step = True
     except Exception:
         pass
@@ -108,9 +117,9 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     except Exception:
         pass
 
-    # チュートリアル完了時: ボタンを表示
+    # チュートリアル完了時またはTurn 5: ボタンを表示
     try:
-        if step and step.step_id == 5:  # 最終ステップ
+        if step and step.step_id >= 5:  # Turn 5 (step_id=5) or COMPLETE (step_id=6)
             _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text)
             return
     except Exception:

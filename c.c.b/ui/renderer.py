@@ -81,6 +81,67 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     else:
         box_y = 40
 
+    # ハイライト（タイル/駒/カード）と重なる場合は位置を調整する
+    try:
+        highlight_info = tutorial_manager.get_highlight_info()
+        board_left = layout.get('board_left', 0)
+        board_top = layout.get('board_top', 0)
+        board_size = layout.get('board_size', 800)
+        square_w = max(1, board_size // 8)
+
+        highlight_rects = []
+        for (r, c) in highlight_info.get('tiles', []):
+            try:
+                rct = pygame.Rect(board_left + c * square_w, board_top + r * square_w, square_w, square_w)
+                highlight_rects.append(rct)
+            except Exception:
+                pass
+        for (r, c) in highlight_info.get('pieces', []):
+            try:
+                rct = pygame.Rect(board_left + c * square_w, board_top + r * square_w, square_w, square_w)
+                highlight_rects.append(rct)
+            except Exception:
+                pass
+
+        # カード矩形が layout に含まれていればカードのハイライトも考慮
+        card_rects = layout.get('card_rects') if isinstance(layout, dict) else None
+        for ci in highlight_info.get('cards', []):
+            try:
+                if card_rects and 0 <= ci < len(card_rects):
+                    crect = card_rects[ci]
+                    if isinstance(crect, tuple) and len(crect) >= 1:
+                        crect = crect[0]
+                    if isinstance(crect, pygame.Rect):
+                        highlight_rects.append(crect)
+                    elif hasattr(crect, '__iter__') and len(crect) >= 4:
+                        highlight_rects.append(pygame.Rect(crect[0], crect[1], crect[2], crect[3]))
+            except Exception:
+                pass
+
+        if highlight_rects:
+            # 結合矩形を作成
+            union = highlight_rects[0].copy()
+            for rct in highlight_rects[1:]:
+                union.union_ip(rct)
+
+            msg_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+            if msg_rect.colliderect(union):
+                # まずボックスをハイライトの下に移す
+                candidate_y = union.bottom + 12
+                # 画面下に収まるか確認
+                if candidate_y + box_height < H - 8:
+                    box_y = candidate_y
+                else:
+                    # 下に入らなければ上に移す
+                    candidate_y2 = union.top - box_height - 12
+                    if candidate_y2 > 8:
+                        box_y = candidate_y2
+                    else:
+                        # どちらにも入らない場合は上寄せ（既存の40より下にならないよう制限）
+                        box_y = max(8, min(box_y, H - box_height - 8))
+    except Exception:
+        pass
+
     if lock_ui:
         dim = pygame.Surface((W, H), pygame.SRCALPHA)
         dim.fill((0, 0, 0, 180))
@@ -91,6 +152,13 @@ def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
     overlay.set_alpha(230 if lock_ui else 200)
     overlay.fill((40, 60, 120))
     screen.blit(overlay, (box_x, box_y))
+
+    # 描画したメッセージボックス矩形を tutorial_manager に記録しておく
+    try:
+        # 他の描画関数（通知、テロップ等）が重なり回避を行えるようにする
+        tutorial_manager.last_message_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+    except Exception:
+        pass
     
     # 枠線
     pygame.draw.rect(screen, (200, 220, 255), (box_x, box_y, box_width, box_height), 3)

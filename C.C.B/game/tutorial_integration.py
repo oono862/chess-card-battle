@@ -4,8 +4,72 @@ CardGame.py との統合用ヘルパー関数を提供します。
 シンプルな設計で、既存コードへの影響を最小限に抑えます。
 """
 
-from game.tutorial import TutorialManager, TutorialPhase
+from game.tutorial import TutorialManager, TutorialPhase, get_checkmate_board_setup
 from game.state import GameState
+
+
+def setup_checkmate_board():
+    """Turn 5用のチェックメイト一歩手前の盤面をセットアップ
+    
+    既存の駒をすべてクリアし、get_checkmate_board_setup()で定義された
+    配置に置き換えます。
+    """
+    try:
+        import sys
+        
+        # chess_engineモジュールを取得
+        chess = None
+        try:
+            import chess_engine as chess
+        except ImportError:
+            main_mod = sys.modules.get('__main__')
+            if main_mod:
+                chess = getattr(main_mod, 'chess', None)
+        
+        if chess is None:
+            return False
+        
+        # 盤面設定を取得
+        board_setup = get_checkmate_board_setup()
+        
+        # Pieceクラスを取得
+        Piece = getattr(chess, 'Piece', None)
+        if Piece is None:
+            return False
+        
+        # 既存の駒をクリア
+        if hasattr(chess, 'pieces'):
+            chess.pieces.clear()
+        
+        # 新しい駒を配置
+        for piece_info in board_setup:
+            p = Piece(
+                piece_info['row'],
+                piece_info['col'],
+                piece_info['name'],
+                piece_info['color']
+            )
+            p.has_moved = True  # すべての駒が既に動いたことにする
+            chess.pieces.append(p)
+        
+        # アンパッサン状態をクリア
+        if hasattr(chess, 'en_passant_target'):
+            chess.en_passant_target = None
+        
+        return True
+        
+    except Exception as e:
+        import logging
+        logging.debug("チェックメイト盤面セットアップエラー: %s", e)
+        return False
+
+
+def is_checkmate_phase(state: GameState) -> bool:
+    """現在のフェーズがTurn 5（チェックメイト）かどうかを判定"""
+    tm = getattr(state, 'tutorial_manager', None)
+    if tm is None:
+        return False
+    return tm.state.phase == TutorialPhase.TURN5_CHECKMATE
 
 
 def init_tutorial_mode(state: GameState, mode: str) -> bool:
@@ -72,6 +136,47 @@ def on_tutorial_effect_resolved(state: GameState, effect_type: str):
     """チュートリアル: カード効果解決後のコールバック"""
     if state.tutorial_manager:
         state.tutorial_manager.on_effect_resolved(effect_type)
+        # Turn 5への遷移後に盤面切り替えが必要かチェック
+        check_and_setup_checkmate_board(state)
+
+
+def check_and_setup_checkmate_board(state: GameState) -> bool:
+    """チェックメイト盤面のセットアップが必要かチェックし、必要なら実行
+    
+    Returns:
+        bool: 盤面切り替えを実行した場合True
+    """
+    tm = getattr(state, 'tutorial_manager', None)
+    if tm is None:
+        return False
+    
+    if tm.should_setup_checkmate_board():
+        success = setup_checkmate_board()
+        if success:
+            # UI状態もリセット（選択状態のクリアなど）
+            try:
+                import sys
+                main_mod = sys.modules.get('__main__')
+                if main_mod:
+                    # 選択状態をクリア
+                    if hasattr(main_mod, 'selected_piece'):
+                        main_mod.selected_piece = None
+                    if hasattr(main_mod, 'highlight_squares'):
+                        main_mod.highlight_squares = []
+                    # ゲームオブジェクトの状態もクリア
+                    game = getattr(main_mod, 'game', None)
+                    if game:
+                        # 氷結・灼熱状態をクリア
+                        if hasattr(game, 'frozen_pieces'):
+                            game.frozen_pieces.clear() if hasattr(game.frozen_pieces, 'clear') else None
+                        if hasattr(game, 'blocked_tiles'):
+                            game.blocked_tiles.clear() if hasattr(game.blocked_tiles, 'clear') else None
+                        if hasattr(game, 'blocked_tiles_owner'):
+                            game.blocked_tiles_owner.clear() if hasattr(game.blocked_tiles_owner, 'clear') else None
+            except Exception:
+                pass
+        return success
+    return False
 
 
 def handle_tutorial_esc_key(state: GameState) -> bool:
@@ -121,20 +226,10 @@ def handle_tutorial_click(state: GameState, pos: tuple) -> bool:
         # 完了画面中もUI操作（ログ展開など）は許可
         return False
     
-    # Turn 5のボタン処理
+    # Turn 5（チェックメイト）: 駒の選択・移動は許可（ボタンなし）
     if tm.state.phase == TutorialPhase.TURN5_CHECKMATE:
-        cpu_rect = getattr(tm, 'completion_cpu_rect', None)
-        retry_rect = getattr(tm, 'completion_retry_rect', None)
-        
-        if cpu_rect and hasattr(cpu_rect, 'collidepoint') and cpu_rect.collidepoint(pos):
-            _transition_to_cpu_battle(state)
-            return True
-        
-        if retry_rect and hasattr(retry_rect, 'collidepoint') and retry_rect.collidepoint(pos):
-            _restart_tutorial(state)
-            return True
-        
-        return True  # ロック中
+        # Turn 5では駒の移動を許可するのでFalseを返す
+        return False
     
     # 開始前画面のボタン処理
     if tm.waiting_for_start:
@@ -217,9 +312,27 @@ def _transition_to_cpu_battle(state: GameState):
         except Exception:
             pass
         
+        # === ゲームオブジェクトを完全にリセット ===
+        
+        # 7. gameオブジェクトをNoneに設定（show_start_screenで新規作成させる）
+        try:
+            CardGame.game = None
+            if main_mod and main_mod is not CardGame:
+                main_mod.game = None
+        except Exception:
+            pass
+        
+        # 8. ai_playerオブジェクトもNoneに設定
+        try:
+            CardGame.ai_player = None
+            if main_mod and main_mod is not CardGame:
+                main_mod.ai_player = None
+        except Exception:
+            pass
+        
         # === 盤面状態を完全にリセット ===
         
-        # 7. チェス盤の駒を初期位置にリセット
+        # 9. チェス盤の駒を初期位置にリセット
         try:
             chess = getattr(CardGame, 'chess', None)
             if chess is None and main_mod:
@@ -231,44 +344,13 @@ def _transition_to_cpu_battle(state: GameState):
                 # アンパッサン状態をクリア
                 if hasattr(chess, 'en_passant_target'):
                     chess.en_passant_target = None
+                # プロモーション状態をクリア
+                if hasattr(chess, 'promotion_pending'):
+                    chess.promotion_pending = None
         except Exception:
             pass
         
-        # 8. ゲームオブジェクトの状態をリセット
-        try:
-            game = getattr(CardGame, 'game', None)
-            if game is None and main_mod:
-                game = getattr(main_mod, 'game', None)
-            if game is not None:
-                # 氷結状態をクリア
-                if hasattr(game, 'frozen_pieces'):
-                    game.frozen_pieces.clear() if hasattr(game.frozen_pieces, 'clear') else setattr(game, 'frozen_pieces', {})
-                # 封鎖タイルをクリア
-                if hasattr(game, 'blocked_tiles'):
-                    game.blocked_tiles.clear() if hasattr(game.blocked_tiles, 'clear') else setattr(game, 'blocked_tiles', {})
-                if hasattr(game, 'blocked_tiles_owner'):
-                    game.blocked_tiles_owner.clear() if hasattr(game.blocked_tiles_owner, 'clear') else setattr(game, 'blocked_tiles_owner', {})
-                if hasattr(game, 'blocked_tiles_entries'):
-                    game.blocked_tiles_entries.clear() if hasattr(game.blocked_tiles_entries, 'clear') else setattr(game, 'blocked_tiles_entries', {})
-                # ターン状態をリセット
-                game.turn = 0
-                game.turn_active = False
-                game.player_moved_this_turn = False
-                # 特殊効果をクリア
-                if hasattr(game, 'pending'):
-                    game.pending = None
-                if hasattr(game, 'ai_next_move_can_jump'):
-                    game.ai_next_move_can_jump = False
-                if hasattr(game, 'ai_iron_wall_active'):
-                    game.ai_iron_wall_active = False
-                if hasattr(game, 'player_ironwall_protection_turns'):
-                    game.player_ironwall_protection_turns = 0
-                if hasattr(game, 'ai_ironwall_protection_turns'):
-                    game.ai_ironwall_protection_turns = 0
-        except Exception:
-            pass
-        
-        # 9. UI状態をリセット
+        # 10. UI状態をリセット
         try:
             if main_mod:
                 if hasattr(main_mod, 'game_over'):
@@ -281,10 +363,26 @@ def _transition_to_cpu_battle(state: GameState):
                     main_mod.selected_piece = None
                 if hasattr(main_mod, 'highlight_squares'):
                     main_mod.highlight_squares = []
+                if hasattr(main_mod, 'cpu_wait'):
+                    main_mod.cpu_wait = False
+                if hasattr(main_mod, 'log_scroll_offset'):
+                    main_mod.log_scroll_offset = 0
         except Exception:
             pass
         
-        # 10. 難易度選択画面に戻る
+        # 11. ログをクリア
+        try:
+            if main_mod and hasattr(main_mod, 'master_log'):
+                try:
+                    main_mod.master_log.clear()
+                except Exception:
+                    main_mod.master_log = []
+            if main_mod and hasattr(main_mod, '_log_seq'):
+                main_mod._log_seq = 0
+        except Exception:
+            pass
+        
+        # 12. 難易度選択画面に戻る
         try:
             show_start = getattr(CardGame, 'show_start_screen', None)
             if show_start is None and main_mod:
@@ -303,10 +401,83 @@ def _transition_to_cpu_battle(state: GameState):
 def _restart_tutorial(state: GameState):
     """チュートリアルを最初から再開"""
     try:
-        import CardGame
+        import sys
         
-        # チュートリアルモードを有効に保つ
-        CardGame.IS_TUTORIAL_MODE = True
+        main_mod = sys.modules.get('__main__')
+        CardGame = sys.modules.get('CardGame', main_mod)
+        
+        if CardGame is None:
+            return
+        
+        # === 既存のチュートリアル状態をクリア ===
+        try:
+            _ct = getattr(CardGame, '_current_tutorial', None)
+            if _ct is None and main_mod:
+                _ct = getattr(main_mod, '_current_tutorial', None)
+            if _ct is not None:
+                _ct.enabled = False
+                _ct.completed = False
+        except Exception:
+            pass
+        
+        # === ゲーム状態を完全にリセット ===
+        
+        # チェス盤を初期状態にリセット
+        try:
+            chess = getattr(CardGame, 'chess', None)
+            if chess is None and main_mod:
+                chess = getattr(main_mod, 'chess', None)
+            if chess is not None:
+                if hasattr(chess, 'pieces') and hasattr(chess, 'create_pieces'):
+                    chess.pieces[:] = chess.create_pieces()
+                if hasattr(chess, 'en_passant_target'):
+                    chess.en_passant_target = None
+                if hasattr(chess, 'promotion_pending'):
+                    chess.promotion_pending = None
+        except Exception:
+            pass
+        
+        # UI状態をリセット
+        try:
+            if main_mod:
+                if hasattr(main_mod, 'game_over'):
+                    main_mod.game_over = False
+                if hasattr(main_mod, 'game_over_winner'):
+                    main_mod.game_over_winner = None
+                if hasattr(main_mod, 'chess_current_turn'):
+                    main_mod.chess_current_turn = 'white'
+                if hasattr(main_mod, 'selected_piece'):
+                    main_mod.selected_piece = None
+                if hasattr(main_mod, 'highlight_squares'):
+                    main_mod.highlight_squares = []
+                if hasattr(main_mod, 'cpu_wait'):
+                    main_mod.cpu_wait = False
+                if hasattr(main_mod, 'log_scroll_offset'):
+                    main_mod.log_scroll_offset = 0
+        except Exception:
+            pass
+        
+        # ログをクリア
+        try:
+            if main_mod and hasattr(main_mod, 'master_log'):
+                try:
+                    main_mod.master_log.clear()
+                except Exception:
+                    main_mod.master_log = []
+            if main_mod and hasattr(main_mod, '_log_seq'):
+                main_mod._log_seq = 0
+        except Exception:
+            pass
+        
+        # === チュートリアルモードで再起動 ===
+        
+        # チュートリアルモードを有効化
+        try:
+            CardGame.IS_TUTORIAL_MODE = True
+            if main_mod and main_mod is not CardGame:
+                main_mod.IS_TUTORIAL_MODE = True
+        except Exception:
+            pass
         
         # PP無限モードを有効化
         try:
@@ -319,18 +490,130 @@ def _restart_tutorial(state: GameState):
         new_tm = TutorialManager()
         new_tm.start()
         
-        # グローバルとstateに設定
-        CardGame._current_tutorial = new_tm
-        if state:
-            state.tutorial_manager = new_tm
+        # グローバルに設定
         try:
-            if CardGame.game_state is not None:
-                CardGame.game_state.tutorial_manager = new_tm
+            CardGame._current_tutorial = new_tm
+            if main_mod and main_mod is not CardGame:
+                main_mod._current_tutorial = new_tm
         except Exception:
             pass
         
-        # ゲームをリセット（チュートリアル用）
-        CardGame.restart_game()
+        if state:
+            state.tutorial_manager = new_tm
+        
+        try:
+            gs = getattr(CardGame, 'game_state', None)
+            if gs is None and main_mod:
+                gs = getattr(main_mod, 'game_state', None)
+            if gs is not None:
+                gs.tutorial_manager = new_tm
+        except Exception:
+            pass
+        
+        # === チュートリアル用のゲームオブジェクトを新規作成 ===
+        try:
+            from card_core import (Card, Deck, PlayerState, Game, 
+                eff_draw2, eff_freeze_piece, eff_heat_block_tile,
+                eff_storm_jump_once, eff_lightning_two_actions,
+                eff_alchemy, eff_graveyard_roulette, eff_leech_pp2)
+            
+            # チュートリアル用の固定デッキ（順序固定、シャッフルなし）
+            tutorial_deck_cards = [
+                Card('2ドロー', 1, eff_draw2),
+                Card('氷結', 2, eff_freeze_piece),
+                Card('灼熱', 2, eff_heat_block_tile),
+                Card('錬成', 0, eff_alchemy),
+                Card('暴風', 3, eff_storm_jump_once),
+                Card('迅雷', 3, eff_lightning_two_actions),
+                Card('墓地ルーレット', 1, eff_graveyard_roulette),
+                Card('摂取', 1, eff_leech_pp2),
+                Card('2ドロー', 1, eff_draw2),
+                Card('氷結', 2, eff_freeze_piece),
+                Card('灼熱', 2, eff_heat_block_tile),
+            ]
+            
+            deck = Deck(tutorial_deck_cards)
+            player = PlayerState(deck=deck)
+            new_game = Game(player=player)
+            
+            # ログを初期化
+            try:
+                LogList = getattr(CardGame, 'LogList', None)
+                if LogList is None and main_mod:
+                    LogList = getattr(main_mod, 'LogList', None)
+                if LogList:
+                    new_game.log = LogList('game')
+            except Exception:
+                pass
+            
+            player.reset_pp()
+            new_game.log.append("チュートリアル開始: PPを最大まで回復しました。")
+            
+            # 最初の4枚をドロー
+            for _ in range(4):
+                c = player.deck.draw()
+                if c:
+                    player.hand.add(c)
+            new_game.log.append(f"初期手札: {[c.name for c in player.hand.cards]}")
+            
+            # ゲームオブジェクトの状態を初期化
+            new_game.frozen_pieces = {}
+            new_game.blocked_tiles = {}
+            new_game.blocked_tiles_owner = {}
+            new_game.blocked_tiles_entries = {}
+            new_game.pending = None
+            new_game.ai_next_move_can_jump = False
+            new_game.ai_iron_wall_active = False
+            new_game.player_ironwall_protection_turns = 0
+            new_game.ai_ironwall_protection_turns = 0
+            new_game.turn = 1
+            new_game.turn_active = True
+            new_game.player_moved_this_turn = False
+            
+            # グローバルに設定
+            try:
+                CardGame.game = new_game
+                if main_mod and main_mod is not CardGame:
+                    main_mod.game = new_game
+            except Exception:
+                pass
+            
+            # AIプレイヤーも新規作成
+            try:
+                build_ai = getattr(CardGame, 'build_ai_player', None)
+                if build_ai is None and main_mod:
+                    build_ai = getattr(main_mod, 'build_ai_player', None)
+                if build_ai:
+                    new_ai = build_ai('fixed')
+                    CardGame.ai_player = new_ai
+                    if main_mod and main_mod is not CardGame:
+                        main_mod.ai_player = new_ai
+                    # AI初期手札
+                    try:
+                        init_ai_hand = getattr(CardGame, '_init_ai_start_hand', None)
+                        if init_ai_hand is None and main_mod:
+                            init_ai_hand = getattr(main_mod, '_init_ai_start_hand', None)
+                        if init_ai_hand:
+                            init_ai_hand(new_ai, 4, new_game)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            
+            # GameStateにも設定
+            try:
+                gs = getattr(CardGame, 'game_state', None)
+                if gs is None and main_mod:
+                    gs = getattr(main_mod, 'game_state', None)
+                if gs is not None:
+                    gs.game = new_game
+            except Exception:
+                pass
+            
+        except Exception as e:
+            import logging
+            logging.debug("チュートリアル用ゲームオブジェクト作成エラー: %s", e)
+            
     except Exception as e:
         import logging
         logging.debug("チュートリアル再開エラー: %s", e)

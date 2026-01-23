@@ -114,19 +114,21 @@ class TutorialManager:
         },
         TutorialPhase.TURN5_CHECKMATE: {
             'message': (
-                "お疲れ様でした！それでは最後です！\n\n"
-                "【Turn 5】チェックメイト！\n\n"
-                "逃げる・守る・取る\n"
-                "すべて不可能な状態です\n\n"
-                "カードを駆使して相手を追い詰める\n"
-                "これが Chess-Card-Battle の醍醐味です！"
+                "【Turn 5】チェックメイトを体験しましょう\n\n"
+                "赤色に光っているマスに\n"
+                "駒を移動させてチェックメイトです！"
             ),
-            'lock_ui': True,
-            'auto_advance': True,
+            'highlight_tiles': [(0, 6)],  # g8 - チェックメイトのマス（赤色）
+            'highlight_pieces': [(7, 6)],  # g1のクイーン（緑色）
+            'allowed_actions': ['select_piece', 'move_piece'],
+            'restrict_piece': True,  # 緑色のクイーンのみ選択可能
+            'lock_ui': False,
+            'use_checkmate_board': True,  # チェックメイト用盤面を使用
         },
         TutorialPhase.COMPLETE: {
             'message': (
-                "チュートリアル完了！\n\n"
+                "お疲れ様でした！\n\n"
+                "チュートリアル完了です！\n"
                 "次は実戦で遊んでみましょう"
             ),
             'show_complete_buttons': True,
@@ -336,6 +338,14 @@ class TutorialManager:
             # 正しい駒が正しいマスに移動した
             if from_pos in highlight_pieces and to_pos in highlight_tiles:
                 self._advance_to_phase(TutorialPhase.TURN2_DRAW)
+        
+        elif self.state.phase == TutorialPhase.TURN5_CHECKMATE:
+            config = self.PHASE_CONFIG[self.state.phase]
+            highlight_tiles = config.get('highlight_tiles', [])
+            
+            # チェックメイトのマスに移動した
+            if to_pos in highlight_tiles:
+                self._advance_to_phase(TutorialPhase.COMPLETE)
     
     def on_card_played(self, card_index: int, card_name: str = ''):
         """カード使用時のコールバック"""
@@ -397,13 +407,19 @@ class TutorialManager:
         else:
             self._should_auto_start_turn = False
         
-        # Turn 5は自動的に完了へ進む（表示後）
+        # Turn 5に遷移したら盤面切り替えフラグを設定
         if phase == TutorialPhase.TURN5_CHECKMATE:
-            # 短い遅延後に完了へ
-            pass  # UIで処理
+            self._should_setup_checkmate_board = True
             
         if phase == TutorialPhase.COMPLETE:
             self.state.completed = True
+    
+    def should_setup_checkmate_board(self) -> bool:
+        """チェックメイト盤面のセットアップが必要か確認し、フラグをリセット"""
+        if getattr(self, '_should_setup_checkmate_board', False):
+            self._should_setup_checkmate_board = False
+            return True
+        return False
     
     def advance_to_complete(self):
         """完了画面へ進む（外部から呼び出し用）"""
@@ -454,3 +470,27 @@ def get_tutorial_board_setup() -> Dict[str, Any]:
     return {
         'use_standard': True,
     }
+
+
+def get_checkmate_board_setup() -> List[Dict[str, Any]]:
+    """Turn 5用のチェックメイト一歩手前の盤面を返す
+    
+    バックランクメイトの配置:
+    - 白クイーン: g1 (7, 6) → g8 (0, 6)でチェックメイト
+    - 黒キング: h8 (0, 7)
+    - 黒ポーン: f7, h7（キングの逃げ道を塞ぐ、g列は空ける）
+    - 白キング: e1 (7, 4)
+    
+    Returns:
+        駒情報のリスト [{'row': int, 'col': int, 'name': str, 'color': str}, ...]
+    """
+    return [
+        # 白の駒
+        {'row': 7, 'col': 4, 'name': 'K', 'color': 'white'},  # Ke1
+        {'row': 7, 'col': 6, 'name': 'Q', 'color': 'white'},  # Qg1 (チェックメイト用)
+        
+        # 黒の駒
+        {'row': 0, 'col': 7, 'name': 'K', 'color': 'black'},  # Kh8
+        {'row': 1, 'col': 5, 'name': 'P', 'color': 'black'},  # Pf7 (逃げ道を塞ぐ)
+        {'row': 1, 'col': 7, 'name': 'P', 'color': 'black'},  # Ph7 (逃げ道を塞ぐ)
+    ]

@@ -92,7 +92,7 @@ def show_start_screen(screen, get_font, IMG_DIR, set_bgm_mode_func,
         # recompute fonts/layout each frame so start screen responds to VIDEORESIZE
         title_font = get_font(max(32, int(H * 0.05)), bold=True)
         btn_font = get_font(max(20, int(H * 0.03)), bold=True)
-        options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
+        options = [("1 - イージー", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
         # ボタン幅を広げてテキストが見切れないようにする
         btn_w = 240
         btn_h = 80

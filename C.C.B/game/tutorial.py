@@ -81,6 +81,7 @@ class TutorialManager:
         },
         TutorialPhase.TURN2_DRAW: {
             'message': (
+                "駒操作完了です！\n\n"
                 "【Turn 2】次はカードを使います\n\n"
                 "「2ドロー」を使ってみましょう\n"
                 "（青い枠のカードをクリック）"
@@ -90,6 +91,7 @@ class TutorialManager:
         },
         TutorialPhase.TURN3_FREEZE: {
             'message': (
+                "良いカードが出てきましたか？\n\n"
                 "【Turn 3】このカードは相手の駒を止めます\n\n"
                 "「氷結」を使い、光っている敵の駒を\n"
                 "選んでください"
@@ -100,6 +102,7 @@ class TutorialManager:
         },
         TutorialPhase.TURN4_HEAT: {
             'message': (
+                "妨害成功です！\n\n"
                 "【Turn 4】マスを封鎖すると\n"
                 "相手の逃げ道を塞ぐことができます\n\n"
                 "「灼熱」を使い、光っている3マスを\n"
@@ -111,6 +114,7 @@ class TutorialManager:
         },
         TutorialPhase.TURN5_CHECKMATE: {
             'message': (
+                "お疲れ様でした！それでは最後です！\n\n"
                 "【Turn 5】チェックメイト！\n\n"
                 "逃げる・守る・取る\n"
                 "すべて不可能な状態です\n\n"

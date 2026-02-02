@@ -4234,9 +4234,6 @@ def show_settings_screen(screen):
                             globals()['notice_until'] = _ct_time.time() + 1.5
                         except Exception:
                             pass
-                        # animation settings button
-                    # redundant old anim btn handler removed; button handled above
-                    pass
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
                 dragging = False
             elif ev.type == pygame.MOUSEMOTION and dragging:
@@ -8968,7 +8965,17 @@ def handle_mouse_click(pos):
         if hasattr(draw_panel, 'change_difficulty_rect') and draw_panel.change_difficulty_rect.collidepoint(pos):
             # go back to difficulty select, then restart game with chosen difficulty
             try:
+                # Switch back to title BGM before showing start screen
+                try:
+                    set_bgm_mode('title')
+                except Exception:
+                    pass
                 show_start_screen()
+                # After returning from start screen, switch to game BGM
+                try:
+                    set_bgm_mode('game')
+                except Exception:
+                    pass
             except Exception:
                 pass
             # After show_start_screen() returns it may have created a new

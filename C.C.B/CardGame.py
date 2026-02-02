@@ -8074,7 +8074,7 @@ def draw_panel():
             # 凍結解除は通常のボーダー
             pygame.draw.rect(screen, (255, 255, 255), heat_choice_unfreeze_rect, 2)
             # 3マス封鎖: チュートリア時は黄色、通常バトルは白
-            border_color = (255, 255, 0) if game.tutorial_manager else (255, 255, 255)
+            border_color = (255, 255, 0) if game_state and game_state.tutorial_manager else (255, 255, 255)
             border_width = 5 if block_hover else 4
             pygame.draw.rect(screen, border_color, heat_choice_block_rect, border_width)
             
@@ -8995,7 +8995,7 @@ def handle_mouse_click(pos):
     if getattr(game, 'pending', None) is not None and game.pending.kind == 'heat_choice':
         if heat_choice_unfreeze_rect and heat_choice_unfreeze_rect.collidepoint(pos):
             # チュートリアルモードでは凍結解除は使えない（凍結駒がないため）
-            if game.tutorial_manager:
+            if game_state and game_state.tutorial_manager:
                 game.log.append("チュートリアル: 凍結した駒がないため、『3マス封鎖をする』を選んでください。")
                 return
             # 選択: 自分の凍結駒を解除 -> まず凍結駒の存在確認
@@ -9037,7 +9037,7 @@ def handle_mouse_click(pos):
                 _debug_mark_card_played()
             info = {'turns': game.pending.info.get('turns', 2), 'max_tiles': game.pending.info.get('max_tiles', 3), 'selected': [], 'for_color': 'black'}
             game.pending = PendingAction(kind='target_tiles_multi', info=info)
-            if game.tutorial_manager:
+            if game_state and game_state.tutorial_manager:
                 game.log.append("チュートリアル: 光っている3マス（黄色い枠）をクリックしてください。")
             return
         # heat_choice中はボタン以外をクリックしても無視（ボタンを押させる）

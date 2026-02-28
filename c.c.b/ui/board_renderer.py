@@ -457,11 +457,36 @@ def draw_turn_telop(screen, layout, turn_telop_msg, turn_telop_until):
 
             # 影と文字を描画
             try:
-                screen.blit(shadow, (tx + 3, ty + 3))
+                # チュートリアルのメッセージ矩形と重なる場合は位置調整
+                try:
+                    import sys
+                    main_mod = sys.modules.get('__main__')
+                    tm = getattr(main_mod, '_current_tutorial', None)
+                    tut_rect = getattr(tm, 'last_message_rect', None) if tm is not None else None
+                except Exception:
+                    tut_rect = None
+
+                adj_tx, adj_ty = tx, ty
+                if tut_rect:
+                    # テロップの背景矩形を計算して衝突判定
+                    pad_x = max(10, telop_font_size // 5)
+                    pad_y = max(6, telop_font_size // 8)
+                    bw_local = telop_surf.get_width() + pad_x * 2
+                    bh_local = telop_surf.get_height() + pad_y * 2
+                    telop_rect = pygame.Rect(tx - pad_x, ty - pad_y, bw_local, bh_local)
+                    if telop_rect.colliderect(tut_rect):
+                        # チュートリアルボックスの下に移動
+                        adj_ty = tut_rect.bottom + 8
+                        # 画面下にはみ出さないように調整
+                        max_y = layout.get('board_top', 0) + layout.get('board_size', 0) - bh_local - 8
+                        if adj_ty > max_y:
+                            adj_ty = max_y
+
+                screen.blit(shadow, (adj_tx + 3, adj_ty + 3))
             except Exception:
                 pass
             try:
-                screen.blit(telop_surf, (tx, ty))
+                screen.blit(telop_surf, (adj_tx, adj_ty))
             except Exception:
                 pass
     except Exception:
@@ -489,12 +514,26 @@ def draw_notice_message(screen, layout, notice_msg, notice_until):
             shadow = notice_font.render(notice_msg, True, (0,0,0))
             bx = board_left + (board_size - notice_surf.get_width()) // 2
             by = board_top + 8
+            # チュートリアルのメッセージ矩形があれば重なりを避ける
+            try:
+                import sys
+                main_mod = sys.modules.get('__main__')
+                tm = getattr(main_mod, '_current_tutorial', None)
+                tut_rect = getattr(tm, 'last_message_rect', None) if tm is not None else None
+            except Exception:
+                tut_rect = None
             # 常に不透明な背景で表示（半透明にしない）
             try:
                 bw = notice_surf.get_width() + 20
                 bh = notice_surf.get_height() + 12
                 tmp = pygame.Surface((bw, bh))
                 tmp.fill((28, 28, 28))
+                # 衝突判定用の矩形
+                notice_rect = pygame.Rect(bx-10, by-6, bw, bh)
+                if tut_rect and notice_rect.colliderect(tut_rect):
+                    # チュートリアルボックスの下に移動
+                    by = tut_rect.bottom + 8
+                    notice_rect.y = by - 6
                 screen.blit(tmp, (bx-10, by-6))
                 pygame.draw.rect(screen, (220, 180, 60), (bx-10, by-6, bw, bh), 2)
                 screen.blit(shadow, (bx+2, by+2))

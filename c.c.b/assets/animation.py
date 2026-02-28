@@ -328,6 +328,7 @@ def _ensure_ic_gif_loaded():
     
     ic_gif_load_attempted = True
     candidates = [
+        'image_ic2.gif',
         'Image_ic (1).gif',
         'Image_ic.gif',
         'Image_ic(1).gif',
@@ -360,7 +361,7 @@ def _ensure_ic_gif_loaded():
     # Final fallback: try loading as single image
     if not frames:
         try:
-            path = os.path.join(IMG_DIR, 'Image_ic (1).gif')
+            path = os.path.join(IMG_DIR, 'image_ic2.gif')
             surf = pygame.image.load(path).convert_alpha()
             frames = [surf]
             durations = [1000]

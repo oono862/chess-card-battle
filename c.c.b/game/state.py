@@ -81,6 +81,9 @@ class GameState:
         
         # チェスログ（カードゲームのlogと分離）
         self.chess_log = []
+        
+        # チュートリアル状態
+        self.tutorial_manager = None  # tutorial.TutorialManager インスタンス
 
     
     def reset_for_new_game(self):

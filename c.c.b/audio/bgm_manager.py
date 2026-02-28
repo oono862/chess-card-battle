@@ -30,6 +30,8 @@ bgm_volume = 0.8
 
 # track current logical bgm mode so callers can reapply when toggling
 current_bgm_mode = None
+# track the currently loaded/playing music file to avoid redundant reloads
+_current_music_file = None
 
 
 def get_bgm_enabled():
@@ -114,8 +116,11 @@ def set_bgm_mode(mode: str | None) -> None:
 
     This function is defensive: it initializes the mixer if needed and
     catches exceptions so UI flow is not interrupted.
+    
+    Tracks the currently playing file to ensure proper BGM switching
+    when returning from game to menu and vice versa.
     """
-    global current_bgm_mode
+    global current_bgm_mode, _current_music_file
     
     # ensure mixer is available
     if not _ensure_mixer_initialized():
@@ -126,6 +131,7 @@ def set_bgm_mode(mode: str | None) -> None:
     if not bgm_enabled:
         try:
             pygame.mixer.music.stop()
+            _current_music_file = None
         except Exception:
             pass
         return
@@ -141,6 +147,18 @@ def set_bgm_mode(mode: str | None) -> None:
         # mode is None or unrecognized; stop music
         try:
             pygame.mixer.music.stop()
+            _current_music_file = None
+        except Exception:
+            pass
+        return
+
+    # Check if we're already playing this exact file - if so, no need to reload
+    if _current_music_file == music_file:
+        # Already playing the correct file, but ensure it's actually playing
+        try:
+            if not pygame.mixer.music.get_busy():
+                # Music stopped unexpectedly, restart it
+                pygame.mixer.music.play(-1)
         except Exception:
             pass
         return
@@ -157,9 +175,13 @@ def set_bgm_mode(mode: str | None) -> None:
         return
 
     try:
+        # Stop current music and load new file
+        pygame.mixer.music.stop()
         pygame.mixer.music.load(music_path)
         pygame.mixer.music.set_volume(bgm_volume)
         pygame.mixer.music.play(-1)  # loop indefinitely
+        _current_music_file = music_file  # Track what we just loaded
     except Exception:
         # If loading or playing fails, skip BGM silently
+        _current_music_file = None
         pass

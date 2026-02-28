@@ -170,7 +170,7 @@ def show_start_screen(screen):
     clock = pygame.time.Clock()
     title_font = pygame.font.SysFont("Noto_SansJP", max(36, int(SCREEN_HEIGHT * 0.06)), bold=True)
     btn_font = pygame.font.SysFont("Noto_SansJP", max(24, int(SCREEN_HEIGHT * 0.035)), bold=True)
-    options = [("1 - 簡単", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
+    options = [("1 - イージー", 1), ("2 - ノーマル", 2), ("3 - ハード", 3), ("4 - ベリーハード", 4)]
 
     def show_deck_editor():
         """簡易デッキ作成画面のプレースホルダ。閉じるボタンで戻る。"""

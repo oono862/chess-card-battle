@@ -899,16 +899,23 @@ def draw_grave_overlay(screen, game, show_grave, W, H):
     draw_text(screen, "墓地のカード一覧 [G]で閉じる", overlay_x + 20, overlay_y + 20, (120, 0, 0))
     draw_text(screen, "カードをクリックで拡大表示", overlay_x + 320, overlay_y + 20, (80, 80, 80))
     
-    counts = {}
+    # カード名ごとにグループ化（custom_imageも考慮）
+    card_groups = {}  # {(name, custom_image): [cards]}
     for c in game.player.graveyard:
-        counts[c.name] = counts.get(c.name, 0) + 1
+        key = (c.name, getattr(c, 'custom_image', None))
+        if key not in card_groups:
+            card_groups[key] = []
+        card_groups[key].append(c)
     
     gy = overlay_y + 60
     gx = overlay_x + 30
     col_w = 280
     grave_card_rects = []
-    for name, cnt in sorted(counts.items()):
-        thumb = get_card_image(name, size=(70, 95))
+    for (name, custom_img), cards in sorted(card_groups.items()):
+        cnt = len(cards)
+        # custom_imageがあればそれを使用
+        image_name = custom_img if custom_img else name
+        thumb = get_card_image(image_name, size=(70, 95))
         screen.blit(thumb, (gx, gy))
         draw_text(screen, f"{name}: {cnt}枚", gx + 80, gy + 35)
         # クリック用の矩形を保存
@@ -1175,8 +1182,9 @@ def draw_enlarged_card(screen, game, enlarged_card_index, enlarged_card_name, W,
         dark_overlay.set_alpha(150)
         screen.blit(dark_overlay, (0, 0))
         
-        # 拡大画像のみ表示
-        large_img = get_card_image_func(c.name, size=(enlarged_w, enlarged_h))
+        # custom_imageがあればそれを使用
+        image_name = getattr(c, 'custom_image', None) if hasattr(c, 'custom_image') and c.custom_image else c.name
+        large_img = get_card_image_func(image_name, size=(enlarged_w, enlarged_h))
         screen.blit(large_img, (enlarged_x, enlarged_y))
     
     # 手札以外（例: 墓地）からの拡大表示

@@ -25,6 +25,10 @@ import random
 # Data models
 # -----------------------------
 
+# チュートリアル用グローバルフラグ（CardGame.pyから制御）
+# このフラグがTrueの場合、PP消費後に即座に全回復
+TUTORIAL_INFINITE_PP = False
+
 EffectFn = Callable[["Game", "PlayerState"], str]
 PrecheckFn = Callable[["Game", "PlayerState"], Optional[str]]  # None: OK, str: error message
 
@@ -66,6 +70,7 @@ class Card:
     cost: int
     effect: EffectFn
     precheck: Optional[PrecheckFn] = None
+    custom_image: Optional[str] = None  # カスタム画像ファイル名（特殊演出用）
 
     def can_play(self, player: "PlayerState") -> bool:
         return self.cost <= player.pp_current
@@ -81,7 +86,17 @@ class Deck:
     def draw(self) -> Optional[Card]:
         if not self.cards:
             return None
-        return self.cards.pop(0)
+        card = self.cards.pop(0)
+        
+        # 「ハン です☆」が引かれた時、5%の確率で特殊画像に変更
+        # スペースありなしの両方に対応
+        if card and card.name in ('ハンです☆', 'ハン です☆'):
+            import random
+            roll = random.random()
+            if roll < 0.05:  # 5%の確率
+                card.custom_image = 'ハン です☆-j.png'
+        
+        return card
 
 
 @dataclass
@@ -116,6 +131,9 @@ class PlayerState:
     def spend_pp(self, amount: int) -> bool:
         if amount <= self.pp_current:
             self.pp_current -= amount
+            # チュートリアルモード時は即座にPPを全回復
+            if TUTORIAL_INFINITE_PP:
+                self.pp_current = self.pp_max
             return True
         return False
 
@@ -1510,19 +1528,31 @@ def eff_lightning_two_actions(game: Game, player: PlayerState) -> str:
 def eff_draw2(game: Game, player: PlayerState) -> str:
     """2ドロー(1): 山札から2枚引く。"""
     # Draw two cards for the specified player (works for both human and AI)
+    is_human = (player is game.player)
     items: List[str] = []
+    ai_draw_count = 0
     for _ in range(2):
         c = player.deck.draw()
         if c is None:
             continue
+        if not is_human:
+            ai_draw_count += 1
         if len(player.hand.cards) >= player.hand_limit:
             player.graveyard.append(c)
-            game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
-            items.append(f"{c.name}(墓地)")
+            if is_human:
+                game.log.append(f"手札上限{player.hand_limit}のため『{c.name}』は墓地へ。")
+                items.append(f"{c.name}(墓地)")
+            else:
+                game.log.append(f"手札上限{player.hand_limit}のため1枚が墓地へ。")
         else:
             player.hand.add(c)
-            items.append(c.name)
-    return "ドロー: " + (", ".join(items) if items else "なし")
+            if is_human:
+                items.append(c.name)
+    if is_human:
+        return "ドロー: " + (", ".join(items) if items else "なし")
+    else:
+        # AIのドロー内容は伏せる（枚数も秘匿）。引いていれば「非公開」。
+        return "ドロー: 非公開" if ai_draw_count > 0 else "ドロー: なし"
 
 
 def eff_alchemy(game: Game, player: PlayerState) -> str:

@@ -7,6 +7,333 @@ import pygame
 import os
 
 
+def draw_tutorial_overlay(screen, tutorial_manager, layout, draw_text):
+    """チュートリアルオーバーレイを描画する
+    
+    Args:
+        screen: pygame display surface
+        tutorial_manager: TutorialManager インスタンス
+        layout: レイアウト情報
+        draw_text: テキスト描画関数
+    """
+    if not tutorial_manager:
+        return
+    
+    # enabledでなければ何も表示しない（最優先チェック）
+    if not getattr(tutorial_manager, 'enabled', False):
+        return
+    
+    # IS_TUTORIAL_MODEをチェック（CPU戦遷移後は描画しない）
+    try:
+        import sys
+        main_mod = sys.modules.get('__main__')
+        if main_mod and not getattr(main_mod, 'IS_TUTORIAL_MODE', False):
+            return
+    except Exception:
+        pass
+    
+    # チュートリアル完了後の完了ボタン表示
+    if getattr(tutorial_manager, 'completed', False):
+        _draw_tutorial_completion_screen(screen, tutorial_manager, layout, draw_text)
+        return
+    
+    try:
+        tutorial_manager.set_start_button_rect(None)
+    except Exception:
+        pass
+
+    step = tutorial_manager.get_current_step()
+    message = tutorial_manager.get_message()
+    
+    lock_ui = False
+    try:
+        lock_ui = bool(getattr(step, 'lock_ui', False) or getattr(tutorial_manager, 'waiting_for_start', False))
+    except Exception:
+        lock_ui = False
+    if not message:
+        return
+    
+    # メッセージボックス描画（画面上部中央、テキスト折り返し対応）
+    W = layout.get('screen_width', 1600)
+    H = layout.get('screen_height', 900)
+    
+    box_width = min(1000, int(W * 0.8))
+    box_x = (W - box_width) // 2
+
+    # 改行に応じた行分割（簡易）
+    lines = message.split("\n") if "\n" in message else [message]
+    
+    # 完了画面（COMPLETE）の場合のみボタン用スペースを確保
+    is_complete_step = False
+    try:
+        if step and step.step_id == 6:  # COMPLETE (step_id=6) のみ
+            is_complete_step = True
+    except Exception:
+        pass
+    
+    box_height = max(120, len(lines) * 34 + 60)
+    if is_complete_step:
+        box_height = max(280, len(lines) * 34 + 120)  # 完了ボタン用のスペースを追加
+    
+    # lock_ui時は画面中央に配置、それ以外は上部
+    if lock_ui and is_complete_step:
+        box_y = (H - box_height - 80) // 2  # 中央寄り
+    else:
+        box_y = 40
+
+    # ハイライト（タイル/駒/カード）と重なる場合は位置を調整する
+    try:
+        highlight_info = tutorial_manager.get_highlight_info()
+        board_left = layout.get('board_left', 0)
+        board_top = layout.get('board_top', 0)
+        board_size = layout.get('board_size', 800)
+        square_w = max(1, board_size // 8)
+
+        highlight_rects = []
+        for (r, c) in highlight_info.get('tiles', []):
+            try:
+                rct = pygame.Rect(board_left + c * square_w, board_top + r * square_w, square_w, square_w)
+                highlight_rects.append(rct)
+            except Exception:
+                pass
+        for (r, c) in highlight_info.get('pieces', []):
+            try:
+                rct = pygame.Rect(board_left + c * square_w, board_top + r * square_w, square_w, square_w)
+                highlight_rects.append(rct)
+            except Exception:
+                pass
+
+        # カード矩形が layout に含まれていればカードのハイライトも考慮
+        card_rects = layout.get('card_rects') if isinstance(layout, dict) else None
+        for ci in highlight_info.get('cards', []):
+            try:
+                if card_rects and 0 <= ci < len(card_rects):
+                    crect = card_rects[ci]
+                    if isinstance(crect, tuple) and len(crect) >= 1:
+                        crect = crect[0]
+                    if isinstance(crect, pygame.Rect):
+                        highlight_rects.append(crect)
+                    elif hasattr(crect, '__iter__') and len(crect) >= 4:
+                        highlight_rects.append(pygame.Rect(crect[0], crect[1], crect[2], crect[3]))
+            except Exception:
+                pass
+
+        if highlight_rects:
+            # 結合矩形を作成
+            union = highlight_rects[0].copy()
+            for rct in highlight_rects[1:]:
+                union.union_ip(rct)
+
+            msg_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+            if msg_rect.colliderect(union):
+                # まずボックスをハイライトの下に移す
+                candidate_y = union.bottom + 12
+                # 画面下に収まるか確認
+                if candidate_y + box_height < H - 8:
+                    box_y = candidate_y
+                else:
+                    # 下に入らなければ上に移す
+                    candidate_y2 = union.top - box_height - 12
+                    if candidate_y2 > 8:
+                        box_y = candidate_y2
+                    else:
+                        # どちらにも入らない場合は上寄せ（既存の40より下にならないよう制限）
+                        box_y = max(8, min(box_y, H - box_height - 8))
+    except Exception:
+        pass
+
+    if lock_ui:
+        dim = pygame.Surface((W, H), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 180))
+        screen.blit(dim, (0, 0))
+
+    # 半透明背景
+    overlay = pygame.Surface((box_width, box_height))
+    overlay.set_alpha(230 if lock_ui else 200)
+    overlay.fill((40, 60, 120))
+    screen.blit(overlay, (box_x, box_y))
+
+    # 描画したメッセージボックス矩形を tutorial_manager に記録しておく
+    try:
+        # 他の描画関数（通知、テロップ等）が重なり回避を行えるようにする
+        tutorial_manager.last_message_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+    except Exception:
+        pass
+    
+    # 枠線
+    pygame.draw.rect(screen, (200, 220, 255), (box_x, box_y, box_width, box_height), 3)
+    
+    # メッセージテキスト（複数行対応）
+    text_x = box_x + 24
+    text_y = box_y + 20
+    for line in lines:
+        draw_text(screen, line, text_x, text_y, (255, 255, 255), bold=True, scale=1.0)
+        text_y += 32
+
+    # 開始前ロック: 開始ボタンを表示
+    try:
+        if getattr(tutorial_manager, 'waiting_for_start', False):
+            btn_w, btn_h = 180, 48
+            btn_x = box_x + (box_width - btn_w) // 2
+            btn_y = box_y + box_height - btn_h - 18
+            btn_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+            pygame.draw.rect(screen, (90, 180, 90), btn_rect)
+            pygame.draw.rect(screen, (240, 255, 240), btn_rect, 2)
+            draw_text(screen, "開始", btn_x + (btn_w // 2) - 22, btn_y + 12, (255, 255, 255), bold=True, scale=1.0)
+            tutorial_manager.set_start_button_rect(btn_rect)
+            return
+    except Exception:
+        pass
+
+    # スキップボタン（右下）- Turn 5以外で表示
+    try:
+        if step and step.step_id < 5:  # Turn 5未満の場合のみスキップボタンを表示
+            skip_text = "[ESC: スキップ]"
+            skip_x = box_x + box_width - 150
+            skip_y = box_y + box_height - 25
+            draw_text(screen, skip_text, skip_x, skip_y, (180, 180, 180), scale=0.8)
+    except Exception:
+        pass
+
+
+def _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text):
+    """チュートリアル完了時のボタンを描画"""
+    btn_w, btn_h = 180, 45
+    spacing = 40
+    total_width = btn_w * 2 + spacing
+    start_x = box_x + (box_width - total_width) // 2
+    btn_y = box_y + box_height - btn_h - 25  # ボックスの中のに配置
+    
+    # CPU戦へボタン
+    cpu_rect = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+    pygame.draw.rect(screen, (60, 140, 200), cpu_rect)
+    pygame.draw.rect(screen, (200, 220, 255), cpu_rect, 3)
+    draw_text(screen, "CPU戦へ", start_x + 45, btn_y + 10, (255, 255, 255), bold=True, scale=1.1)
+    
+    # もう一度チュートリアルボタン
+    retry_rect = pygame.Rect(start_x + btn_w + spacing, btn_y, btn_w, btn_h)
+    pygame.draw.rect(screen, (80, 140, 80), retry_rect)
+    pygame.draw.rect(screen, (180, 220, 180), retry_rect, 3)
+    draw_text(screen, "もう一度", start_x + btn_w + spacing + 40, btn_y + 10, (255, 255, 255), bold=True, scale=1.1)
+    
+    # ボタン情報を保存
+    try:
+        tutorial_manager.completion_cpu_rect = cpu_rect
+        tutorial_manager.completion_retry_rect = retry_rect
+    except Exception:
+        pass
+
+
+def _draw_tutorial_completion_screen(screen, tutorial_manager, layout, draw_text):
+    """チュートリアル完了後の完了画面を描画"""
+    W = layout.get('screen_width', 1600)
+    H = layout.get('screen_height', 900)
+    
+    # 半透明オーバーレイ
+    dim = pygame.Surface((W, H), pygame.SRCALPHA)
+    dim.fill((0, 0, 0, 200))
+    screen.blit(dim, (0, 0))
+    
+    # 完了メッセージ
+    message = "チュートリアル完了！\n次は実戦で遊んでみましょう"
+    box_width = 800
+    box_height = 250
+    box_x = (W - box_width) // 2
+    box_y = (H - box_height) // 2
+    
+    overlay = pygame.Surface((box_width, box_height))
+    overlay.set_alpha(240)
+    overlay.fill((40, 60, 120))
+    screen.blit(overlay, (box_x, box_y))
+    pygame.draw.rect(screen, (200, 220, 255), (box_x, box_y, box_width, box_height), 3)
+    
+    # メッセージテキスト
+    lines = message.split("\n")
+    text_y = box_y + 40
+    for line in lines:
+        text_x = box_x + (box_width - len(line) * 16) // 2
+        draw_text(screen, line, text_x, text_y, (255, 255, 255), bold=True, scale=1.2)
+        text_y += 40
+    
+    _draw_tutorial_completion_buttons(screen, tutorial_manager, box_x, box_y, box_width, box_height, draw_text)
+
+
+def draw_tutorial_highlights(screen, tutorial_manager, board_left, board_top, square_w, square_h, 
+                             card_rects, layout):
+    """チュートリアルハイライトを描画する
+    
+    Args:
+        screen: pygame display surface
+        tutorial_manager: TutorialManager インスタンス
+        board_left, board_top: チェス盤の左上座標
+        square_w, square_h: マスのサイズ
+        card_rects: カードの矩形リスト
+        layout: レイアウト情報
+    """
+    if not tutorial_manager or not tutorial_manager.enabled:
+        return
+    
+    highlight_info = tutorial_manager.get_highlight_info()
+    
+    # Turn 5（チェックメイト）かどうかを判定
+    is_checkmate_phase = False
+    try:
+        from game.tutorial import TutorialPhase
+        if hasattr(tutorial_manager, 'state') and tutorial_manager.state.phase == TutorialPhase.TURN5_CHECKMATE:
+            is_checkmate_phase = True
+    except Exception:
+        pass
+    
+    # マスのハイライト（Turn 5は赤色、それ以外は黄色）
+    tile_color = (255, 50, 50) if is_checkmate_phase else (255, 255, 0)
+    for (row, col) in highlight_info['tiles']:
+        rect = pygame.Rect(
+            board_left + col * square_w,
+            board_top + row * square_h,
+            square_w,
+            square_h
+        )
+        # Turn 5の場合は太い枠と半透明の塗りつぶし
+        if is_checkmate_phase:
+            # 半透明の赤い塗りつぶし
+            highlight_surf = pygame.Surface((square_w, square_h), pygame.SRCALPHA)
+            highlight_surf.fill((255, 50, 50, 80))
+            screen.blit(highlight_surf, rect.topleft)
+            pygame.draw.rect(screen, tile_color, rect, 6)
+        else:
+            pygame.draw.rect(screen, tile_color, rect, 5)
+    
+    # 駒のハイライト（緑の枠）
+    for (row, col) in highlight_info['pieces']:
+        rect = pygame.Rect(
+            board_left + col * square_w,
+            board_top + row * square_h,
+            square_w,
+            square_h
+        )
+        pygame.draw.rect(screen, (0, 255, 100), rect, 5)
+    
+    # カードのハイライト（青の枠）
+    for card_idx in highlight_info['cards']:
+        if 0 <= card_idx < len(card_rects):
+            rect_data = card_rects[card_idx]
+            # card_rectsは (pygame.Rect, インデックス) のタプル形式の場合がある
+            try:
+                if isinstance(rect_data, tuple) and len(rect_data) >= 1:
+                    # タプルの最初の要素がRect
+                    rect = rect_data[0]
+                else:
+                    rect = rect_data
+                
+                if isinstance(rect, pygame.Rect):
+                    pygame.draw.rect(screen, (100, 200, 255), rect, 5)
+                elif rect is not None and hasattr(rect, '__iter__') and len(rect) >= 4:
+                    r = pygame.Rect(rect[0], rect[1], rect[2], rect[3])
+                    pygame.draw.rect(screen, (100, 200, 255), r, 5)
+            except Exception as e:
+                pass  # エラーは無視
+
+
 def draw_background(screen, W, H, play_bg_img, play_bg_surf, PLAY_BG_FILENAME, IMG_DIR):
     """背景を描画する
     
